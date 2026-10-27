@@ -639,6 +639,46 @@ export async function createOrder(data: {
   try {
     await setDoc(orderRef, payload);
 
+    // Auto update table status to occupied (ไม่ว่าง) if diningType is "มาทานที่ร้าน" and tableNumber is specified
+    if (data.deliveryType === 'มาทานที่ร้าน' && data.tableNumber !== undefined && data.tableNumber !== null) {
+      try {
+        const rawNum = String(data.tableNumber).trim();
+        const parsedNum = parseInt(rawNum, 10);
+        const tableDocRef = doc(db, 'settings', 'tables');
+        const snap = await getDoc(tableDocRef);
+        let currentTables: RestaurantTable[] = INITIAL_TABLES;
+        if (snap.exists() && Array.isArray(snap.data().tables)) {
+          currentTables = snap.data().tables;
+        }
+        let found = false;
+        const updated = currentTables.map((t) => {
+          if (
+            (!isNaN(parsedNum) && t.number === parsedNum) ||
+            t.name === `โต๊ะ ${rawNum}` ||
+            t.name === rawNum ||
+            t.id === `table_${rawNum}` ||
+            t.id === `table_${parsedNum}`
+          ) {
+            found = true;
+            return { ...t, isOccupied: true, updatedAt: new Date().toISOString() };
+          }
+          return t;
+        });
+        if (!found && !isNaN(parsedNum) && parsedNum > 0) {
+          updated.push({
+            id: `table_${parsedNum}`,
+            number: parsedNum,
+            name: `โต๊ะ ${parsedNum}`,
+            isOccupied: true,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+      } catch (tblErr) {
+        console.warn('Auto set table occupied error:', tblErr);
+      }
+    }
+
     // Register or update customer record in Firestore immediately
     if (data.customerPhone) {
       const cleanPhone = data.customerPhone.trim().replace(/[^0-9]/g, '');
