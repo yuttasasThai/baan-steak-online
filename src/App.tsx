@@ -199,8 +199,15 @@ export default function App() {
 
     // Audio alert & incoming order toast: ONLY trigger when in admin view
     if (incomingNewOrders.length > 0 && currentView === 'admin') {
-      audioAlert.triggerNewOrderAlert();
-      notify(`🔔 มีออเดอร์เข้า! (${incomingNewOrders.length} รายการใหม่)`, 'success');
+      const latestOrder = incomingNewOrders[0];
+      audioAlert.triggerNewOrderAlert({
+        tableNumber: latestOrder.tableNumber ?? undefined,
+        deliveryType: latestOrder.deliveryType,
+      });
+      const orderLabel = latestOrder.tableNumber
+        ? `โต๊ะ ${latestOrder.tableNumber}`
+        : latestOrder.deliveryType || 'ออเดอร์ใหม่';
+      notify(`🔔 มีออเดอร์เข้า! (${orderLabel})`, 'success');
     }
   }, [orders, currentView]);
 
