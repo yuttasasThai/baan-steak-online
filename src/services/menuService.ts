@@ -11,7 +11,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderStatus, ShopSettings } from '../types';
+import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
@@ -136,6 +136,129 @@ export function subscribeShopSettings(
 export async function updateShopSettings(settings: Partial<ShopSettings>): Promise<void> {
   const settingsDocRef = doc(db, 'settings', 'shop');
   await setDoc(settingsDocRef, settings, { merge: true });
+}
+
+// Initial default tables (8 โต๊ะ)
+export const INITIAL_TABLES: RestaurantTable[] = Array.from({ length: 8 }, (_, i) => ({
+  id: `table_${i + 1}`,
+  number: i + 1,
+  name: `โต๊ะ ${i + 1}`,
+  isOccupied: false,
+}));
+
+// Subscribe to Tables Real-Time
+export function subscribeTables(
+  onUpdate: (tables: RestaurantTable[]) => void
+): () => void {
+  const tableDocRef = doc(db, 'settings', 'tables');
+  return onSnapshot(
+    tableDocRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (Array.isArray(data.tables) && data.tables.length > 0) {
+          onUpdate(data.tables);
+          return;
+        }
+      }
+      // Initialize if empty
+      setDoc(
+        tableDocRef,
+        { tables: INITIAL_TABLES, updatedAt: new Date().toISOString() },
+        { merge: true }
+      ).catch(() => {});
+      onUpdate(INITIAL_TABLES);
+    },
+    (err) => {
+      console.warn('Error subscribing tables:', err);
+      onUpdate(INITIAL_TABLES);
+    }
+  );
+}
+
+// Toggle or update single table status (ว่าง / เต็ม)
+export async function updateTableStatus(tableId: string, isOccupied: boolean): Promise<void> {
+  const tableDocRef = doc(db, 'settings', 'tables');
+  const snap = await getDoc(tableDocRef);
+  let currentTables: RestaurantTable[] = INITIAL_TABLES;
+  if (snap.exists() && Array.isArray(snap.data().tables)) {
+    currentTables = snap.data().tables;
+  }
+  const updated = currentTables.map((t) =>
+    t.id === tableId ? { ...t, isOccupied, updatedAt: new Date().toISOString() } : t
+  );
+  await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+// Set total table count (e.g. 1 to 30 โต๊ะ)
+export async function setTotalTableCount(count: number): Promise<void> {
+  const validCount = Math.max(1, Math.min(50, count));
+  const tableDocRef = doc(db, 'settings', 'tables');
+  const snap = await getDoc(tableDocRef);
+  let currentTables: RestaurantTable[] = [];
+  if (snap.exists() && Array.isArray(snap.data().tables)) {
+    currentTables = snap.data().tables;
+  }
+
+  const newTables: RestaurantTable[] = [];
+  for (let i = 1; i <= validCount; i++) {
+    const existing = currentTables.find((t) => t.number === i || t.id === `table_${i}`);
+    if (existing) {
+      newTables.push(existing);
+    } else {
+      newTables.push({
+        id: `table_${i}`,
+        number: i,
+        name: `โต๊ะ ${i}`,
+        isOccupied: false,
+      });
+    }
+  }
+
+  await setDoc(tableDocRef, { tables: newTables, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+// Set all tables status (ว่างทั้งหมด หรือ เต็มทั้งหมด)
+export async function setAllTablesStatus(isOccupied: boolean): Promise<void> {
+  const tableDocRef = doc(db, 'settings', 'tables');
+  const snap = await getDoc(tableDocRef);
+  let currentTables: RestaurantTable[] = INITIAL_TABLES;
+  if (snap.exists() && Array.isArray(snap.data().tables)) {
+    currentTables = snap.data().tables;
+  }
+  const updated = currentTables.map((t) => ({
+    ...t,
+    isOccupied,
+    updatedAt: new Date().toISOString(),
+  }));
+  await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+// Add custom table name
+export async function addCustomTable(name: string): Promise<void> {
+  const tableDocRef = doc(db, 'settings', 'tables');
+  const snap = await getDoc(tableDocRef);
+  let currentTables: RestaurantTable[] = INITIAL_TABLES;
+  if (snap.exists() && Array.isArray(snap.data().tables)) {
+    currentTables = snap.data().tables;
+  }
+  const nextNum = currentTables.length + 1;
+  const newTable: RestaurantTable = {
+    id: `table_${Date.now()}`,
+    number: nextNum,
+    name: name.trim() || `โต๊ะ ${nextNum}`,
+    isOccupied: false,
+  };
+  await setDoc(tableDocRef, { tables: [...currentTables, newTable], updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+// Delete custom table
+export async function deleteTable(tableId: string): Promise<void> {
+  const tableDocRef = doc(db, 'settings', 'tables');
+  const snap = await getDoc(tableDocRef);
+  if (!snap.exists() || !Array.isArray(snap.data().tables)) return;
+  const filtered = snap.data().tables.filter((t: RestaurantTable) => t.id !== tableId);
+  await setDoc(tableDocRef, { tables: filtered, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
 export const INITIAL_CATEGORIES: CategoryItem[] = [
@@ -464,6 +587,7 @@ export async function createOrder(data: {
   deliveryFee: number;
   totalAmount: number;
   earnedRewardsNotice?: string[];
+  tableNumber?: number | string;
 }): Promise<string> {
   const orderNumber = `BSO-${Date.now().toString().slice(-6)}`;
   const orderId = `order_${Date.now()}`;
@@ -495,6 +619,7 @@ export async function createOrder(data: {
     customerPhone: data.customerPhone.trim(),
     address: data.address.trim(),
     deliveryType: data.deliveryType || 'ส่งอาหารที่บ้าน',
+    tableNumber: data.tableNumber !== undefined ? data.tableNumber : null,
     gps: data.gps || null,
     latitude: data.gps ? data.gps.lat : null,
     longitude: data.gps ? data.gps.lng : null,
@@ -573,6 +698,76 @@ export async function cancelOrder(order: Order, reason: string = 'ยกเล�
       handleFirestoreError(fallbackError, OperationType.UPDATE, `orders/${order.id}`);
       throw fallbackError;
     }
+  }
+}
+
+// Permanently delete a single order document from Firestore (Admin only)
+export async function deleteOrder(orderId: string): Promise<void> {
+  const orderRef = doc(db, 'orders', orderId);
+  try {
+    await deleteDoc(orderRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `orders/${orderId}`);
+    throw error;
+  }
+}
+
+// Clear order history for Admin (supports all orders, only completed/cancelled, or only active test orders)
+export async function clearOrdersHistory(options: {
+  scope: 'all' | 'archived_and_cancelled' | 'active_only';
+  resetCustomerPoints?: boolean;
+}): Promise<{ deletedOrdersCount: number; resetCustomersCount: number }> {
+  try {
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    const orderDocsToDelete: string[] = [];
+
+    ordersSnap.forEach((docSnap) => {
+      const data = docSnap.data();
+      const status = normalizeOrderStatus(data.status);
+      const isArchived = Boolean(data.isArchived || status === 'ส่งแล้ว');
+      const isCancelled = Boolean(data.isCancelled || status === 'ยกเลิก');
+
+      if (options.scope === 'all') {
+        orderDocsToDelete.push(docSnap.id);
+      } else if (options.scope === 'archived_and_cancelled') {
+        if (isArchived || isCancelled) {
+          orderDocsToDelete.push(docSnap.id);
+        }
+      } else if (options.scope === 'active_only') {
+        if (!isArchived && !isCancelled) {
+          orderDocsToDelete.push(docSnap.id);
+        }
+      }
+    });
+
+    // Delete in parallel chunks of 20
+    const chunkSize = 20;
+    for (let i = 0; i < orderDocsToDelete.length; i += chunkSize) {
+      const chunk = orderDocsToDelete.slice(i, i + chunkSize);
+      await Promise.all(chunk.map((id) => deleteDoc(doc(db, 'orders', id))));
+    }
+
+    let resetCustomersCount = 0;
+    if (options.resetCustomerPoints) {
+      const custSnap = await getDocs(collection(db, 'customers'));
+      const custIds: string[] = [];
+      custSnap.forEach((docSnap) => {
+        custIds.push(docSnap.id);
+      });
+      for (let i = 0; i < custIds.length; i += chunkSize) {
+        const chunk = custIds.slice(i, i + chunkSize);
+        await Promise.all(chunk.map((id) => deleteDoc(doc(db, 'customers', id))));
+      }
+      resetCustomersCount = custIds.length;
+    }
+
+    return {
+      deletedOrdersCount: orderDocsToDelete.length,
+      resetCustomersCount,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'orders');
+    throw error;
   }
 }
 
@@ -756,7 +951,7 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
     name: data.name.trim().slice(0, 120),
     price: Number(data.price),
     category: data.category.trim().slice(0, 60),
-    imageUrl: (data.imageUrl || '').slice(0, 1000),
+    imageUrl: data.imageUrl ? data.imageUrl.trim() : '',
     description: (data.description || '').slice(0, 800),
     isAvailable: Boolean(data.isAvailable),
     isPublished: Boolean(data.isPublished),
@@ -782,7 +977,7 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
   if (data.name !== undefined) payload.name = data.name.trim().slice(0, 120);
   if (data.price !== undefined) payload.price = Math.max(0, Number(data.price));
   if (data.category !== undefined) payload.category = data.category.trim().slice(0, 60);
-  if (data.imageUrl !== undefined) payload.imageUrl = data.imageUrl.slice(0, 1000);
+  if (data.imageUrl !== undefined) payload.imageUrl = data.imageUrl ? data.imageUrl.trim() : '';
   if (data.description !== undefined) payload.description = data.description.slice(0, 800);
   if (data.isAvailable !== undefined) payload.isAvailable = Boolean(data.isAvailable);
   if (data.isPublished !== undefined) payload.isPublished = Boolean(data.isPublished);
