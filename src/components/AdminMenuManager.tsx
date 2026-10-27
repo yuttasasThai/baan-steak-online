@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Camera,
   Check,
   Edit3,
   Eye,
   EyeOff,
   Layers,
   Link2,
+  Loader2,
   Lock,
   Plus,
   RefreshCw,
@@ -19,6 +21,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { CategoryItem, MenuItem } from '../types';
+import { compressImageFile } from '../utils/imageCompressor';
 import {
   addMenuItem,
   deleteMenuItem,
@@ -62,6 +65,53 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   // Quick inline edit for price
   const [inlinePriceId, setInlinePriceId] = useState<string | null>(null);
   const [inlinePriceVal, setInlinePriceVal] = useState<string>('');
+
+  // Quick photo upload from phone/camera
+  const [quickPhotoMenu, setQuickPhotoMenu] = useState<MenuItem | null>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState<string | null>(null);
+  const quickPhotoInputRef = useRef<HTMLInputElement>(null);
+
+  const handleTriggerQuickPhoto = (item: MenuItem) => {
+    setQuickPhotoMenu(item);
+    if (quickPhotoInputRef.current) {
+      quickPhotoInputRef.current.value = '';
+      quickPhotoInputRef.current.click();
+    }
+  };
+
+  const handleQuickPhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !quickPhotoMenu) return;
+
+    if (!file.type.startsWith('image/')) {
+      onNotify('กรุณาเลือกไฟล์รูปภาพเท่านั้น', 'error');
+      return;
+    }
+
+    try {
+      setIsUploadingPhoto(quickPhotoMenu.id);
+      onNotify(`กำลังปรับขนาดและอัปโหลดรูปภาพ "${quickPhotoMenu.name}"...`, 'info');
+
+      const compressed = await compressImageFile(file, {
+        maxWidth: 640,
+        maxHeight: 640,
+        quality: 0.78,
+        mimeType: 'image/jpeg',
+      });
+
+      await updateMenuItem(quickPhotoMenu.id, {
+        imageUrl: compressed.dataUrl,
+      });
+
+      onNotify(`📸 อัปเดตรูปภาพเมนู "${quickPhotoMenu.name}" สำเร็จ เรียลไทม์ทันที`, 'success');
+    } catch (err) {
+      console.error('Quick photo upload failed:', err);
+      onNotify('เกิดข้อผิดพลาดในการเปลี่ยนรูปภาพ', 'error');
+    } finally {
+      setIsUploadingPhoto(null);
+      setQuickPhotoMenu(null);
+    }
+  };
 
   const filteredMenus = menus.filter((m) => {
     const matchSearch =
@@ -155,6 +205,15 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
 
   return (
     <div className="space-y-4 text-stone-900">
+      {/* Hidden native input for quick mobile photo uploads */}
+      <input
+        ref={quickPhotoInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleQuickPhotoFileChange}
+      />
+
       {/* Header */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 border border-stone-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div>
@@ -352,30 +411,45 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                     {/* Food Photo and Name */}
                     <td className="py-3 px-3">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-12 h-12 rounded-lg bg-stone-100 overflow-hidden border border-stone-200 shrink-0">
-                          {item.imageUrl ? (
-                            <img
-                              src={normalizeMenuImageUrl(item.imageUrl, item.name)}
-                              alt={item.name}
-                              referrerPolicy="no-referrer"
-                              className={`w-full h-full object-cover ${
-                                !item.isAvailable ? 'grayscale brightness-75' : ''
-                              }`}
-                              onError={(e) => {
-                                e.currentTarget.onerror = null;
-                                (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
-                              }}
-                            />
+                        {/* Interactive Photo Thumbnail */}
+                        <div
+                          onClick={() => handleTriggerQuickPhoto(item)}
+                          title="แตะเพื่อเปลี่ยนรูปภาพเมนูนี้จากโทรศัพท์ทันที"
+                          className="relative w-12 h-12 rounded-xl bg-stone-100 overflow-hidden border border-stone-200 shrink-0 cursor-pointer group shadow-2xs hover:border-red-400 transition"
+                        >
+                          {isUploadingPhoto === item.id ? (
+                            <div className="w-full h-full flex items-center justify-center bg-black/60 text-white">
+                              <Loader2 className="w-5 h-5 animate-spin text-white" />
+                            </div>
+                          ) : item.imageUrl ? (
+                            <>
+                              <img
+                                src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                                alt={item.name}
+                                referrerPolicy="no-referrer"
+                                className={`w-full h-full object-cover transition group-hover:scale-105 ${
+                                  !item.isAvailable ? 'grayscale brightness-75' : ''
+                                }`}
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null;
+                                  (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                                }}
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                                <Camera className="w-4 h-4" />
+                              </div>
+                            </>
                           ) : (
-                            <div className="w-full h-full flex items-center justify-center text-stone-400">
-                              <Utensils className="w-4 h-4" />
+                            <div className="w-full h-full flex flex-col items-center justify-center text-stone-400 group-hover:text-red-600">
+                              <Camera className="w-4 h-4" />
+                              <span className="text-[8px] font-bold">ใส่รูป</span>
                             </div>
                           )}
                         </div>
 
                         <div className="min-w-0">
-                          <div className="font-bold text-stone-900 text-sm truncate">
-                            {item.name}
+                          <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-1.5">
+                            <span>{item.name}</span>
                           </div>
                           {item.description && (
                             <div className="text-[11px] text-stone-500 line-clamp-1">
@@ -461,12 +535,19 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                     <td className="py-3 px-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => handleTriggerQuickPhoto(item)}
+                          className="p-1.5 text-stone-600 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                          title="เปลี่ยนรูปภาพจากโทรศัพท์"
+                        >
+                          <Camera className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={() => {
                             setEditingItem(item);
                             setIsFormOpen(true);
                           }}
                           className="p-1.5 text-stone-600 hover:text-red-600 hover:bg-stone-100 rounded-lg transition"
-                          title="แก้ไข"
+                          title="แก้ไขรายละเอียด"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>

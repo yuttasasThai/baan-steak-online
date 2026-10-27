@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   Store,
   Truck,
+  Trash2,
   Volume2,
   VolumeX,
   X,
@@ -22,6 +23,8 @@ import {
 import { DiningType, Order, OrderStatus } from '../types';
 import {
   cancelOrder,
+  clearOrdersHistory,
+  deleteOrder,
   NEXT_ORDER_STATUS_MAP,
   normalizeOrderStatus,
   updateOrderStatus,
@@ -77,7 +80,7 @@ const STATUS_BADGE_STYLES: Record<
 };
 
 // Render Delivery / Dining Type Badge: มาเอง, นำส่ง, นัดรับ
-export function renderDeliveryTypeBadge(deliveryType?: DiningType) {
+export function renderDeliveryTypeBadge(deliveryType?: DiningType, tableNumber?: number | string) {
   if (deliveryType === 'นัดรับอาหาร') {
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 text-stone-950 border-2 border-amber-600 rounded-xl text-xs font-black shadow-md ring-2 ring-amber-300 whitespace-nowrap animate-pulse">
@@ -90,7 +93,7 @@ export function renderDeliveryTypeBadge(deliveryType?: DiningType) {
     return (
       <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-xl text-xs font-black whitespace-nowrap shadow-2xs">
         <Store className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-        <span>🍽️ มาเอง (ทานร้าน)</span>
+        <span>{tableNumber ? `🍽️ ทานที่ร้าน (โต๊ะ ${tableNumber})` : '🍽️ มาเอง (ทานร้าน)'}</span>
       </span>
     );
   }
@@ -165,6 +168,14 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
   // Audio alert state (global audio alert is managed in App.tsx)
   const [isAudioEnabled, setIsAudioEnabled] = useState(() => audioAlert.isEnabled());
 
+  // Delete & Clear Order History states (Admin only)
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [clearScope, setClearScope] = useState<'all' | 'archived_and_cancelled' | 'active_only'>('all');
+  const [resetCustomerStats, setResetCustomerStats] = useState(true);
+  const [isClearing, setIsClearing] = useState(false);
+  const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
+  const [isDeletingSingle, setIsDeletingSingle] = useState(false);
+
   const toggleAudio = () => {
     const next = !isAudioEnabled;
     setIsAudioEnabled(next);
@@ -180,6 +191,55 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
   const handleTestSound = () => {
     audioAlert.triggerNewOrderAlert();
     onNotify('ทดสอบเล่นเสียงเตือน: "มีออเดอร์เข้า"', 'info');
+  };
+
+  // Handle bulk order history clearing
+  const handleExecuteClearOrders = async () => {
+    setIsClearing(true);
+    try {
+      const res = await clearOrdersHistory({
+        scope: clearScope,
+        resetCustomerPoints: resetCustomerStats,
+      });
+
+      const scopeName =
+        clearScope === 'all'
+          ? 'ออเดอร์ทั้งหมด'
+          : clearScope === 'archived_and_cancelled'
+          ? 'ออเดอร์ส่งแล้วและยกเลิก'
+          : 'ออเดอร์ที่ค้างอยู่';
+
+      let msg = `🗑️ เคลียร์ประวัติ${scopeName}เรียบร้อยแล้ว (${res.deletedOrdersCount} รายการ)`;
+      if (res.resetCustomersCount > 0) {
+        msg += ` พร้อมรีเซ็ตแต้มสะสมลูกค้า ${res.resetCustomersCount} ราย`;
+      }
+      onNotify(msg, 'success');
+      setShowClearModal(false);
+    } catch (err) {
+      console.error('Clear orders error:', err);
+      onNotify('เกิดข้อผิดพลาดในการเคลียร์ประวัติออเดอร์', 'error');
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
+  // Handle single order permanent deletion
+  const handleExecuteDeleteSingleOrder = async () => {
+    if (!orderToDelete) return;
+    setIsDeletingSingle(true);
+    try {
+      await deleteOrder(orderToDelete.id);
+      onNotify(`🗑️ ลบออเดอร์ #${orderToDelete.orderNumber} ออกจากระบบเรียบร้อยแล้ว`, 'info');
+      if (detailOrder?.id === orderToDelete.id) {
+        setDetailOrder(null);
+      }
+      setOrderToDelete(null);
+    } catch (err) {
+      console.error('Delete single order error:', err);
+      onNotify('เกิดข้อผิดพลาดในการลบออเดอร์', 'error');
+    } finally {
+      setIsDeletingSingle(false);
+    }
   };
 
   // Normalize order statuses and sort newest first
@@ -298,44 +358,57 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
           </p>
         </div>
 
-        {/* View Switcher: Active Orders / Delivered Orders / Cancelled Orders */}
-        <div className="flex items-center gap-1.5 self-start sm:self-center overflow-x-auto no-scrollbar">
+        {/* View Switcher: Active Orders / Delivered Orders / Cancelled Orders + Clear Button */}
+        <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-center">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setViewTab('active')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewTab === 'active'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+            >
+              <span>⚡ รอจัดการ ({activeOrders.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('archived')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewTab === 'archived'
+                  ? 'bg-emerald-700 text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+              title="ออเดอร์ที่จัดส่งเสร็จแล้ว เพื่อบันทึกประวัติและนับยอดขาย"
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>ส่งแล้ว ({archivedOrders.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('cancelled')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewTab === 'cancelled'
+                  ? 'bg-stone-800 text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+              title="ออเดอร์ที่ยกเลิก บันทึกประวัติเมนูขายดีโดยไม่สะสมแต้ม"
+            >
+              <Ban className="w-3.5 h-3.5 text-rose-400" />
+              <span>ยกเลิกแล้ว ({cancelledOrders.length})</span>
+            </button>
+          </div>
+
+          {/* ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง (Admin Only) */}
           <button
             type="button"
-            onClick={() => setViewTab('active')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              viewTab === 'active'
-                ? 'bg-red-600 text-white shadow-xs'
-                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-            }`}
+            onClick={() => setShowClearModal(true)}
+            className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer ml-auto"
+            title="ลบประวัติออเดอร์ หรือเคลียร์ออเดอร์ทดลองเพื่อเปิดร้านจริง"
           >
-            <span>⚡ รอจัดการ ({activeOrders.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewTab('archived')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              viewTab === 'archived'
-                ? 'bg-emerald-700 text-white shadow-xs'
-                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-            }`}
-            title="ออเดอร์ที่จัดส่งเสร็จแล้ว เพื่อบันทึกประวัติและนับยอดขาย"
-          >
-            <Archive className="w-3.5 h-3.5" />
-            <span>ส่งแล้ว ({archivedOrders.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewTab('cancelled')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              viewTab === 'cancelled'
-                ? 'bg-stone-800 text-white shadow-xs'
-                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-            }`}
-            title="ออเดอร์ที่ยกเลิก บันทึกประวัติเมนูขายดีโดยไม่สะสมแต้ม"
-          >
-            <Ban className="w-3.5 h-3.5 text-rose-400" />
-            <span>ยกเลิกแล้ว ({cancelledOrders.length})</span>
+            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+            <span>ลบประวัติ / เคลียร์ออเดอร์</span>
           </button>
         </div>
       </div>
@@ -533,7 +606,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                         <td className={`py-3.5 px-3 text-center whitespace-nowrap ${
                           isPickup ? 'bg-amber-100/70 border-x border-amber-300' : ''
                         }`}>
-                          {renderDeliveryTypeBadge(order.deliveryType)}
+                          {renderDeliveryTypeBadge(order.deliveryType, order.tableNumber)}
                         </td>
 
                         {/* Total Amount */}
@@ -612,14 +685,25 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                               </button>
                             )}
 
-                            {/* Link ดูรายละเอียด */}
-                            <button
-                              type="button"
-                              onClick={() => setDetailOrder(order)}
-                              className="text-[10px] font-bold text-stone-500 hover:text-red-600 text-center underline transition cursor-pointer"
-                            >
-                              ดูรายละเอียดแบบเต็ม
-                            </button>
+                            {/* Link ดูรายละเอียด และ ลบออเดอร์ */}
+                            <div className="flex items-center justify-between pt-1 border-t border-stone-200/60">
+                              <button
+                                type="button"
+                                onClick={() => setDetailOrder(order)}
+                                className="text-[10px] font-bold text-stone-500 hover:text-red-600 underline transition cursor-pointer"
+                              >
+                                ดูรายละเอียด
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setOrderToDelete(order)}
+                                className="text-[10px] font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-0.5 rounded flex items-center gap-0.5 transition cursor-pointer"
+                                title="ลบออเดอร์นี้ออกจากระบบ"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>ลบ</span>
+                              </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -696,7 +780,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                           </div>
                         </td>
                         <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
-                          {renderDeliveryTypeBadge(order.deliveryType)}
+                          {renderDeliveryTypeBadge(order.deliveryType, order.tableNumber)}
                         </td>
                         <td className="py-3 px-3 text-right font-black text-emerald-700">
                           {order.totalAmount.toLocaleString()} บ.
@@ -707,13 +791,23 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                           </span>
                         </td>
                         <td className="py-3 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setDetailOrder(order)}
-                            className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
-                          >
-                            ดูข้อมูล
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setDetailOrder(order)}
+                              className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
+                            >
+                              ดูข้อมูล
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOrderToDelete(order)}
+                              className="p-1 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              title="ลบออเดอร์นี้ออกจากระบบถาวร"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -790,7 +884,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                           </div>
                         </td>
                         <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
-                          {renderDeliveryTypeBadge(order.deliveryType)}
+                          {renderDeliveryTypeBadge(order.deliveryType, order.tableNumber)}
                         </td>
                         <td className="py-3 px-3 text-right font-black text-rose-700">
                           {order.totalAmount.toLocaleString()} บ.
@@ -799,13 +893,23 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                           {order.cancelReason || 'ยกเลิกโดยทางร้าน'}
                         </td>
                         <td className="py-3 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setDetailOrder(order)}
-                            className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
-                          >
-                            ดูข้อมูล
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setDetailOrder(order)}
+                              className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
+                            >
+                              ดูข้อมูล
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOrderToDelete(order)}
+                              className="p-1 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              title="ลบออเดอร์นี้ออกจากระบบถาวร"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -952,7 +1056,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
               {/* Delivery / Dining Type */}
               <div className="flex justify-between items-center bg-stone-50 p-3 rounded-2xl border border-stone-100">
                 <span className="text-stone-600 font-bold">รูปแบบการรับอาหาร:</span>
-                <div>{renderDeliveryTypeBadge(detailOrder.deliveryType)}</div>
+                <div>{renderDeliveryTypeBadge(detailOrder.deliveryType, detailOrder.tableNumber)}</div>
               </div>
 
               {/* Delivery Address */}
@@ -1106,12 +1210,238 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                 </div>
               )}
 
+              {/* ปุ่มลบออเดอร์นี้ออกจากระบบถาวร */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOrderToDelete(detailOrder);
+                }}
+                className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                <span>ลบออเดอร์นี้ออกจากระบบถาวร</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setDetailOrder(null)}
                 className="w-full py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold rounded-xl transition cursor-pointer"
               >
                 ปิดหน้าต่าง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Clear Orders History (ล้างประวัติออเดอร์สำหรับเริ่มร้านจริง) */}
+      {showClearModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-stone-200 space-y-4 my-auto animate-in fade-in zoom-in-95">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    ลบประวัติ / เคลียร์ออเดอร์ทดลอง
+                  </h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    สำหรับ Admin เพื่อเริ่มต้นใช้งานจริงและเคลียร์ข้อมูลทดสอบ
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClearModal(false)}
+                className="text-stone-400 hover:text-stone-700 p-1 rounded-xl transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 p-3 rounded-2xl text-xs text-rose-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-rose-700">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>คำเตือน: ข้อมูลที่ลบแล้วจะไม่สามารถกู้คืนได้</span>
+              </div>
+              <p className="text-[11px] text-rose-800 leading-relaxed">
+                การลบนี้จะนำข้อมูลออกจากฐานข้อมูลจริง เพื่อให้ระบบสะอาด พร้อมสำหรับรับออเดอร์จากลูกค้าตัวจริง
+              </p>
+            </div>
+
+            {/* Scope Selection */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-stone-800">
+                เลือกขอบเขตออเดอร์ที่ต้องการลบ:
+              </label>
+
+              <div className="space-y-2 text-xs">
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                  clearScope === 'all'
+                    ? 'bg-rose-50/70 border-rose-400 text-rose-950 shadow-xs ring-1 ring-rose-400'
+                    : 'bg-stone-50 border-stone-200 text-stone-700 hover:bg-stone-100'
+                }`}>
+                  <input
+                    type="radio"
+                    name="clearScope"
+                    value="all"
+                    checked={clearScope === 'all'}
+                    onChange={() => setClearScope('all')}
+                    className="mt-0.5 accent-rose-600"
+                  />
+                  <div>
+                    <span className="font-black block">🔴 ลบออเดอร์ทั้งหมดในระบบ (แนะนำสำหรับเปิดร้านใหม่)</span>
+                    <span className="text-[11px] text-stone-500 block mt-0.5">
+                      ล้างทั้งออเดอร์ที่ค้างอยู่ ({activeOrders.length}), ออเดอร์ส่งแล้ว ({archivedOrders.length}) และยกเลิก ({cancelledOrders.length}) รวม {orders.length} รายการ
+                    </span>
+                  </div>
+                </label>
+
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                  clearScope === 'active_only'
+                    ? 'bg-amber-50/70 border-amber-400 text-amber-950 shadow-xs ring-1 ring-amber-400'
+                    : 'bg-stone-50 border-stone-200 text-stone-700 hover:bg-stone-100'
+                }`}>
+                  <input
+                    type="radio"
+                    name="clearScope"
+                    value="active_only"
+                    checked={clearScope === 'active_only'}
+                    onChange={() => setClearScope('active_only')}
+                    className="mt-0.5 accent-amber-600"
+                  />
+                  <div>
+                    <span className="font-black block">🟡 ลบเฉพาะออเดอร์ที่ค้างอยู่ (Active Orders)</span>
+                    <span className="text-[11px] text-stone-500 block mt-0.5">
+                      ลบเฉพาะออเดอร์ที่ยังไม่เสร็จ ({activeOrders.length} รายการ)
+                    </span>
+                  </div>
+                </label>
+
+                <label className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer transition ${
+                  clearScope === 'archived_and_cancelled'
+                    ? 'bg-emerald-50/70 border-emerald-400 text-emerald-950 shadow-xs ring-1 ring-emerald-400'
+                    : 'bg-stone-50 border-stone-200 text-stone-700 hover:bg-stone-100'
+                }`}>
+                  <input
+                    type="radio"
+                    name="clearScope"
+                    value="archived_and_cancelled"
+                    checked={clearScope === 'archived_and_cancelled'}
+                    onChange={() => setClearScope('archived_and_cancelled')}
+                    className="mt-0.5 accent-emerald-600"
+                  />
+                  <div>
+                    <span className="font-black block">🟢 ลบเฉพาะประวัติเก่า (ส่งแล้ว & ยกเลิก)</span>
+                    <span className="text-[11px] text-stone-500 block mt-0.5">
+                      ลบออเดอร์ที่ส่งแล้ว ({archivedOrders.length}) และยกเลิก ({cancelledOrders.length}) รวม {archivedOrders.length + cancelledOrders.length} รายการ
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Reset Customer Loyalty Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 bg-stone-50 rounded-2xl border border-stone-200 cursor-pointer text-xs">
+              <input
+                type="checkbox"
+                checked={resetCustomerStats}
+                onChange={(e) => setResetCustomerStats(e.target.checked)}
+                className="mt-0.5 rounded accent-red-600"
+              />
+              <div className="space-y-0.5">
+                <span className="font-bold text-stone-900 block">
+                  รีเซ็ตประวัติสะสมแต้มของลูกค้าทดลอง (เบอร์โทรและแต้มสะสม)
+                </span>
+                <span className="text-[11px] text-stone-500 block">
+                  ล้างข้อมูลจำนวนครั้งที่สั่งและสิทธิ์ของฟรี เพื่อให้ลูกค้านับคะแนนใหม่ตั้งแต่ 0
+                </span>
+              </div>
+            </label>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowClearModal(false)}
+                disabled={isClearing}
+                className="flex-1 py-3 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteClearOrders}
+                disabled={isClearing}
+                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 active:scale-98 disabled:bg-stone-400 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isClearing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>กำลังล้างข้อมูล...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>ยืนยันลบประวัติถาวร</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Delete Single Order Confirmation */}
+      {orderToDelete && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-stone-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-stone-900">
+                  ลบออเดอร์ #{orderToDelete.orderNumber}
+                </h3>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  ลูกค้า: {orderToDelete.customerName} ({orderToDelete.totalAmount.toLocaleString()} บ.)
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed bg-stone-50 p-3 rounded-2xl border border-stone-200">
+              คุณต้องการลบออเดอร์นี้ออกจากฐานข้อมูลถาวรใช่หรือไม่? (การกระทำนี้ไม่สามารถย้อนกลับได้)
+            </p>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setOrderToDelete(null)}
+                disabled={isDeletingSingle}
+                className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteDeleteSingleOrder}
+                disabled={isDeletingSingle}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-98 disabled:bg-stone-400 text-white text-xs font-black rounded-xl shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isDeletingSingle ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังลบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ลบออเดอร์นี้</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

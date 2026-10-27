@@ -35,7 +35,7 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
   const [showFilesList, setShowFilesList] = useState(false);
 
   // Computed revision tag and dynamic filename
-  const revisionCode = `rev-${currentRev.trim() || '2.4.0'}`;
+  const revisionCode = `rev-${currentRev.trim() || '2.5.0'}`;
   const dynamicFileName = getRevisionFileName(revisionCode);
 
   // Quick revision bumping helpers
@@ -60,25 +60,35 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
     onNotify(`🏷️ ปรับ Revision เป็น rev-${nextRev} เรียบร้อยแล้ว`, 'info');
   };
 
-  // Download Trigger Handler
-  const handleDownloadZip = async () => {
+  // Download Trigger Handler (Full or Patch)
+  const handleDownloadZip = async (type: 'patch' | 'full' = 'patch') => {
     setIsDownloading(true);
     try {
       const cleanRev = revisionCode;
-      const downloadUrl = `/api/export-source?rev=${encodeURIComponent(cleanRev)}&t=${Date.now()}`;
+      const downloadUrl = `/api/export-source?type=${type}&rev=${encodeURIComponent(cleanRev)}&t=${Date.now()}`;
+      const targetFileName = type === 'patch'
+        ? `baan-steak-patch-${cleanRev}.zip`
+        : dynamicFileName;
 
       // Create hidden link and trigger download on Android browser
       const link = document.createElement('a');
       link.href = downloadUrl;
-      link.download = dynamicFileName;
+      link.download = targetFileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
 
-      onNotify(
-        `✅ เริ่มดาวน์โหลดไฟล์ "${dynamicFileName}" เรียบร้อยแล้ว! (ตรวจสอบในโฟลเดอร์ Downloads บนมือถือ)`,
-        'success'
-      );
+      if (type === 'patch') {
+        onNotify(
+          `✅ เริ่มดาวน์โหลด Patch เฉพาะไฟล์ที่แก้ไข (${targetFileName}) เรียบร้อยแล้ว!`,
+          'success'
+        );
+      } else {
+        onNotify(
+          `✅ เริ่มดาวน์โหลดทั้งโปรเจกต์ (${dynamicFileName}) เรียบร้อยแล้ว!`,
+          'success'
+        );
+      }
     } catch (err) {
       console.error('Download error:', err);
       onNotify('เกิดข้อผิดพลาดในการดาวน์โหลด กรุณาลองใหม่อีกครั้ง', 'error');
@@ -130,27 +140,27 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
         </div>
       </div>
 
-      {/* 2. Primary Action: Download Button & Revision Control */}
+      {/* 2. Primary Action: Download Options & Revision Control */}
       <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-stone-100">
           <div className="flex items-center gap-2 text-sm font-bold text-stone-800">
             <GitBranch className="w-4 h-4 text-red-600" />
-            <span>กำหนด Revision และดาวน์โหลด</span>
+            <span>ตัวเลือกดาวน์โหลด Source Code</span>
           </div>
           <span className="text-[11px] text-stone-500">
             อัปเดตล่าสุด: {CURRENT_REVISION.formattedDateTh}
           </span>
         </div>
 
-        {/* Revision Input & Bump Options */}
+        {/* Revision Info Display */}
         <div className="space-y-3 bg-stone-50 p-4 rounded-2xl border border-stone-200/80">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <label className="block text-xs font-bold text-stone-700">
-                หมายเลข Revision (จะถูกระบุลงในชื่อไฟล์ ZIP อัตโนมัติ เพื่อป้องกันการสับสน):
+                หมายเลข Revision ปัจจุบัน:
               </label>
               <p className="text-[11px] text-stone-500">
-                เมื่อแก้ไขโค้ดใหม่ ให้กดปรับ Revision เพื่อไม่ให้ชื่อไฟล์ซ้ำกัน
+                ระบบจัดการโต๊ะอาหาร + อัปเดตรูปภาพเมนูจริง
               </p>
             </div>
             {/* Quick Bump Buttons */}
@@ -159,7 +169,7 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
                 type="button"
                 onClick={() => handleBumpRevision('patch')}
                 className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-300 rounded-lg text-xs font-bold text-stone-700 transition active:scale-95"
-                title="เพิ่มรุ่นย่อย (เช่น 2.2.0 -> 2.2.1)"
+                title="เพิ่มรุ่นย่อย (เช่น 2.5.0 -> 2.5.1)"
               >
                 +0.0.1 (Patch)
               </button>
@@ -167,7 +177,7 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
                 type="button"
                 onClick={() => handleBumpRevision('minor')}
                 className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-300 rounded-lg text-xs font-bold text-stone-700 transition active:scale-95"
-                title="เพิ่มรุ่นฟังก์ชัน (เช่น 2.2.0 -> 2.3.0)"
+                title="เพิ่มรุ่นฟังก์ชัน (เช่น 2.5.0 -> 2.6.0)"
               >
                 +0.1.0 (Minor)
               </button>
@@ -181,53 +191,150 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
                 type="text"
                 value={currentRev}
                 onChange={(e) => setCurrentRev(e.target.value)}
-                placeholder="2.2.0"
+                placeholder="2.5.0"
                 className="w-full text-sm font-mono font-bold text-stone-900 focus:outline-none"
               />
             </div>
             <div className="text-xs font-mono text-stone-500 truncate flex-1 hidden sm:block">
-              📦 ชื่อไฟล์: <span className="text-stone-800 font-bold">{dynamicFileName}</span>
+              📦 รหัสเวอร์ชัน: <span className="text-stone-800 font-bold">{revisionCode}</span>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-stone-600 mb-1">
-              บันทึกการแก้ไขในรุ่นนี้ (Changelog Note):
-            </label>
-            <input
-              type="text"
-              value={customRevNote}
-              onChange={(e) => setCustomRevNote(e.target.value)}
-              placeholder="เช่น เพิ่มระบบแยกหน้าลูกค้า/แอดมิน, ปรับปรุงตารางรับอาหาร"
-              className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs text-stone-800 focus:outline-none focus:border-red-500"
-            />
           </div>
         </div>
 
-        {/* Big Download Button */}
-        <div className="pt-1">
-          <button
-            type="button"
-            disabled={isDownloading}
-            onClick={handleDownloadZip}
-            className="w-full py-4 px-5 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-400 text-white font-extrabold text-base rounded-2xl shadow-md hover:shadow-lg transition flex items-center justify-center gap-2.5 cursor-pointer"
-          >
-            {isDownloading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>กำลังเตรียมไฟล์ ZIP...</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-5 h-5" />
-                <span>ดาวน์โหลด Source Code (.ZIP) สำหรับมือถือ Android</span>
-              </>
-            )}
-          </button>
-          <div className="text-center mt-2">
-            <span className="text-[11px] text-stone-500">
-              📁 ไฟล์ที่จะได้รับ: <code className="font-mono font-bold text-red-600">{dynamicFileName}</code>
-            </span>
+        {/* 2 Download Buttons Grid */}
+        <div className="space-y-3 pt-1">
+          {/* Option A: Patch ZIP (Only Modified Files) */}
+          <div className="p-4 bg-emerald-50/70 rounded-2xl border-2 border-emerald-500/40 space-y-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider mb-1">
+                  ⭐ แนะนำสูงสุดสำหรับคนมี GitHub แล้ว
+                </span>
+                <h4 className="text-sm font-black text-emerald-950">
+                  1. ดาวน์โหลดเฉพาะไฟล์ที่แก้ไข (Patch ZIP ~60 KB)
+                </h4>
+                <p className="text-xs text-emerald-800 leading-relaxed mt-0.5">
+                  ประกอบด้วยเฉพาะไฟล์ในโฟลเดอร์ <code>src/</code> ที่แก้ไขใหม่ ไม่ต้องโหลดไฟล์เก่าซ้ำ เอาไปอัปโหลดทับบน GitHub ได้ทันทีใน 1 นาที
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={isDownloading}
+              onClick={() => handleDownloadZip('patch')}
+              className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 active:scale-98 disabled:bg-stone-400 text-white font-black text-sm rounded-xl shadow-sm hover:shadow transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>กำลังจัดเตรียม Patch ZIP...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  <span>📦 ดาวน์โหลดเฉพาะไฟล์ที่แก้ไข (Patch ZIP)</span>
+                </>
+              )}
+            </button>
+            <div className="text-center text-[11px] text-emerald-700 font-medium">
+              ไฟล์ขนาดเล็กมาก (~60 KB) แตกไฟล์ง่ายบนมือถือ มีเฉพาะโฟลเดอร์ <code>src/</code>
+            </div>
+          </div>
+
+          {/* Option B: Full Project ZIP */}
+          <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold text-stone-900">
+                  2. หรือ ดาวน์โหลดทั้งโปรเจกต์แบบเต็ม (Full Project ZIP ~150 KB)
+                </h4>
+                <p className="text-[11px] text-stone-600 mt-0.5">
+                  เหมาะสำหรับผู้ที่ต้องการสร้าง Repository ใหม่ทั้งหมดบน GitHub ตั้งแต่ต้น
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={isDownloading}
+              onClick={() => handleDownloadZip('full')}
+              className="w-full py-3 px-4 bg-stone-800 hover:bg-stone-900 active:scale-98 disabled:bg-stone-400 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>📥 ดาวน์โหลดทั้งโปรเจกต์ (Full Project ZIP)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2.5 FAQ Section: Answers to user's exact questions */}
+      <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-3xl p-5 border-2 border-amber-300 shadow-xs space-y-3">
+        <div className="flex items-center gap-2 text-sm font-black text-amber-950">
+          <Sparkles className="w-4 h-4 text-amber-600" />
+          <span>💡 ตอบข้อสงสัย: ต้องอัปโหลดไฟล์ไหนบ้าง? โฟลเดอร์อะไร?</span>
+        </div>
+
+        <div className="space-y-3 text-xs text-amber-950">
+          <div className="bg-white/90 p-3.5 rounded-2xl border border-amber-200 space-y-1.5">
+            <p className="font-extrabold text-stone-900 text-xs">
+              ❓ 1. โหลดแค่ไฟล์ที่มีการเปลี่ยนได้หรือไม่?
+            </p>
+            <p className="text-stone-700 leading-relaxed">
+              👉 <strong>ได้แน่นอนครับ 100%!</strong> หากท่านมีโปรเจกต์เดิมบน GitHub อยู่แล้ว ให้กดปุ่มสีเขียว <strong>"ดาวน์โหลดเฉพาะไฟล์ที่แก้ไข (Patch ZIP)"</strong> ด้านบน แล้วนำไฟล์ไปวางทับไฟล์เดิมบน GitHub ได้เลยครับ Vercel จะตรวจจับและ Deploy เวอร์ชั่นใหม่ให้ทันที!
+            </p>
+          </div>
+
+          <div className="bg-white/90 p-3.5 rounded-2xl border border-amber-200 space-y-1.5">
+            <p className="font-extrabold text-stone-900 text-xs">
+              ❓ 2. ไฟล์ที่อยู่นอกโฟลเดอร์ 14 ไฟล์ ต้องอัปโหลดใหม่หรือไม่?
+            </p>
+            <p className="text-stone-700 leading-relaxed">
+              👉 <strong>ไม่ต้องอัปโหลดซ้ำครับ!</strong> ไฟล์นอกโฟลเดอร์ เช่น <code>package.json</code>, <code>index.html</code>, <code>vercel.json</code>, <code>firestore.rules</code>, <code>firebase-applet-config.json</code> ไม่มีการเปลี่ยนแปลงจากเวอร์ชันก่อนหน้า สามารถใช้ของเดิมบน GitHub ได้เลยครับ
+            </p>
+          </div>
+
+          <div className="bg-white/90 p-3.5 rounded-2xl border border-amber-200 space-y-2">
+            <p className="font-extrabold text-stone-900 text-xs">
+              📁 3. สรุปรายชื่อไฟล์ที่ต้องอัปเดตสำหรับเวอร์ชัน rev-2.6.0:
+            </p>
+            <div className="font-mono text-[11px] divide-y divide-stone-100 bg-stone-50 rounded-xl p-2.5 border border-stone-200">
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/components/AdminOrdersManager.tsx</span>
+                <span className="text-amber-800 font-sans font-bold">✨ ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/services/menuService.ts</span>
+                <span className="text-stone-600 font-sans">คำสั่งลบออเดอร์ใน Firestore</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/revisionInfo.ts</span>
+                <span className="text-stone-600 font-sans">ปรับเลข rev-2.6.0</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/types.ts</span>
+                <span className="text-stone-600 font-sans">โครงสร้างโต๊ะและออเดอร์</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/components/AdminTableManager.tsx</span>
+                <span className="text-stone-600 font-sans">ระบบจัดการโต๊ะว่าง/เต็ม</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/components/CustomerWebsite.tsx</span>
+                <span className="text-stone-600 font-sans">หน้าเว็บสั่งอาหารลูกค้า</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/components/AdminMenuManager.tsx</span>
+                <span className="text-stone-600 font-sans">เปลี่ยนรูปภาพเมนูจริง</span>
+              </div>
+              <div className="py-1 flex justify-between">
+                <span className="font-bold text-emerald-800">src/App.tsx</span>
+                <span className="text-stone-600 font-sans">แท็บจัดการโต๊ะใน Admin</span>
+              </div>
+            </div>
+            <p className="text-[11px] text-stone-600 mt-1 italic">
+              * ทั้งหมดอยู่ในโฟลเดอร์ <strong>src/</strong> เพียงโฟลเดอร์เดียวเท่านั้น! ไฟล์นอกโฟลเดอร์ไม่ต้องอัปโหลดซ้ำ
+            </p>
           </div>
         </div>
       </div>

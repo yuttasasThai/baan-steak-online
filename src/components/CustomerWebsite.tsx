@@ -24,7 +24,7 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { CartItem, CategoryItem, DiningType, MenuItem, ShopSettings } from '../types';
+import { CartItem, CategoryItem, DiningType, MenuItem, RestaurantTable, ShopSettings } from '../types';
 import {
   calculateDeliveryFeeByDistance,
   calculateDistanceKm,
@@ -41,6 +41,7 @@ interface CustomerWebsiteProps {
   menus: MenuItem[];
   categories: CategoryItem[];
   settings?: ShopSettings;
+  tables?: RestaurantTable[];
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
   onOpenAdminLogin: () => void;
   isAdmin?: boolean;
@@ -50,6 +51,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   menus,
   categories,
   settings,
+  tables = [],
   onNotify,
   onOpenAdminLogin,
   isAdmin = false,
@@ -94,6 +96,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
   // Table number from URL query (e.g. ?table=1)
   const [urlTableNumber, setUrlTableNumber] = useState<string | null>(null);
+  const [selectedTableNumber, setSelectedTableNumber] = useState<number | null>(null);
 
   // Parse URL query parameters (?table=, ?type=, ?category=)
   React.useEffect(() => {
@@ -106,6 +109,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
       if (tableParam) {
         setUrlTableNumber(tableParam);
+        setSelectedTableNumber(Number(tableParam));
         setDiningType('มาทานที่ร้าน');
         setAddress(`ทานที่ร้าน โต๊ะ ${tableParam}`);
       } else if (typeParam) {
@@ -313,7 +317,22 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
 
     // Validation according to dining type
-    if (diningType === 'ส่งอาหารที่บ้าน') {
+    if (diningType === 'มาทานที่ร้าน') {
+      if (tables.length > 0) {
+        const isAllTablesFull = tables.every((t) => t.isOccupied);
+        if (isAllTablesFull) {
+          onNotify('ขณะนี้โต๊ะในร้านเต็มทุกโต๊ะ กรุณาเลือกสั่งแบบ "ส่งอาหารที่บ้าน" หรือ "นัดรับอาหาร"', 'error');
+          return;
+        }
+        if (selectedTableNumber) {
+          const chosen = tables.find((t) => t.number === selectedTableNumber);
+          if (chosen && chosen.isOccupied) {
+            onNotify(`โต๊ะ ${selectedTableNumber} มีลูกค้านั่งแล้ว (โต๊ะเต็ม) กรุณาเลือกโต๊ะว่างอื่น`, 'error');
+            return;
+          }
+        }
+      }
+    } else if (diningType === 'ส่งอาหารที่บ้าน') {
       if (!address.trim()) {
         onNotify('กรุณากรอกที่อยู่ หรือจุดสังเกตการส่งอาหาร', 'error');
         return;
@@ -336,14 +355,14 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       setIsSubmittingOrder(true);
       const effectiveAddress =
         diningType === 'มาทานที่ร้าน'
-          ? (address.trim() || 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)')
+          ? (address.trim() || (selectedTableNumber ? `ทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)'))
           : diningType === 'นัดรับอาหาร'
           ? (address.trim() || 'นัดรับอาหาร (โทรนัดหมายกับทางร้าน)')
           : address.trim();
 
       const effectiveDeliveryArea =
         diningType === 'มาทานที่ร้าน'
-          ? 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)'
+          ? (selectedTableNumber ? `มาทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)')
           : diningType === 'นัดรับอาหาร'
           ? 'นัดรับอาหาร (ยังไม่รวมค่าส่ง)'
           : deliveryCalculation
@@ -358,6 +377,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         customerPhone: customerPhone.trim(),
         address: effectiveAddress,
         deliveryType: diningType,
+        tableNumber: selectedTableNumber !== null ? selectedTableNumber : undefined,
         gps: diningType === 'ส่งอาหารที่บ้าน' ? gpsLocation : null,
         distanceKm: diningType === 'ส่งอาหารที่บ้าน' ? (distanceKm ?? 0) : 0,
         items: cart.map((c) => ({
@@ -501,6 +521,25 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
             <MapPin className="w-3.5 h-3.5 text-red-600 shrink-0" />
             <span>พิกัด "มาทานที่ร้าน"</span>
           </a>
+
+          {/* ป้ายแสดงสถานะโต๊ะในร้านแบบเรียลไทม์ (ว่าง/เต็ม) */}
+          {tables && tables.length > 0 && (
+            <div
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-black shrink-0 whitespace-nowrap shadow-2xs transition ${
+                tables.every((t) => t.isOccupied)
+                  ? 'bg-rose-50 text-rose-800 border-rose-300'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+              }`}
+              title="สถานะโต๊ะอาหารสำหรับทานที่ร้านในปัจจุบัน"
+            >
+              <Utensils className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {tables.every((t) => t.isOccupied)
+                  ? 'โต๊ะเต็มทุกโต๊ะ'
+                  : `โต๊ะว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length}`}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -836,32 +875,141 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   </div>
                 </div>
 
-                {/* --- 1.1 กรณี มาทานที่ร้าน: แจ้งตำแหน่ง link GPS ของร้าน ไม่ต้องแสดงแผนที่ แล้วข้ามไปสรุปยอด --- */}
+                {/* --- 1.1 กรณี มาทานที่ร้าน: แสดงสถานะโต๊ะว่าง/เต็ม + เลือกโต๊ะ + พิกัดร้าน --- */}
                 {diningType === 'มาทานที่ร้าน' && (
-                  <div className="p-3.5 bg-rose-50/80 rounded-2xl border border-rose-200 text-xs text-stone-800 space-y-2.5 animate-fadeIn">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="space-y-0.5">
-                        <div className="font-extrabold text-red-700 flex items-center gap-1.5 text-xs sm:text-sm">
-                          <Store className="w-4 h-4 text-red-600 shrink-0" />
-                          <span>ตำแหน่งพิกัดร้าน บ้าน สเต็กออนไลน์</span>
+                  <div className="space-y-3 animate-fadeIn">
+                    {/* ข้อมูลโต๊ะอาหารของร้าน (ซิงค์เรียลไทม์จากระบบร้าน) */}
+                    {tables && tables.length > 0 && (
+                      <div className="p-3.5 bg-white rounded-2xl border border-rose-200 shadow-2xs space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="font-extrabold text-stone-900 flex items-center gap-1.5 text-xs">
+                            <Utensils className="w-4 h-4 text-red-600" />
+                            <span>เลือกโต๊ะนั่งทานที่ร้าน</span>
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
+                              tables.every((t) => t.isOccupied)
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
+                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            }`}
+                          >
+                            {tables.every((t) => t.isOccupied)
+                              ? '🔴 ขณะนี้โต๊ะเต็มทุกโต๊ะ'
+                              : `🟢 โต๊ะว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
+                          </span>
                         </div>
-                        <p className="text-[11px] text-stone-600 leading-relaxed">
-                          อ.ชุมแพ จ.ขอนแก่น (พิกัด: {shopLat.toFixed(4)}, {shopLng.toFixed(4)})
-                        </p>
+
+                        {/* แจ้งเตือนกรณีโต๊ะเต็มทุกโต๊ะ */}
+                        {tables.every((t) => t.isOccupied) ? (
+                          <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-950 space-y-1">
+                            <div className="flex items-center gap-1.5 font-black text-rose-800">
+                              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                              <span>ขออภัย ขณะนี้โต๊ะในร้านเต็มทุกโต๊ะ (0/{tables.length} ว่าง)</span>
+                            </div>
+                            <p className="text-[11px] text-rose-700 leading-relaxed font-medium">
+                              ทางร้านของดรับออเดอร์นั่งทานที่ร้านชั่วคราว ท่านสามารถเลือกสั่งแบบ{' '}
+                              <strong className="text-rose-900 underline">"ส่งอาหารที่บ้าน"</strong> หรือ{' '}
+                              <strong className="text-rose-900 underline">"นัดรับอาหาร"</strong> ได้ตามปกติครับ
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="text-[11px] text-stone-500 flex items-center justify-between">
+                              <span>แตะเลือกโต๊ะที่ท่านต้องการนั่ง:</span>
+                              <div className="flex items-center gap-2 text-[10px]">
+                                <span className="flex items-center gap-1 text-emerald-700 font-bold">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> ว่าง
+                                </span>
+                                <span className="flex items-center gap-1 text-stone-400 font-bold">
+                                  <span className="w-2 h-2 rounded-full bg-rose-400"></span> เต็ม
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* ตารางปุ่มเลือกโต๊ะ */}
+                            <div className="grid grid-cols-4 sm:grid-cols-4 gap-2">
+                              {tables.map((tbl) => {
+                                const isSelected = selectedTableNumber === tbl.number;
+                                return (
+                                  <button
+                                    key={tbl.id}
+                                    type="button"
+                                    disabled={tbl.isOccupied}
+                                    onClick={() => {
+                                      setSelectedTableNumber(tbl.number);
+                                      setAddress(`ทานที่ร้าน ${tbl.name}`);
+                                    }}
+                                    className={`py-2 px-1 rounded-xl text-center border transition flex flex-col items-center justify-center gap-0.5 ${
+                                      tbl.isOccupied
+                                        ? 'bg-stone-100 border-stone-200 text-stone-400 opacity-60 cursor-not-allowed'
+                                        : isSelected
+                                        ? 'bg-red-600 text-white border-red-700 shadow-sm ring-2 ring-red-400 font-black scale-102'
+                                        : 'bg-emerald-50/70 border-emerald-200 text-stone-800 hover:bg-emerald-100 hover:border-emerald-300 cursor-pointer active:scale-95'
+                                    }`}
+                                  >
+                                    <span className="font-extrabold text-xs">{tbl.name}</span>
+                                    <span
+                                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
+                                        tbl.isOccupied
+                                          ? 'bg-rose-100 text-rose-700'
+                                          : isSelected
+                                          ? 'bg-white/20 text-white'
+                                          : 'bg-emerald-100 text-emerald-800'
+                                      }`}
+                                    >
+                                      {tbl.isOccupied ? '🔴 เต็ม' : '🟢 ว่าง'}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {selectedTableNumber && (
+                              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-bold flex items-center justify-between">
+                                <span className="flex items-center gap-1.5">
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                  <span>เลือก: โต๊ะ {selectedTableNumber} เรียบร้อย</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTableNumber(null)}
+                                  className="text-[10px] text-stone-500 hover:text-rose-600 underline font-normal"
+                                >
+                                  เปลี่ยนโต๊ะ
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${shopLat},${shopLng}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl flex items-center gap-1 shadow-xs shrink-0 transition"
-                      >
-                        <Navigation className="w-3.5 h-3.5" />
-                        <span>เปิด Google Maps</span>
-                      </a>
-                    </div>
-                    <div className="text-[11px] text-emerald-800 bg-white/80 p-2 rounded-xl border border-rose-100 flex items-center gap-1.5 font-medium">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                      <span>รับประทานที่ร้าน ไม่มีค่าจัดส่ง (พร้อมข้ามไปสรุปยอดชำระเงิน)</span>
+                    )}
+
+                    {/* พิกัดร้าน บ้าน สเต็กออนไลน์ */}
+                    <div className="p-3.5 bg-rose-50/80 rounded-2xl border border-rose-200 text-xs text-stone-800 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="font-extrabold text-red-700 flex items-center gap-1.5 text-xs sm:text-sm">
+                            <Store className="w-4 h-4 text-red-600 shrink-0" />
+                            <span>ตำแหน่งพิกัดร้าน บ้าน สเต็กออนไลน์</span>
+                          </div>
+                          <p className="text-[11px] text-stone-600 leading-relaxed">
+                            อ.ชุมแพ จ.ขอนแก่น (พิกัด: {shopLat.toFixed(4)}, {shopLng.toFixed(4)})
+                          </p>
+                        </div>
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${shopLat},${shopLng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl flex items-center gap-1 shadow-xs shrink-0 transition"
+                        >
+                          <Navigation className="w-3.5 h-3.5" />
+                          <span>เปิด Google Maps</span>
+                        </a>
+                      </div>
+                      <div className="text-[11px] text-emerald-800 bg-white/80 p-2 rounded-xl border border-rose-100 flex items-center gap-1.5 font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>รับประทานที่ร้าน ไม่มีค่าจัดส่ง (พร้อมข้ามไปสรุปยอดชำระเงิน)</span>
+                      </div>
                     </div>
                   </div>
                 )}
