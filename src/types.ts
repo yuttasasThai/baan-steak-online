@@ -60,6 +60,7 @@ export interface Order {
   cancelReason?: string;
   isOutOfDeliveryZone?: boolean;
   earnedRewardsNotice?: string[];
+  tableNumber?: number | string;
 }
 
 export interface ShopSettings {
@@ -93,4 +94,12 @@ export interface CustomerRecord {
 export interface CartItem {
   menuItem: MenuItem;
   quantity: number;
+}
+
+export interface RestaurantTable {
+  id: string; // e.g. "table_1"
+  number: number; // 1, 2, 3...
+  name: string; // e.g. "โต๊ะ 1"
+  isOccupied: boolean; // false = ว่าง (Available), true = เต็ม (Occupied)
+  updatedAt?: string;
 }

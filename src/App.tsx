@@ -25,6 +25,7 @@ import { AdminOrdersManager } from './components/AdminOrdersManager';
 import { AdminSalesAnalytics } from './components/AdminSalesAnalytics';
 import { AdminShopSettings } from './components/AdminShopSettings';
 import { AdminSourceCodeExporter } from './components/AdminSourceCodeExporter';
+import { AdminTableManager } from './components/AdminTableManager';
 import { CustomerWebsite } from './components/CustomerWebsite';
 import { audioAlert } from './utils/audioAlert';
 import {
@@ -36,9 +37,10 @@ import {
   subscribeMenus,
   subscribeOrders,
   subscribeShopSettings,
+  subscribeTables,
   updateShopSettings,
 } from './services/menuService';
-import { CategoryItem, CustomerRecord, MenuItem, Order, ShopSettings } from './types';
+import { CategoryItem, CustomerRecord, MenuItem, Order, RestaurantTable, ShopSettings } from './types';
 
 interface Toast {
   id: string;
@@ -66,7 +68,7 @@ export default function App() {
     checkIsAdminPath() ? 'admin' : 'customer'
   );
   const [adminTab, setAdminTab] = useState<
-    'orders' | 'menus' | 'customers' | 'analytics' | 'settings' | 'export'
+    'orders' | 'menus' | 'tables' | 'customers' | 'analytics' | 'settings' | 'export'
   >('orders');
 
   // Admin authentication state
@@ -82,6 +84,7 @@ export default function App() {
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
+  const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -157,6 +160,12 @@ export default function App() {
       setSettings(s);
     });
 
+    // 7. Subscribe to Restaurant Tables (โต๊ะอาหาร ทานที่ร้าน)
+    const unsubTables = subscribeTables((tblList) => {
+      if (!isMounted) return;
+      setTables(tblList);
+    });
+
     return () => {
       isMounted = false;
       unsubMenus();
@@ -164,6 +173,7 @@ export default function App() {
       unsubOrders();
       unsubCustomers();
       unsubSettings();
+      unsubTables();
     };
   }, []);
 
@@ -452,6 +462,28 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setAdminTab('tables')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'tables'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+                title="จัดการจำนวนโต๊ะ และสถานะโต๊ะว่าง/เต็ม สำหรับลูกค้าทานที่ร้าน"
+              >
+                <Utensils className="w-3.5 h-3.5" />
+                <span>โต๊ะอาหาร (ทานที่ร้าน)</span>
+                <span
+                  className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    tables.length > 0 && tables.every((t) => t.isOccupied)
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  {tables.filter((t) => !t.isOccupied).length}/{tables.length} ว่าง
+                </span>
+              </button>
+
+              <button
                 onClick={() => setAdminTab('customers')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                   adminTab === 'customers'
@@ -528,6 +560,7 @@ export default function App() {
             menus={menus}
             categories={categories}
             settings={settings}
+            tables={tables}
             onNotify={notify}
             onOpenAdminLogin={handleOpenAdmin}
             isAdmin={isAdminLoggedIn}
@@ -544,6 +577,9 @@ export default function App() {
                 isLoading={isLoading}
                 onNotify={notify}
               />
+            )}
+            {adminTab === 'tables' && (
+              <AdminTableManager tables={tables} onNotify={notify} />
             )}
             {adminTab === 'customers' && (
               <AdminCustomerHistory
