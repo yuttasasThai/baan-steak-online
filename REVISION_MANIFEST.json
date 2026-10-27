@@ -1,0 +1,14 @@
+{
+  "project": "บ้าน สเต็กออนไลน์ (Baan Steak Online)",
+  "revision": "rev-2.4.0",
+  "exportedAt": "2026-10-27T03:10:17.103Z",
+  "formattedThaiTime": "วันอังคารที่ 27 ตุลาคม พ.ศ. 2569 เวลา 10:10:17",
+  "totalFilesCount": 57,
+  "targetPlatforms": [
+    "GitHub",
+    "Vercel"
+  ],
+  "vercelSpaConfig": "vercel.json included with rewrite rules",
+  "adminDefaultPin": "0850451606",
+  "instructions": "Upload to GitHub, then Import in Vercel with zero config required"
+}

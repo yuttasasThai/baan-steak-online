@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "Food menu item for Baan Steak Online",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 120 },
+        "price": { "type": "number" },
+        "imageUrl": { "type": "string", "maxLength": 1000 },
+        "description": { "type": "string", "maxLength": 800 },
+        "category": { "type": "string", "maxLength": 60 },
+        "isAvailable": { "type": "boolean" },
+        "isPublished": { "type": "boolean" },
+        "orderIndex": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "price", "category", "isAvailable", "isPublished", "orderIndex"]
+    },
+    "CategoryItem": {
+      "title": "CategoryItem",
+      "description": "Category for Baan Steak Online",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 60 },
+        "orderIndex": { "type": "number" }
+      },
+      "required": ["name", "orderIndex"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Food delivery order from customer to Baan Steak Online",
+      "type": "object",
+      "properties": {
+        "customerName": { "type": "string", "maxLength": 100 },
+        "customerPhone": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 500 },
+        "deliveryArea": { "type": "string", "maxLength": 60 },
+        "deliveryFee": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["customerName", "customerPhone", "address", "deliveryFee", "totalAmount", "status"]
+    },
+    "CustomerRecord": {
+      "title": "CustomerRecord",
+      "description": "Customer ordering summary record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 500 },
+        "orderCount": { "type": "number" },
+        "lastOrderMonthYear": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["name", "phone", "orderCount"]
+    }
+  },
+  "firestore": {
+    "/menus/{menuId}": {
+      "schema": "MenuItem",
+      "description": "Restaurant food menu items"
+    },
+    "/categories/{categoryId}": {
+      "schema": "CategoryItem",
+      "description": "Menu category list"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders submitted from web"
+    },
+    "/customers/{customerId}": {
+      "schema": "CustomerRecord",
+      "description": "Customer order history records"
+    }
+  }
+}
