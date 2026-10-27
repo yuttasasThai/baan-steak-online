@@ -460,6 +460,27 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         </div>
       )}
 
+      {/* 2.2 Pickup Welcome Banner */}
+      {!urlTableNumber && diningType === 'นัดรับอาหาร' && (
+        <div className="w-full py-2.5 px-3.5 rounded-2xl bg-amber-50 text-amber-950 border border-amber-300 font-bold text-xs flex items-center justify-between shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🛍️</span>
+            <div>
+              <span>โหมดสั่งอาหาร: </span>
+              <span className="text-amber-800 font-black text-sm underline">
+                นัดรับกลับบ้านที่ร้าน (Pickup)
+              </span>
+              <span className="text-stone-500 font-medium ml-1">
+                (ฟรีค่าจัดส่ง 0 บาท)
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-full font-extrabold text-amber-900 shrink-0">
+            รับกลับบ้าน
+          </span>
+        </div>
+      )}
+
       {/* 3. Shop Title & Compact Contact Line */}
       <div className="bg-white rounded-2xl p-3 sm:p-4 border border-stone-200 shadow-xs space-y-2">
         <div className="flex items-center justify-between gap-2">
@@ -1374,10 +1395,15 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
             {/* Dining Type summary badge */}
             <div className="flex justify-center">
               {completedOrderDiningType === 'มาทานที่ร้าน' ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-full text-xs font-black">
-                  <Store className="w-3.5 h-3.5 text-emerald-700" />
-                  <span>🍽️ รูปแบบ: มาทานที่ร้าน</span>
-                </span>
+                <div className="space-y-1">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-full text-xs font-black">
+                    <Store className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>🍽️ รูปแบบ: มาทานที่ร้าน {selectedTableNumber ? `(โต๊ะ ${selectedTableNumber})` : ''}</span>
+                  </span>
+                  <p className="text-[11px] text-stone-500 font-medium">
+                    ทางร้านกำลังปรุงอาหารและจะนำไปเสิร์ฟที่ โต๊ะ {selectedTableNumber || urlTableNumber} ครับ
+                  </p>
+                </div>
               ) : completedOrderDiningType === 'นัดรับอาหาร' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-400 text-stone-950 border-2 border-amber-600 rounded-full text-xs font-black shadow-xs">
                   <MapPin className="w-3.5 h-3.5 text-stone-950" />

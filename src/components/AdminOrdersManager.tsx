@@ -28,6 +28,7 @@ import {
   NEXT_ORDER_STATUS_MAP,
   normalizeOrderStatus,
   updateOrderStatus,
+  updateTableStatus,
 } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
 
@@ -189,8 +190,20 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
   };
 
   const handleTestSound = () => {
-    audioAlert.triggerNewOrderAlert();
-    onNotify('ทดสอบเล่นเสียงเตือน: "มีออเดอร์เข้า"', 'info');
+    audioAlert.testVoiceAlert(1);
+    onNotify('📢 กำลังเล่นเสียงพูด: "มีออเดอร์เข้า โต๊ะ 1"', 'info');
+  };
+
+  const handleFreeTable = async (tableNumber: number | string) => {
+    try {
+      const rawNum = String(tableNumber).trim();
+      const parsed = parseInt(rawNum, 10);
+      const tableId = !isNaN(parsed) ? `table_${parsed}` : `table_${rawNum}`;
+      await updateTableStatus(tableId, false);
+      onNotify(`🟢 คืนสถานะ "โต๊ะ ${rawNum}" เป็นโต๊ะว่างเรียบร้อยแล้ว`, 'success');
+    } catch {
+      onNotify(`ไม่สามารถเปลี่ยนสถานะโต๊ะ ${tableNumber} ได้`, 'error');
+    }
   };
 
   // Handle bulk order history clearing
@@ -682,6 +695,18 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                                 <span className="whitespace-nowrap">
                                   เปลี่ยนเป็น {nextStatus}
                                 </span>
+                              </button>
+                            )}
+
+                            {/* ปุ่มคืนสถานะโต๊ะว่าง (สำหรับออเดอร์ทานที่ร้าน) */}
+                            {order.deliveryType === 'มาทานที่ร้าน' && order.tableNumber && (
+                              <button
+                                type="button"
+                                onClick={() => handleFreeTable(order.tableNumber!)}
+                                className="w-full py-1 px-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                                title={`คืนสถานะโต๊ะ ${order.tableNumber} เป็น 'โต๊ะว่าง'`}
+                              >
+                                <span>🟢 คืนสถานะโต๊ะ {order.tableNumber} ว่าง</span>
                               </button>
                             )}
 
