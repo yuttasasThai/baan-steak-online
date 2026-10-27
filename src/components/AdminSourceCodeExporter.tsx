@@ -99,6 +99,18 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
     }
   };
 
+  // Direct download single file helper (for quick GitHub file replacement)
+  const handleDownloadSingleFile = (filePath: string, filename: string) => {
+    const url = `/api/download-single-file?path=${encodeURIComponent(filePath)}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    onNotify(`📥 กำลังดาวน์โหลดไฟล์ ${filename}... นำไปใส่ในโฟลเดอร์ตามที่ระบุบน GitHub ได้เลยครับ`, 'success');
+  };
+
   return (
     <div className="space-y-5 text-stone-900 max-w-2xl mx-auto">
       {/* 1. Header Banner */}
@@ -268,7 +280,72 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
         </div>
       </div>
 
-      {/* 2.5 FAQ Section: Answers to user's exact questions */}
+      {/* 2.5 Vercel Missing Export Error Resolver Alert */}
+      <div className="bg-gradient-to-r from-rose-50 via-red-50 to-amber-50 rounded-3xl p-5 border-2 border-red-400 shadow-md space-y-3.5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-red-600 text-white flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] font-black rounded-md uppercase">
+                แก้ปัญหา Deploy ไม่ผ่าน
+              </span>
+              <span className="text-xs font-mono font-bold text-red-700">8 MISSING_EXPORT Errors</span>
+            </div>
+            <h3 className="text-sm font-extrabold text-red-950 mt-1">
+              ทำไม Vercel แจ้ง &quot;subscribeTables&quot; หรือ &quot;clearOrdersHistory&quot; is not exported?
+            </h3>
+            <p className="text-xs text-red-800 leading-relaxed mt-1">
+              <strong>สาเหตุ:</strong> บน GitHub ยังเป็นไฟล์ <code className="bg-white px-1.5 py-0.5 rounded font-mono font-bold text-red-700 border border-red-200">src/services/menuService.ts</code> รุ่นเดิม (เนื่องจากตอนอัปโหลดอาจไม่ได้เข้าไปในโฟลเดอร์ services หรือไม่ได้อัปโหลดไฟล์นี้)
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white/95 rounded-2xl p-4 border border-red-200 text-xs space-y-3 text-stone-800">
+          <p className="font-bold text-stone-900 flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <span>วิธีแก้ไขให้ผ่านฉลุยใน 1 นาที:</span>
+          </p>
+          <div className="space-y-2 text-stone-700">
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center shrink-0 text-[11px] mt-0.5">
+                1
+              </span>
+              <p>
+                กดปุ่มสีแดงด้านล่างนี้เพื่อ <strong>ดาวน์โหลด menuService.ts</strong> ลงในมือถือ
+              </p>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center shrink-0 text-[11px] mt-0.5">
+                2
+              </span>
+              <p>
+                เปิด GitHub ในมือถือ ไปที่คลัง <strong>baan-steak-online</strong> ➡️ กดเข้าไปในโฟลเดอร์ <strong className="text-stone-900">src</strong> ➡️ กดเข้าไปต่อในโฟลเดอร์ <strong className="text-red-700">services</strong>
+              </p>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="w-5 h-5 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center shrink-0 text-[11px] mt-0.5">
+                3
+              </span>
+              <p>
+                กดปุ่ม <strong>Add file</strong> ➡️ เลือก <strong>Upload files</strong> ➡️ เลือกไฟล์ <code>menuService.ts</code> ที่เพิ่งโหลดไป ➡️ กดปุ่มเขียว <strong>Commit changes</strong>
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleDownloadSingleFile('src/services/menuService.ts', 'menuService.ts')}
+            className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2 shadow-sm transition cursor-pointer active:scale-98"
+          >
+            <Download className="w-4 h-4" />
+            <span>📥 กดตรงนี้: ดาวน์โหลด menuService.ts (ไฟล์เดียวจบ นำไปวางใน src/services/)</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 2.6 FAQ Section: Answers to user's exact questions */}
       <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-3xl p-5 border-2 border-amber-300 shadow-xs space-y-3">
         <div className="flex items-center gap-2 text-sm font-black text-amber-950">
           <Sparkles className="w-4 h-4 text-amber-600" />
@@ -281,7 +358,7 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
               ❓ 1. โหลดแค่ไฟล์ที่มีการเปลี่ยนได้หรือไม่?
             </p>
             <p className="text-stone-700 leading-relaxed">
-              👉 <strong>ได้แน่นอนครับ 100%!</strong> หากท่านมีโปรเจกต์เดิมบน GitHub อยู่แล้ว ให้กดปุ่มสีเขียว <strong>"ดาวน์โหลดเฉพาะไฟล์ที่แก้ไข (Patch ZIP)"</strong> ด้านบน แล้วนำไฟล์ไปวางทับไฟล์เดิมบน GitHub ได้เลยครับ Vercel จะตรวจจับและ Deploy เวอร์ชั่นใหม่ให้ทันที!
+              👉 <strong>ได้แน่นอนครับ 100%!</strong> หากท่านมีโปรเจกต์เดิมบน GitHub อยู่แล้ว ให้กดปุ่มสีเขียว <strong>"ดาวน์โหลดเฉพาะไฟล์ที่แก้ไข (Patch ZIP)"</strong> หรือจะกดโหลดแยกทีละไฟล์ด้านล่างนี้ได้เลยครับ นำไฟล์ไปวางทับไฟล์เดิมบน GitHub Vercel จะตรวจจับและ Deploy เวอร์ชั่นใหม่ให้ทันที!
             </p>
           </div>
 
@@ -295,41 +372,122 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
           </div>
 
           <div className="bg-white/90 p-3.5 rounded-2xl border border-amber-200 space-y-2">
-            <p className="font-extrabold text-stone-900 text-xs">
-              📁 3. สรุปรายชื่อไฟล์ที่ต้องอัปเดตสำหรับเวอร์ชัน rev-2.6.0:
-            </p>
-            <div className="font-mono text-[11px] divide-y divide-stone-100 bg-stone-50 rounded-xl p-2.5 border border-stone-200">
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/components/AdminOrdersManager.tsx</span>
-                <span className="text-amber-800 font-sans font-bold">✨ ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง</span>
+            <div className="flex items-center justify-between">
+              <p className="font-extrabold text-stone-900 text-xs">
+                📁 3. สรุปรายชื่อไฟล์ที่ต้องอัปเดต (กดดาวน์โหลดรายไฟล์ได้ทันที):
+              </p>
+            </div>
+            <div className="font-mono text-[11px] divide-y divide-stone-100 bg-stone-50 rounded-xl p-2.5 border border-stone-200 space-y-1">
+              {/* menuService.ts */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-red-600 block">src/services/menuService.ts</span>
+                  <span className="text-[10px] text-stone-500 font-sans">คำสั่งโต๊ะและลบออเดอร์ (ไฟล์ที่ Vercel แจ้งเตือน)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/services/menuService.ts', 'menuService.ts')}
+                  className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/services/menuService.ts</span>
-                <span className="text-stone-600 font-sans">คำสั่งลบออเดอร์ใน Firestore</span>
+
+              {/* AdminOrdersManager.tsx */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-emerald-800 block">src/components/AdminOrdersManager.tsx</span>
+                  <span className="text-[10px] text-amber-800 font-sans font-bold">✨ ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/components/AdminOrdersManager.tsx', 'AdminOrdersManager.tsx')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/revisionInfo.ts</span>
-                <span className="text-stone-600 font-sans">ปรับเลข rev-2.6.0</span>
+
+              {/* AdminTableManager.tsx */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-emerald-800 block">src/components/AdminTableManager.tsx</span>
+                  <span className="text-[10px] text-stone-600 font-sans">ระบบจัดการโต๊ะว่าง/เต็ม</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/components/AdminTableManager.tsx', 'AdminTableManager.tsx')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/types.ts</span>
-                <span className="text-stone-600 font-sans">โครงสร้างโต๊ะและออเดอร์</span>
+
+              {/* App.tsx */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-emerald-800 block">src/App.tsx</span>
+                  <span className="text-[10px] text-stone-600 font-sans">หน้าหลักและแท็บจัดการโต๊ะ</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/App.tsx', 'App.tsx')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/components/AdminTableManager.tsx</span>
-                <span className="text-stone-600 font-sans">ระบบจัดการโต๊ะว่าง/เต็ม</span>
+
+              {/* types.ts */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-stone-700 block">src/types.ts</span>
+                  <span className="text-[10px] text-stone-500 font-sans">โครงสร้างโต๊ะและออเดอร์</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/types.ts', 'types.ts')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/components/CustomerWebsite.tsx</span>
-                <span className="text-stone-600 font-sans">หน้าเว็บสั่งอาหารลูกค้า</span>
+
+              {/* audioAlert.ts */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-amber-700 block">src/utils/audioAlert.ts</span>
+                  <span className="text-[10px] text-stone-500 font-sans">🔊 ระบบเสียงพูดจริง "มีออเดอร์เข้า"</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/utils/audioAlert.ts', 'audioAlert.ts')}
+                  className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/components/AdminMenuManager.tsx</span>
-                <span className="text-stone-600 font-sans">เปลี่ยนรูปภาพเมนูจริง</span>
-              </div>
-              <div className="py-1 flex justify-between">
-                <span className="font-bold text-emerald-800">src/App.tsx</span>
-                <span className="text-stone-600 font-sans">แท็บจัดการโต๊ะใน Admin</span>
+
+              {/* order-alert.mp3 */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-amber-800 block">public/order-alert.mp3</span>
+                  <span className="text-[10px] text-stone-500 font-sans">🎵 ไฟล์เสียงพูด MP3 "มีออเดอร์เข้า"</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('public/order-alert.mp3', 'order-alert.mp3')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
               </div>
             </div>
             <p className="text-[11px] text-stone-600 mt-1 italic">
@@ -338,6 +496,7 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
           </div>
         </div>
       </div>
+
 
       {/* 3. Step-by-Step Android Tutorial (โทรศัพท์ Android) */}
       <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm space-y-4">
