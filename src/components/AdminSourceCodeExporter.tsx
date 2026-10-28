@@ -378,16 +378,48 @@ export const AdminSourceCodeExporter: React.FC<AdminSourceCodeExporterProps> = (
               </p>
             </div>
             <div className="font-mono text-[11px] divide-y divide-stone-100 bg-stone-50 rounded-xl p-2.5 border border-stone-200 space-y-1">
+              {/* CustomerWebsite.tsx */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-red-700 block">src/components/CustomerWebsite.tsx</span>
+                  <span className="text-[10px] text-stone-600 font-sans">🌟 หน้าเว็บลูกค้า: แสดงโต๊ะว่าง/เต็มใต้ปุ่มเปิดร้าน, สแกนโต๊ะไม่ต้องใส่เบอร์โทร, นำ 'มาทานที่ร้าน' ออก</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/components/CustomerWebsite.tsx', 'CustomerWebsite.tsx')}
+                  className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
+              </div>
+
+              {/* revisionInfo.ts */}
+              <div className="py-1.5 flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-bold text-stone-800 block">src/revisionInfo.ts</span>
+                  <span className="text-[10px] text-stone-500 font-sans">หมายเลขเวอร์ชัน 2.8.0</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleDownloadSingleFile('src/revisionInfo.ts', 'revisionInfo.ts')}
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>ดาวน์โหลด</span>
+                </button>
+              </div>
+
               {/* menuService.ts */}
               <div className="py-1.5 flex items-center justify-between gap-2">
                 <div>
                   <span className="font-bold text-red-600 block">src/services/menuService.ts</span>
-                  <span className="text-[10px] text-stone-500 font-sans">คำสั่งโต๊ะและลบออเดอร์ (ไฟล์ที่ Vercel แจ้งเตือน)</span>
+                  <span className="text-[10px] text-stone-500 font-sans">คำสั่งโต๊ะและลบออเดอร์</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleDownloadSingleFile('src/services/menuService.ts', 'menuService.ts')}
-                  className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+                  className="px-2 py-1 bg-stone-200 hover:bg-stone-300 text-stone-800 rounded-md text-[10px] font-sans font-bold flex items-center gap-1 shrink-0 cursor-pointer"
                 >
                   <Download className="w-3 h-3" />
                   <span>ดาวน์โหลด</span>

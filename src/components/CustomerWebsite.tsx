@@ -111,12 +111,10 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         setUrlTableNumber(tableParam);
         setSelectedTableNumber(Number(tableParam));
         setDiningType('มาทานที่ร้าน');
+        setCustomerName(`โต๊ะ ${tableParam}`);
         setAddress(`ทานที่ร้าน โต๊ะ ${tableParam}`);
       } else if (typeParam) {
-        if (typeParam === 'dinein' || typeParam === 'dine_in') {
-          setDiningType('มาทานที่ร้าน');
-          setAddress('ทานที่ร้าน');
-        } else if (typeParam === 'pickup' || typeParam === 'takeaway') {
+        if (typeParam === 'pickup' || typeParam === 'takeaway') {
           setDiningType('นัดรับอาหาร');
         } else if (typeParam === 'delivery') {
           setDiningType('ส่งอาหารที่บ้าน');
@@ -306,30 +304,33 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       onNotify('กรุณาเลือกรายการอาหารก่อนกดสั่งซื้อ', 'error');
       return;
     }
-    if (!customerName.trim()) {
-      onNotify('กรุณากรอกชื่อเล่นสำหรับเรียกรับอาหาร', 'error');
+
+    const isTableOrder = Boolean(urlTableNumber || diningType === 'มาทานที่ร้าน');
+    const effectiveName = isTableOrder
+      ? (customerName.trim() || `โต๊ะ ${urlTableNumber || selectedTableNumber || 1}`)
+      : customerName.trim();
+
+    if (!effectiveName) {
+      onNotify(isTableOrder ? 'กรุณาระบุชื่อโต๊ะ' : 'กรุณากรอกชื่อสำหรับเรียกรับอาหาร', 'error');
       return;
     }
-    const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
-    if (cleanPhone.length < 9) {
-      onNotify('กรุณากรอกเบอร์โทรศัพท์ที่ติดต่อได้ (อย่างน้อย 9 หลัก)', 'error');
-      return;
+
+    // Phone number is ONLY required for delivery and pickup, NOT for table orders!
+    if (!isTableOrder) {
+      const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
+      if (cleanPhone.length < 9) {
+        onNotify('กรุณากรอกเบอร์โทรศัพท์ที่ติดต่อได้ (อย่างน้อย 9 หลัก)', 'error');
+        return;
+      }
     }
 
     // Validation according to dining type
     if (diningType === 'มาทานที่ร้าน') {
       if (tables.length > 0) {
         const isAllTablesFull = tables.every((t) => t.isOccupied);
-        if (isAllTablesFull) {
+        if (isAllTablesFull && !urlTableNumber) {
           onNotify('ขณะนี้โต๊ะในร้านเต็มทุกโต๊ะ กรุณาเลือกสั่งแบบ "ส่งอาหารที่บ้าน" หรือ "นัดรับอาหาร"', 'error');
           return;
-        }
-        if (selectedTableNumber) {
-          const chosen = tables.find((t) => t.number === selectedTableNumber);
-          if (chosen && chosen.isOccupied) {
-            onNotify(`โต๊ะ ${selectedTableNumber} มีลูกค้านั่งแล้ว (โต๊ะเต็ม) กรุณาเลือกโต๊ะว่างอื่น`, 'error');
-            return;
-          }
         }
       }
     } else if (diningType === 'ส่งอาหารที่บ้าน') {
@@ -343,7 +344,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       }
       if (distanceKm !== null && distanceKm > 12) {
         if (isOutOfZoneProceed !== 'yes') {
-          onNotify('ตำแหน่งอยู่นอกเขตบริการ (เกิน 12 กม.) กรุณาเลือกมาทานที่ร้าน หรือนัดรับอาหาร', 'error');
+          onNotify('ตำแหน่งอยู่นอกเขตบริการ (เกิน 12 กม.) กรุณาเลือกนัดรับอาหารที่ร้าน', 'error');
           return;
         }
       }
@@ -373,11 +374,11 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       const effectiveTotalAmount = diningType === 'ส่งอาหารที่บ้าน' ? totalAmount : foodSubtotal;
 
       const orderNum = await createOrder({
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
+        customerName: effectiveName,
+        customerPhone: isTableOrder ? (customerPhone.trim() || '-') : customerPhone.trim(),
         address: effectiveAddress,
         deliveryType: diningType,
-        tableNumber: selectedTableNumber !== null ? selectedTableNumber : undefined,
+        tableNumber: selectedTableNumber !== null ? selectedTableNumber : (urlTableNumber ? Number(urlTableNumber) : undefined),
         gps: diningType === 'ส่งอาหารที่บ้าน' ? gpsLocation : null,
         distanceKm: diningType === 'ส่งอาหารที่บ้าน' ? (distanceKm ?? 0) : 0,
         items: cart.map((c) => ({
@@ -436,6 +437,69 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-200 animate-ping"></span>
           <span className="text-base sm:text-lg">🟢</span>
           <span className="drop-shadow-xs font-black tracking-wide">วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)</span>
+        </div>
+      )}
+
+      {/* 2.0 Real-time Table Status Indicator (ใต้ปุ่ม ร้านเปิด/ร้านปิด ตามที่กำหนดในลิงก์ Admin) */}
+      {tables && tables.length > 0 && (
+        <div className="w-full bg-white rounded-2xl p-3 sm:p-3.5 border border-stone-200 shadow-2xs space-y-2.5 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-black text-stone-900">
+              <span className="text-sm">🍽️</span>
+              <span>สถานะโต๊ะอาหารในร้าน (เรียลไทม์)</span>
+            </div>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                tables.every((t) => t.isOccupied)
+                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+              }`}
+            >
+              {tables.every((t) => t.isOccupied)
+                ? '🔴 โต๊ะเต็มทุกโต๊ะ'
+                : `🟢 ว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
+            </span>
+          </div>
+
+          {/* Grid of Individual Tables showing ว่าง / เต็ม */}
+          <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 gap-2">
+            {tables.map((tbl) => {
+              const isOccupied = tbl.isOccupied;
+              const isMyScannedTable =
+                urlTableNumber &&
+                (String(tbl.number) === urlTableNumber || tbl.name === `โต๊ะ ${urlTableNumber}`);
+
+              return (
+                <div
+                  key={tbl.id}
+                  className={`py-2 px-1.5 rounded-xl text-center border transition flex flex-col items-center justify-center gap-0.5 ${
+                    isMyScannedTable
+                      ? 'bg-amber-50 border-2 border-amber-500 ring-2 ring-amber-300 text-amber-950 font-black shadow-xs'
+                      : isOccupied
+                      ? 'bg-rose-50/70 border-rose-200 text-rose-800'
+                      : 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-extrabold'
+                  }`}
+                >
+                  <span className="text-xs font-black truncate max-w-full">
+                    {tbl.name}
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
+                      isOccupied
+                        ? 'bg-rose-200/70 text-rose-800'
+                        : 'bg-emerald-200/80 text-emerald-900'
+                    }`}
+                  >
+                    {isOccupied ? '🔴 เต็ม' : '🟢 ว่าง'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-[10px] text-stone-400 text-center">
+            * ข้อมูลสถานะโต๊ะซิงก์ตรงจากร้านแบบเรียลไทม์ (ลูกค้าที่ร้านสามารถสแกน QR Code ประจำโต๊ะเพื่อสั่งได้ทันที)
+          </p>
         </div>
       )}
 
@@ -792,36 +856,60 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
               {/* Customer Details: Nickname, Phone, Address */}
               <div className="space-y-3">
                 <div className="text-xs font-bold text-stone-700 uppercase tracking-wider">
-                  ข้อมูลผู้สั่งอาหาร
+                  {urlTableNumber || diningType === 'มาทานที่ร้าน' ? 'ข้อมูลโต๊ะสั่งอาหาร' : 'ข้อมูลผู้สั่งอาหาร'}
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">
-                    ชื่อเล่น <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="เช่น น้องมุก, พี่เอก"
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
-                  />
-                </div>
+                {/* 1) กรณีสั่งจากการสแกนที่โต๊ะ: ให้กรอก/แสดงเป็น "ชื่อโต๊ะ" และ "ไม่ต้องมีช่องพิมพ์เบอร์โทร" */}
+                {urlTableNumber || diningType === 'มาทานที่ร้าน' ? (
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-stone-700 mb-1">
+                      ชื่อโต๊ะ / หมายเลขโต๊ะ <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="เช่น โต๊ะ 1, โต๊ะ 2"
+                      className="w-full px-3.5 py-2.5 bg-amber-50/50 border-2 border-amber-300 rounded-xl text-sm font-bold text-stone-900 focus:outline-none focus:border-red-500 focus:bg-white"
+                    />
+                    <div className="text-[11px] text-stone-500 flex items-center gap-1">
+                      <span className="text-emerald-600 font-bold">✓ สแกนจากโต๊ะอาหารในร้าน</span>
+                      <span>(ส่งออเดอร์เข้าห้องครัวโดยตรง ไม่จำเป็นต้องกรอกเบอร์โทร)</span>
+                    </div>
+                  </div>
+                ) : (
+                  /* 2) กรณีสั่ง Delivery หรือ สแกน QR Code รับกลับบ้าน: มีช่องพิมพ์ชื่อลูกค้า และ เบอร์โทรศัพท์ */
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ชื่อลูกค้า / ชื่อเล่น <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="เช่น คุณสมศักดิ์, พี่เอก, น้องมุก"
+                        className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
+                      />
+                    </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-stone-700 mb-1">
-                    เบอร์โทรศัพท์ <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    placeholder="เช่น 081-234-5678"
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
-                  />
-                </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        เบอร์โทรศัพท์ <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="เช่น 081-234-5678"
+                        className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
+                      />
+                    </div>
+                  </>
+                )}
 
                 {/* 🎁 แจ้งสิทธิของฟรีเมื่อลูกค้ามีแต้มสะสม */}
                 {customerRewardsNotice.length > 0 && (
@@ -841,197 +929,80 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   </div>
                 )}
 
-                {/* 1, 2, 3. ปุ่มเลือกรูปแบบการรับอาหาร ใต้เบอร์โทรศัพท์ */}
-                <div className="space-y-1.5 pt-1">
-                  <label className="block text-xs font-bold text-stone-800">
-                    เลือกรูปแบบการรับอาหาร <span className="text-red-500">*</span>
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDiningType('มาทานที่ร้าน');
-                        setIsOutOfZoneProceed(null);
-                      }}
-                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 ${
-                        diningType === 'มาทานที่ร้าน'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
-                      }`}
-                    >
-                      <Store className="w-4 h-4" />
-                      <span>1) มาทานที่ร้าน</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDiningType('ส่งอาหารที่บ้าน');
-                      }}
-                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 ${
-                        diningType === 'ส่งอาหารที่บ้าน'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
-                      }`}
-                    >
-                      <Truck className="w-4 h-4" />
-                      <span>2) ส่งอาหารที่บ้าน</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDiningType('นัดรับอาหาร');
-                        setIsOutOfZoneProceed(null);
-                      }}
-                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 ${
-                        diningType === 'นัดรับอาหาร'
-                          ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300'
-                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
-                      }`}
-                    >
-                      <MapPin className="w-4 h-4" />
-                      <span>3) นัดรับอาหาร</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* --- 1.1 กรณี มาทานที่ร้าน: แสดงสถานะโต๊ะว่าง/เต็ม + เลือกโต๊ะ + พิกัดร้าน --- */}
-                {diningType === 'มาทานที่ร้าน' && (
-                  <div className="space-y-3 animate-fadeIn">
-                    {/* ข้อมูลโต๊ะอาหารของร้าน (ซิงค์เรียลไทม์จากระบบร้าน) */}
-                    {tables && tables.length > 0 && (
-                      <div className="p-3.5 bg-white rounded-2xl border border-rose-200 shadow-2xs space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <div className="font-extrabold text-stone-900 flex items-center gap-1.5 text-xs">
-                            <Utensils className="w-4 h-4 text-red-600" />
-                            <span>เลือกโต๊ะนั่งทานที่ร้าน</span>
+                {/* 3) รูปแบบรับอาหาร 'มาทานที่ร้าน' ให้นำออกจากตัวเลือกสั่งทั่วไป (แสดงเฉพาะ Delivery & Pickup) */}
+                {urlTableNumber || diningType === 'มาทานที่ร้าน' ? (
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-xs font-bold text-stone-800">
+                      รูปแบบการรับอาหาร
+                    </label>
+                    <div className="p-3 bg-amber-50 rounded-2xl border-2 border-amber-300 flex items-center justify-between shadow-2xs">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-xl">🍽️</span>
+                        <div>
+                          <div className="text-xs font-black text-amber-950">
+                            ทานที่ร้าน: {customerName || (urlTableNumber ? `โต๊ะ ${urlTableNumber}` : 'โต๊ะอาหาร')}
                           </div>
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide ${
-                              tables.every((t) => t.isOccupied)
-                                ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse'
-                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            }`}
-                          >
-                            {tables.every((t) => t.isOccupied)
-                              ? '🔴 ขณะนี้โต๊ะเต็มทุกโต๊ะ'
-                              : `🟢 โต๊ะว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
-                          </span>
+                          <div className="text-[11px] text-amber-800 font-medium">
+                            สแกนสั่งจาก QR Code ประจำโต๊ะ (ฟรีค่าจัดส่ง 0 บาท)
+                          </div>
                         </div>
-
-                        {/* แจ้งเตือนกรณีโต๊ะเต็มทุกโต๊ะ */}
-                        {tables.every((t) => t.isOccupied) ? (
-                          <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-950 space-y-1">
-                            <div className="flex items-center gap-1.5 font-black text-rose-800">
-                              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                              <span>ขออภัย ขณะนี้โต๊ะในร้านเต็มทุกโต๊ะ (0/{tables.length} ว่าง)</span>
-                            </div>
-                            <p className="text-[11px] text-rose-700 leading-relaxed font-medium">
-                              ทางร้านของดรับออเดอร์นั่งทานที่ร้านชั่วคราว ท่านสามารถเลือกสั่งแบบ{' '}
-                              <strong className="text-rose-900 underline">"ส่งอาหารที่บ้าน"</strong> หรือ{' '}
-                              <strong className="text-rose-900 underline">"นัดรับอาหาร"</strong> ได้ตามปกติครับ
-                            </p>
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="text-[11px] text-stone-500 flex items-center justify-between">
-                              <span>แตะเลือกโต๊ะที่ท่านต้องการนั่ง:</span>
-                              <div className="flex items-center gap-2 text-[10px]">
-                                <span className="flex items-center gap-1 text-emerald-700 font-bold">
-                                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span> ว่าง
-                                </span>
-                                <span className="flex items-center gap-1 text-stone-400 font-bold">
-                                  <span className="w-2 h-2 rounded-full bg-rose-400"></span> เต็ม
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* ตารางปุ่มเลือกโต๊ะ */}
-                            <div className="grid grid-cols-4 sm:grid-cols-4 gap-2">
-                              {tables.map((tbl) => {
-                                const isSelected = selectedTableNumber === tbl.number;
-                                return (
-                                  <button
-                                    key={tbl.id}
-                                    type="button"
-                                    disabled={tbl.isOccupied}
-                                    onClick={() => {
-                                      setSelectedTableNumber(tbl.number);
-                                      setAddress(`ทานที่ร้าน ${tbl.name}`);
-                                    }}
-                                    className={`py-2 px-1 rounded-xl text-center border transition flex flex-col items-center justify-center gap-0.5 ${
-                                      tbl.isOccupied
-                                        ? 'bg-stone-100 border-stone-200 text-stone-400 opacity-60 cursor-not-allowed'
-                                        : isSelected
-                                        ? 'bg-red-600 text-white border-red-700 shadow-sm ring-2 ring-red-400 font-black scale-102'
-                                        : 'bg-emerald-50/70 border-emerald-200 text-stone-800 hover:bg-emerald-100 hover:border-emerald-300 cursor-pointer active:scale-95'
-                                    }`}
-                                  >
-                                    <span className="font-extrabold text-xs">{tbl.name}</span>
-                                    <span
-                                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
-                                        tbl.isOccupied
-                                          ? 'bg-rose-100 text-rose-700'
-                                          : isSelected
-                                          ? 'bg-white/20 text-white'
-                                          : 'bg-emerald-100 text-emerald-800'
-                                      }`}
-                                    >
-                                      {tbl.isOccupied ? '🔴 เต็ม' : '🟢 ว่าง'}
-                                    </span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-
-                            {selectedTableNumber && (
-                              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 font-bold flex items-center justify-between">
-                                <span className="flex items-center gap-1.5">
-                                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                  <span>เลือก: โต๊ะ {selectedTableNumber} เรียบร้อย</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedTableNumber(null)}
-                                  className="text-[10px] text-stone-500 hover:text-rose-600 underline font-normal"
-                                >
-                                  เปลี่ยนโต๊ะ
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
-                    )}
-
-                    {/* พิกัดร้าน บ้าน สเต็กออนไลน์ */}
-                    <div className="p-3.5 bg-rose-50/80 rounded-2xl border border-rose-200 text-xs text-stone-800 space-y-2">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-0.5">
-                          <div className="font-extrabold text-red-700 flex items-center gap-1.5 text-xs sm:text-sm">
-                            <Store className="w-4 h-4 text-red-600 shrink-0" />
-                            <span>ตำแหน่งพิกัดร้าน บ้าน สเต็กออนไลน์</span>
-                          </div>
-                          <p className="text-[11px] text-stone-600 leading-relaxed">
-                            อ.ชุมแพ จ.ขอนแก่น (พิกัด: {shopLat.toFixed(4)}, {shopLng.toFixed(4)})
-                          </p>
-                        </div>
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${shopLat},${shopLng}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl flex items-center gap-1 shadow-xs shrink-0 transition"
-                        >
-                          <Navigation className="w-3.5 h-3.5" />
-                          <span>เปิด Google Maps</span>
-                        </a>
-                      </div>
-                      <div className="text-[11px] text-emerald-800 bg-white/80 p-2 rounded-xl border border-rose-100 flex items-center gap-1.5 font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        <span>รับประทานที่ร้าน ไม่มีค่าจัดส่ง (พร้อมข้ามไปสรุปยอดชำระเงิน)</span>
-                      </div>
+                      <span className="px-2.5 py-1 bg-amber-500 text-stone-950 rounded-xl text-[10px] font-black shrink-0 border border-amber-600">
+                        ประจำโต๊ะ
+                      </span>
                     </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-xs font-bold text-stone-800">
+                      เลือกรูปแบบการรับอาหาร <span className="text-red-500">*</span>
+                    </label>
+                    {/* เหลือเฉพาะ 2 ตัวเลือก: ส่งอาหารที่บ้าน (Delivery) และ นัดรับอาหาร (Pickup) */}
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-stone-100 rounded-2xl border border-stone-200">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiningType('ส่งอาหารที่บ้าน');
+                        }}
+                        className={`py-2.5 px-2 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 ${
+                          diningType === 'ส่งอาหารที่บ้าน'
+                            ? 'bg-red-600 text-white shadow-xs'
+                            : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                        }`}
+                      >
+                        <Truck className="w-4 h-4" />
+                        <span>1) ส่งอาหารที่บ้าน (Delivery)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiningType('นัดรับอาหาร');
+                          setIsOutOfZoneProceed(null);
+                        }}
+                        className={`py-2.5 px-2 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 ${
+                          diningType === 'นัดรับอาหาร'
+                            ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300'
+                            : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                        }`}
+                      >
+                        <MapPin className="w-4 h-4" />
+                        <span>2) นัดรับอาหาร (รับกลับบ้าน)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* --- สรุปข้อมูลสำหรับผู้สั่งสแกนจากโต๊ะ --- */}
+                {(urlTableNumber || diningType === 'มาทานที่ร้าน') && (
+                  <div className="p-3 bg-rose-50/70 rounded-2xl border border-rose-200 text-xs text-stone-800 space-y-1 animate-fadeIn">
+                    <div className="font-extrabold text-red-700 flex items-center gap-1.5 text-xs">
+                      <Store className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                      <span>{SHOP_INFO.name} (อ.ชุมแพ)</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      ออเดอร์นี้จะถูกส่งไปยังห้องครัวทันทีโดยระบุ {customerName || `โต๊ะ ${urlTableNumber || 1}`} (ไม่มีค่าจัดส่ง)
+                    </p>
                   </div>
                 )}
 
@@ -1189,32 +1160,20 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                           {isOutOfZoneProceed === 'yes' && (
                             <div className="p-2.5 bg-white rounded-xl border border-amber-300 space-y-2 text-xs">
                               <p className="font-bold text-stone-800">
-                                กรุณาเลือกรูปแบบที่ต้องการสั่งต่อ:
+                                ท่านสามารถเปลี่ยนเป็นรูปแบบนัดรับกลับบ้านได้:
                               </p>
-                              <div className="grid grid-cols-2 gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setDiningType('มาทานที่ร้าน');
-                                    setIsOutOfZoneProceed(null);
-                                    onNotify('เปลี่ยนรูปแบบเป็น: มาทานที่ร้าน', 'info');
-                                  }}
-                                  className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1 shadow-xs"
-                                >
-                                  <Store className="w-3.5 h-3.5" />
-                                  <span>มาทานที่ร้าน</span>
-                                </button>
+                              <div>
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setDiningType('นัดรับอาหาร');
                                     setIsOutOfZoneProceed(null);
-                                    onNotify('เปลี่ยนรูปแบบเป็น: นัดรับอาหาร', 'info');
+                                    onNotify('เปลี่ยนรูปแบบเป็น: นัดรับอาหาร (รับกลับบ้าน)', 'info');
                                   }}
-                                  className="py-2 px-2 bg-amber-400 hover:bg-amber-500 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1 shadow-xs ring-1 ring-amber-500"
+                                  className="w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-500 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs ring-1 ring-amber-500"
                                 >
-                                  <MapPin className="w-3.5 h-3.5" />
-                                  <span>นัดรับอาหาร</span>
+                                  <MapPin className="w-4 h-4" />
+                                  <span>เปลี่ยนเป็น "นัดรับอาหารที่ร้าน (รับกลับบ้าน)" ฟรีค่าจัดส่ง</span>
                                 </button>
                               </div>
                             </div>
