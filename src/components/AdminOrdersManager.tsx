@@ -679,21 +679,27 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                               <span>ยกเลิกออเดอร์</span>
                             </button>
 
-                            {/* ปุ่มเปลี่ยนเป็นสถานะถัดไป */}
+                            {/* ปุ่มเปลี่ยนเป็นสถานะถัดไป / กดรับออเดอร์ */}
                             {nextStatus && (
                               <button
                                 type="button"
                                 onClick={() => handleNextStatus(order, nextStatus)}
                                 disabled={updatingId === order.id}
-                                className="w-full py-1.5 px-2.5 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-300 text-white text-[11px] font-bold rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer"
+                                className={`w-full py-1.5 px-2.5 active:scale-98 disabled:bg-stone-300 text-white text-[11px] font-bold rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer ${
+                                  order.status === 'รับออเดอร์'
+                                    ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 font-extrabold ring-2 ring-emerald-300'
+                                    : 'bg-red-600 hover:bg-red-700'
+                                }`}
                               >
                                 {updatingId === order.id ? (
                                   <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : order.status === 'รับออเดอร์' ? (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-white" />
                                 ) : (
                                   <ChevronRight className="w-3 h-3" />
                                 )}
                                 <span className="whitespace-nowrap">
-                                  เปลี่ยนเป็น {nextStatus}
+                                  {order.status === 'รับออเดอร์' ? '✅ กดรับออเดอร์ (เริ่มทำ)' : `เปลี่ยนเป็น ${nextStatus}`}
                                 </span>
                               </button>
                             )}
@@ -1222,14 +1228,24 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                       type="button"
                       onClick={() => handleNextStatus(detailOrder, NEXT_ORDER_STATUS_MAP[detailOrder.status]!)}
                       disabled={updatingId === detailOrder.id}
-                      className="py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                      className={`py-2.5 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                        detailOrder.status === 'รับออเดอร์'
+                          ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 font-extrabold ring-2 ring-emerald-300'
+                          : 'bg-red-600 hover:bg-red-700'
+                      }`}
                     >
                       {updatingId === detailOrder.id ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : detailOrder.status === 'รับออเดอร์' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5" />
                       ) : (
                         <ChevronRight className="w-3.5 h-3.5" />
                       )}
-                      <span>เป็น {NEXT_ORDER_STATUS_MAP[detailOrder.status]}</span>
+                      <span>
+                        {detailOrder.status === 'รับออเดอร์'
+                          ? '✅ กดรับออเดอร์ (เริ่มทำ)'
+                          : `เป็น ${NEXT_ORDER_STATUS_MAP[detailOrder.status]}`}
+                      </span>
                     </button>
                   )}
                 </div>
