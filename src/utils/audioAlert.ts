@@ -199,6 +199,11 @@ class AudioAlertService {
     });
   }
 
+  private repeatTimer: any = null;
+  private isAlertLooping = false;
+  private pendingOrdersList: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = [];
+  private currentCycleIndex = 0;
+
   /**
    * Speak supplementary text using Web Speech API (e.g. "โต๊ะ 1" or "รับกลับบ้าน")
    */
@@ -229,30 +234,124 @@ class AudioAlertService {
   }
 
   /**
-   * Full alert: Play chime and announce "มีออเดอร์เข้า" with voice audio
-   * plus optional table number announcement
+   * Play single alert cycle: Chime -> Spoken "มีออเดอร์เข้า" -> "โต๊ะ X" / Delivery type
    */
-  public triggerNewOrderAlert(info?: { tableNumber?: number | string; deliveryType?: string }): void {
+  public playOneAlertCycle(): void {
     if (!this.isAudioEnabled) return;
+
+    const targetOrder =
+      this.pendingOrdersList.length > 0
+        ? this.pendingOrdersList[this.currentCycleIndex % this.pendingOrdersList.length]
+        : undefined;
+
+    this.currentCycleIndex++;
 
     this.unlock();
     this.playChime();
 
-    // Play the clear spoken voice "มีออเดอร์เข้า"
     setTimeout(async () => {
       await this.playSpokenVoiceAudio();
 
-      // If a specific table is specified (e.g. โต๊ะ 1), also announce the table
-      if (info?.tableNumber) {
+      if (targetOrder?.tableNumber) {
         setTimeout(() => {
-          this.speakText(`โต๊ะ ${info.tableNumber}`);
-        }, 200);
-      } else if (info?.deliveryType === 'นัดรับอาหาร') {
+          this.speakText(`โต๊ะ ${targetOrder.tableNumber}`);
+        }, 180);
+      } else if (targetOrder?.deliveryType === 'นัดรับอาหาร') {
         setTimeout(() => {
           this.speakText('นัดรับอาหาร');
-        }, 200);
+        }, 180);
+      } else if (targetOrder?.deliveryType === 'ส่งอาหารที่บ้าน') {
+        setTimeout(() => {
+          this.speakText('ส่งอาหารที่บ้าน');
+        }, 180);
       }
     }, 280);
+  }
+
+  /**
+   * Start repeating alert loop until all pending incoming orders are accepted
+   */
+  public startRepeatingOrderAlert(
+    orders: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = []
+  ): void {
+    this.pendingOrdersList = [...orders];
+
+    if (this.pendingOrdersList.length === 0) {
+      this.stopRepeatingOrderAlert();
+      return;
+    }
+
+    if (this.isAlertLooping) {
+      return; // Already looping, list was updated
+    }
+
+    this.isAlertLooping = true;
+    this.currentCycleIndex = 0;
+
+    // Play immediately first round
+    this.playOneAlertCycle();
+
+    // Repeat every 6.2 seconds until stopped
+    if (this.repeatTimer) {
+      clearInterval(this.repeatTimer);
+    }
+    this.repeatTimer = setInterval(() => {
+      if (!this.isAlertLooping || this.pendingOrdersList.length === 0) {
+        this.stopRepeatingOrderAlert();
+        return;
+      }
+      this.playOneAlertCycle();
+    }, 6200);
+  }
+
+  /**
+   * Update active pending orders list during looping
+   */
+  public updateRepeatingOrders(
+    orders: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }>
+  ): void {
+    this.pendingOrdersList = [...orders];
+    if (this.pendingOrdersList.length === 0) {
+      this.stopRepeatingOrderAlert();
+    } else if (!this.isAlertLooping) {
+      this.startRepeatingOrderAlert(orders);
+    }
+  }
+
+  /**
+   * Stop repeating alert loop immediately (called when user presses "กดรับออเดอร์")
+   */
+  public stopRepeatingOrderAlert(): void {
+    if (this.repeatTimer) {
+      clearInterval(this.repeatTimer);
+      this.repeatTimer = null;
+    }
+    this.isAlertLooping = false;
+    this.pendingOrdersList = [];
+
+    // Immediately stop any active speech
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  public isLooping(): boolean {
+    return this.isAlertLooping;
+  }
+
+  /**
+   * Single shot alert (backward compatible)
+   */
+  public triggerNewOrderAlert(info?: { tableNumber?: number | string; deliveryType?: string }): void {
+    if (info) {
+      this.startRepeatingOrderAlert([info]);
+    } else {
+      this.playOneAlertCycle();
+    }
   }
 
   /**
