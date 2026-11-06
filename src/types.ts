@@ -21,6 +21,7 @@ export interface CategoryItem {
 export type OrderStatus =
   | 'รับออเดอร์'
   | 'กำลังทำ'
+  | 'ส่งออเดอร์'
   | 'กำลังส่ง'
   | 'ส่งแล้ว'
   | 'ยกเลิก';

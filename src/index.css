@@ -18,3 +18,44 @@
 .animate-fadeIn {
   animation: fadeIn 0.15s ease-out forwards;
 }
+
+/* 🖨️ Thermal POS Receipt Printing Styles */
+@media print {
+  body {
+    visibility: hidden;
+    background: #fff !important;
+    color: #000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print,
+  .no-print * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  #printable-receipt-wrapper,
+  #printable-receipt-wrapper * {
+    visibility: visible !important;
+  }
+
+  #printable-receipt-wrapper {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 6px !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  @page {
+    margin: 4mm;
+    size: auto;
+  }
+}

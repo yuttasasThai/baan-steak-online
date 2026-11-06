@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
+  Bell,
   CheckCircle2,
   Download,
   Link2,
@@ -57,7 +58,7 @@ import {
   updateOrderStatus,
   updateShopSettings,
 } from './services/menuService';
-import { CategoryItem, CustomerRecord, MenuItem, Order, RestaurantTable, ShopSettings } from './types';
+import { CategoryItem, CustomerRecord, MenuItem, Order, OrderStatus, RestaurantTable, ShopSettings } from './types';
 
 interface Toast {
   id: string;
@@ -206,6 +207,15 @@ export function App() {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders]);
 
+  // 8.1 All Active Orders currently in progress (รับออเดอร์, กำลังทำ, ส่งออเดอร์, กำลังส่ง)
+  const allActiveOrders = useMemo(() => {
+    return orders
+      .filter(
+        (o) => !o.isCancelled && !o.isArchived && o.status !== 'ส่งแล้ว' && o.status !== 'ยกเลิก'
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [orders]);
+
   // Incoming Order Modal & Repeating Audio Loop States
   const [isIncomingModalOpen, setIsIncomingModalOpen] = useState(false);
   const [isSoundEnabled, setIsSoundEnabled] = useState(() => audioAlert.isEnabled());
@@ -220,6 +230,7 @@ export function App() {
     }
 
     if (pendingIncomingOrders.length > 0) {
+      // Auto pop up modal when new orders arrive or on first mount in admin view with pending orders
       if (
         prevPendingCountRef.current === null ||
         pendingIncomingOrders.length > prevPendingCountRef.current
@@ -227,14 +238,18 @@ export function App() {
         setIsIncomingModalOpen(true);
       }
 
+      // Start/update repeating voice audio loop until accepted
       audioAlert.updateRepeatingOrders(
         pendingIncomingOrders.map((o) => ({
+          customerName: o.customerName,
           tableNumber: o.tableNumber,
           deliveryType: o.deliveryType,
           orderNumber: o.orderNumber,
+          status: o.status || 'รับออเดอร์',
         }))
       );
     } else {
+      // All pending orders accepted: stop looping audio and close modal
       audioAlert.stopRepeatingOrderAlert();
       setIsIncomingModalOpen(false);
     }
@@ -254,18 +269,54 @@ export function App() {
       if (pendingIncomingOrders.length > 0 && currentView === 'admin') {
         audioAlert.startRepeatingOrderAlert(
           pendingIncomingOrders.map((o) => ({
+            customerName: o.customerName,
             tableNumber: o.tableNumber,
             deliveryType: o.deliveryType,
             orderNumber: o.orderNumber,
+            status: o.status || 'รับออเดอร์',
           }))
         );
       }
     }
   };
 
+  const handleUpdateOrderStatus = async (order: Order, nextStatus: OrderStatus) => {
+    try {
+      await updateOrderStatus(order, nextStatus);
+      // 🔊 เล่นเสียงเตือนสถานะ: "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/กลับบ้าน/ส่งที่บ้าน) + สถานะออเดอร์"
+      audioAlert.playOrderStatusAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: nextStatus,
+        },
+        nextStatus
+      );
+      notify(
+        `✅ อัปเดตสถานะออเดอร์ #${order.orderNumber} เป็น "${nextStatus}" เรียบร้อย`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Update order status error:', err);
+      notify('ไม่สามารถเปลี่ยนสถานะออเดอร์ได้', 'error');
+    }
+  };
+
   const handleAcceptOrder = async (order: Order) => {
     try {
       await updateOrderStatus(order, 'กำลังทำ');
+      audioAlert.playOrderStatusAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: 'กำลังทำ',
+        },
+        'กำลังทำ'
+      );
       notify(
         `✅ รับออเดอร์ #${order.orderNumber} เรียบร้อยแล้ว (สถานะเปลี่ยนเป็น: กำลังทำ)`,
         'success'
@@ -281,6 +332,7 @@ export function App() {
       for (const ord of pendingIncomingOrders) {
         await updateOrderStatus(ord, 'กำลังทำ');
       }
+      audioAlert.playOrderStatusAlert(undefined, 'รับออเดอร์ทั้งหมดแล้ว');
       notify(
         `✅ รับออเดอร์ทั้งหมด ${pendingIncomingOrders.length} รายการเรียบร้อยแล้ว`,
         'success'
@@ -295,6 +347,16 @@ export function App() {
   const handleCancelOrder = async (order: Order, reason?: string) => {
     try {
       await cancelOrder(order, reason || 'ร้านไม่สะดวกรับ');
+      audioAlert.playOrderStatusAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: 'ยกเลิก',
+        },
+        'ยกเลิก'
+      );
       notify(`ยกเลิกออเดอร์ #${order.orderNumber} เรียบร้อย`, 'info');
     } catch (err) {
       console.error('Cancel order error:', err);
@@ -323,6 +385,7 @@ export function App() {
             }
           })
           .catch(() => {
+            // If offline or static host, keep session if valid
             setIsAdminLoggedIn(true);
           });
       }
@@ -367,6 +430,7 @@ export function App() {
     window.addEventListener('popstate', handleUrlChange);
     window.addEventListener('hashchange', handleUrlChange);
 
+    // Initial check on mount: if on admin URL and not logged in, prompt login modal
     if (checkIsAdminPath()) {
       const token = sessionStorage.getItem('admin_session_token');
       if (!token) {
@@ -472,6 +536,21 @@ export function App() {
 
             {currentView === 'admin' ? (
               <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                {/* 🚨 ปุ่มเปิดหน้าต่างเด้งออเดอร์ทั้งหมดแบบเรียลไทม์ */}
+                <button
+                  type="button"
+                  onClick={() => setIsIncomingModalOpen(true)}
+                  className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl text-[11px] sm:text-xs font-black transition cursor-pointer flex items-center gap-1 shadow-xs shrink-0 ${
+                    pendingIncomingOrders.length > 0
+                      ? 'bg-red-600 text-white animate-pulse'
+                      : 'bg-amber-100 text-amber-950 border border-amber-300 hover:bg-amber-200'
+                  }`}
+                  title="เปิดหน้าต่างเด้งออเดอร์ทั้งหมด และดูสถานะเรียลไทม์ รับออเดอร์, กำลังทำ, ส่งออเดอร์"
+                >
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>หน้าต่างออเดอร์ ({allActiveOrders.length})</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -709,6 +788,7 @@ export function App() {
             categories={categories}
             settings={settings}
             tables={tables}
+            orders={orders}
             onNotify={notify}
             onOpenAdminLogin={handleOpenAdmin}
             isAdmin={isAdminLoggedIn}
@@ -781,11 +861,13 @@ export function App() {
         categories={categories}
       />
 
-      {/* 🚨 Incoming Orders Popup Modal (เด้งขึ้นมากลางจอเมื่อมีออเดอร์เข้า พร้อมเตือนซ้ำจนกว่าจะกดรับ) */}
+      {/* 🚨 Incoming & Active Orders Popup Modal (เด้งขึ้นมาเห็นรายการออเดอร์ทั้งหมด และสถานะเรียลไทม์ รับออเดอร์, กำลังทำ, ส่งออเดอร์) */}
       <IncomingOrderModal
         isOpen={isIncomingModalOpen && currentView === 'admin'}
+        orders={allActiveOrders}
         pendingOrders={pendingIncomingOrders}
         onAcceptOrder={handleAcceptOrder}
+        onUpdateStatus={handleUpdateOrderStatus}
         onAcceptAllOrders={handleAcceptAllOrders}
         onCancelOrder={handleCancelOrder}
         onClose={() => setIsIncomingModalOpen(false)}
@@ -826,3 +908,6 @@ export function App() {
 }
 
 export default App;
+
+
+
