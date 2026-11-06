@@ -402,12 +402,13 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       setCompletedOrderNumber(orderNum);
       setCart([]);
       setIsCartOpen(false);
+      // เคลียร์ข้อมูลลูกค้าทันที เพื่อไม่ให้ชื่อลูกค้าซ้ำกันในการสั่งครั้งต่อไป
+      setCustomerName('');
+      setCustomerPhone('');
+      setAddress('');
+      setGpsLocation(null);
+      setIsOutOfZoneProceed(null);
       onNotify('สั่งอาหารสำเร็จเรียบร้อย', 'success');
-    } catch (err) {
-      onNotify('เกิดข้อผิดพลาดในการสั่งอาหาร กรุณาลองใหม่อีกครั้ง', 'error');
-    } finally {
-      setIsSubmittingOrder(false);
-    }
   };
 
   return (
