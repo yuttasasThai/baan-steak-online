@@ -383,16 +383,17 @@ export function formatOrderThaiMonth(isoString?: string): string {
 // Normalize order status to strict allowed statuses
 export function normalizeOrderStatus(rawStatus?: string): OrderStatus {
   if (rawStatus === 'กำลังทำ') return 'กำลังทำ';
-  if (rawStatus === 'กำลังส่ง' || rawStatus === 'ออกไปส่ง') return 'กำลังส่ง';
-  if (rawStatus === 'ส่งแล้ว') return 'ส่งแล้ว';
+  if (rawStatus === 'ส่งออเดอร์' || rawStatus === 'กำลังส่ง' || rawStatus === 'ออกไปส่ง') return 'ส่งออเดอร์';
+  if (rawStatus === 'ส่งแล้ว' || rawStatus === 'สำเร็จ') return 'ส่งแล้ว';
   if (rawStatus === 'ยกเลิก') return 'ยกเลิก';
   return 'รับออเดอร์';
 }
 
-// Strictly 1-way order status forward transitions
+// Strictly 1-way order status forward transitions: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว
 export const NEXT_ORDER_STATUS_MAP: Record<OrderStatus, OrderStatus | null> = {
   'รับออเดอร์': 'กำลังทำ',
-  'กำลังทำ': 'กำลังส่ง',
+  'กำลังทำ': 'ส่งออเดอร์',
+  'ส่งออเดอร์': 'ส่งแล้ว',
   'กำลังส่ง': 'ส่งแล้ว',
   'ส่งแล้ว': null,
   'ยกเลิก': null,
