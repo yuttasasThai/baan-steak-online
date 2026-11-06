@@ -431,38 +431,38 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         <div className="w-full py-2.5 sm:py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 text-white font-black text-sm sm:text-base border-2 border-rose-400 shadow-md flex items-center justify-center gap-2 tracking-wide text-center animate-fadeIn">
           <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
           <span className="text-base sm:text-lg">🔴</span>
-          <span className="drop-shadow-xs font-black tracking-wide">วันนี้ร้านปิด (งดรับออเดอร์ชั่วคราว)</span>
+          {/* 2. ปุ่มแจ้งและสลับสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (คลิกเพื่อสลับเปิด/ปิดได้ทันที) */}
+      <button
+        type="button"
+        onClick={() => {
+          if (onToggleShopOpen) {
+            onToggleShopOpen();
+          } else {
+            onOpenAdminLogin();
+          }
+        }}
+        className={`w-full py-2.5 sm:py-3 px-3.5 sm:px-4 rounded-2xl text-white font-black text-xs sm:text-base border-2 shadow-md flex items-center justify-between tracking-wide transition cursor-pointer active:scale-98 ${
+          settings?.isOpen === false
+            ? 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 border-rose-400 hover:brightness-110'
+            : 'bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 border-emerald-400 hover:brightness-110'
+        }`}
+        title="แตะเพื่อสลับเปิด/ปิดร้าน (สำหรับร้านค้า)"
+      >
+        <div className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
+          <span className="text-base sm:text-lg">
+            {settings?.isOpen === false ? '🔴' : '🟢'}
+          </span>
+          <span className="drop-shadow-xs font-black tracking-wide text-left">
+            {settings?.isOpen === false
+              ? 'วันนี้ร้านปิด (งดรับออเดอร์ชั่วคราว)'
+              : 'วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)'}
+          </span>
         </div>
-      ) : (
-        <div className="w-full py-2.5 sm:py-3 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 text-white font-black text-sm sm:text-base border-2 border-emerald-400 shadow-md flex items-center justify-center gap-2 tracking-wide text-center animate-fadeIn">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-200 animate-ping"></span>
-          <span className="text-base sm:text-lg">🟢</span>
-          <span className="drop-shadow-xs font-black tracking-wide">วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)</span>
-        </div>
-      )}
-
-      {/* 2.0 Real-time Table Status Indicator (ใต้ปุ่ม ร้านเปิด/ร้านปิด ตามที่กำหนดในลิงก์ Admin) */}
-      {tables && tables.length > 0 && (
-        <div className="w-full bg-white rounded-2xl p-3 sm:p-3.5 border border-stone-200 shadow-2xs space-y-2.5 animate-fadeIn">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-black text-stone-900">
-              <span className="text-sm">🍽️</span>
-              <span>สถานะโต๊ะอาหารในร้าน (เรียลไทม์)</span>
-            </div>
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
-                tables.every((t) => t.isOccupied)
-                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-              }`}
-            >
-              {tables.every((t) => t.isOccupied)
-                ? '🔴 โต๊ะเต็มทุกโต๊ะ'
-                : `🟢 ว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
-            </span>
-          </div>
-
-          {/* Grid of Individual Tables showing ว่าง / เต็ม */}
+        <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-lg bg-black/25 text-white/95 border border-white/20 whitespace-nowrap shrink-0">
+          {isAdmin ? '👆 แตะเพื่อสลับสถานะ' : '⚙️ จัดการร้าน'}
+        </span>
+      </button>
           <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 gap-2">
             {tables.map((tbl) => {
               const isOccupied = tbl.isOccupied;
