@@ -65,6 +65,7 @@ interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
+// Helper to determine if current URL is targeting admin view (/admin, #admin, ?admin)
 const checkIsAdminPath = (): boolean => {
   if (typeof window === 'undefined') return false;
   const p = window.location.pathname.toLowerCase();
@@ -79,6 +80,7 @@ const checkIsAdminPath = (): boolean => {
 };
 
 export function App() {
+  // Main view: 'customer' or 'admin' initialized from URL
   const [currentView, setCurrentView] = useState<'customer' | 'admin'>(() =>
     checkIsAdminPath() ? 'admin' : 'customer'
   );
@@ -93,51 +95,99 @@ export function App() {
   });
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
+  // Link & QR Generator Modal state
+  const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
+  const [linkModalInitialTab, setLinkModalInitialTab] = useState<'admin' | 'user'>('user');
+
+  // Firestore real-time state
   const [menus, setMenus] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Toast notification system
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [showIncomingModal, setShowIncomingModal] = useState<boolean>(false);
-  const [modalDismissed, setModalDismissed] = useState<boolean>(false);
-  const [showLinkModal, setShowLinkModal] = useState<boolean>(false);
 
-  const previousPendingOrderIdsRef = useRef<Set<string>>(new Set());
-  const isInitialLoadRef = useRef<boolean>(true);
-
-  const notify = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const notify = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = `${Date.now()}_${Math.random()}`;
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
+    }, 3800);
   };
 
+  // Real-time Firestore Subscriptions & Auto-initialization
   useEffect(() => {
-    const handlePopState = () => {
-      setCurrentView(checkIsAdminPath() ? 'admin' : 'customer');
-    };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+    let isMounted = true;
 
-  useEffect(() => {
-    initializeBaanSteakMenu().catch((err) =>
-      console.warn('Init menu warning:', err)
+    // 1. Ensure Firestore has the exact 5 items for "บ้าน สเต็กออนไลน์"
+    initializeBaanSteakMenu(false).catch((err) => {
+      console.warn('Initialization error:', err);
+    });
+
+    // 2. Subscribe to menus
+    const unsubMenus = subscribeMenus(
+      (items) => {
+        if (!isMounted) return;
+        setMenus(items);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('Menus error:', error);
+        setIsLoading(false);
+      }
     );
 
-    const unsubMenus = subscribeMenus(setMenus);
-    const unsubCategories = subscribeCategories(setCategories);
-    const unsubOrders = subscribeOrders(setOrders);
-    const unsubCustomers = subscribeCustomers(setCustomers);
-    const unsubSettings = subscribeShopSettings(setSettings);
-    const unsubTables = subscribeTables(setTables);
+    // 3. Subscribe to categories
+    const unsubCategories = subscribeCategories(
+      (items) => {
+        if (!isMounted) return;
+        setCategories(items);
+      },
+      (error) => {
+        console.error('Categories error:', error);
+      }
+    );
+
+    // 4. Subscribe to orders
+    const unsubOrders = subscribeOrders(
+      (items) => {
+        if (!isMounted) return;
+        setOrders(items);
+      },
+      (error) => {
+        console.error('Orders error:', error);
+      }
+    );
+
+    // 5. Subscribe to customers
+    const unsubCustomers = subscribeCustomers(
+      (items) => {
+        if (!isMounted) return;
+        setCustomers(items);
+      },
+      (error) => {
+        console.error('Customers error:', error);
+      }
+    );
+
+    // 6. Subscribe to Shop Settings
+    const unsubSettings = subscribeShopSettings((s) => {
+      if (!isMounted) return;
+      setSettings(s);
+    });
+
+    // 7. Subscribe to Restaurant Tables (โต๊ะอาหาร ทานที่ร้าน)
+    const unsubTables = subscribeTables((tblList) => {
+      if (!isMounted) return;
+      setTables(tblList);
+    });
 
     return () => {
+      isMounted = false;
       unsubMenus();
       unsubCategories();
       unsubOrders();
@@ -147,360 +197,227 @@ export function App() {
     };
   }, []);
 
-  const pendingOrders = useMemo(() => {
-    return orders.filter(
-      (o) => !o.isCancelled && !o.isArchived && o.status === 'รับออเดอร์'
-    );
+  // 8. Pending Incoming Orders (status === 'รับออเดอร์', not cancelled, not archived)
+  const pendingIncomingOrders = useMemo(() => {
+    return orders
+      .filter(
+        (o) => (o.status === 'รับออเดอร์' || !o.status) && !o.isCancelled && !o.isArchived
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders]);
 
+  // Incoming Order Modal & Repeating Audio Loop States
+  const [isIncomingModalOpen, setIsIncomingModalOpen] = useState(false);
+  const [isSoundEnabled, setIsSoundEnabled] = useState(() => audioAlert.isEnabled());
+  const prevPendingCountRef = useRef<number | null>(null);
+
+  // Global repeating audio alert loop & auto-popup modal for incoming orders
   useEffect(() => {
-    if (isInitialLoadRef.current) {
-      if (orders.length > 0) {
-        previousPendingOrderIdsRef.current = new Set(pendingOrders.map((o) => o.id));
-        isInitialLoadRef.current = false;
-      }
+    // Only alert when in Admin view
+    if (currentView !== 'admin') {
+      audioAlert.stopRepeatingOrderAlert();
       return;
     }
 
-    const currentPendingIds = new Set(pendingOrders.map((o) => o.id));
-    const newArrivals = pendingOrders.filter(
-      (o) => !previousPendingOrderIdsRef.current.has(o.id)
-    );
-
-    if (newArrivals.length > 0) {
-      setShowIncomingModal(true);
-      setModalDismissed(false);
-
-      if (!isMuted) {
-        audioAlert.startRepeatingOrderAlert(pendingOrders);
+    if (pendingIncomingOrders.length > 0) {
+      if (
+        prevPendingCountRef.current === null ||
+        pendingIncomingOrders.length > prevPendingCountRef.current
+      ) {
+        setIsIncomingModalOpen(true);
       }
+
+      audioAlert.updateRepeatingOrders(
+        pendingIncomingOrders.map((o) => ({
+          tableNumber: o.tableNumber,
+          deliveryType: o.deliveryType,
+          orderNumber: o.orderNumber,
+        }))
+      );
     } else {
-      if (pendingOrders.length === 0) {
-        audioAlert.stopRepeatingOrderAlert();
-        setShowIncomingModal(false);
-      } else {
-        audioAlert.updateRepeatingOrders(pendingOrders);
-      }
+      audioAlert.stopRepeatingOrderAlert();
+      setIsIncomingModalOpen(false);
     }
 
-    previousPendingOrderIdsRef.current = currentPendingIds;
-  }, [pendingOrders, isMuted]);
+    prevPendingCountRef.current = pendingIncomingOrders.length;
+  }, [pendingIncomingOrders, currentView]);
 
-  const handleAcceptSingleOrder = async (orderId: string) => {
-    try {
-      await updateOrderStatus(orderId, 'กำลังทำ');
-      notify('✅ รับออเดอร์แล้ว! เปลี่ยนสถานะเป็น "กำลังทำ"', 'success');
-
-      const remaining = pendingOrders.filter((o) => o.id !== orderId);
-      if (remaining.length === 0) {
-        setShowIncomingModal(false);
-        audioAlert.stopRepeatingOrderAlert();
-      } else {
-        audioAlert.updateRepeatingOrders(remaining);
+  const handleToggleSound = () => {
+    const next = !isSoundEnabled;
+    setIsSoundEnabled(next);
+    audioAlert.setEnabled(next);
+    if (!next) {
+      audioAlert.stopRepeatingOrderAlert();
+      notify('ปิดเสียงเตือนชั่วคราวแล้ว', 'info');
+    } else {
+      notify('เปิดเสียงเตือน "มีออเดอร์เข้า" แล้ว', 'info');
+      if (pendingIncomingOrders.length > 0 && currentView === 'admin') {
+        audioAlert.startRepeatingOrderAlert(
+          pendingIncomingOrders.map((o) => ({
+            tableNumber: o.tableNumber,
+            deliveryType: o.deliveryType,
+            orderNumber: o.orderNumber,
+          }))
+        );
       }
-    } catch {
-      notify('ไม่สามารถเปลี่ยนสถานะออเดอร์ได้ กรุณาลองใหม่', 'error');
     }
   };
 
-  const handleAcceptAllIncoming = async () => {
+  const handleAcceptOrder = async (order: Order) => {
     try {
-      for (const ord of pendingOrders) {
-        await updateOrderStatus(ord.id, 'กำลังทำ');
+      await updateOrderStatus(order, 'กำลังทำ');
+      notify(
+        `✅ รับออเดอร์ #${order.orderNumber} เรียบร้อยแล้ว (สถานะเปลี่ยนเป็น: กำลังทำ)`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Accept order error:', err);
+      notify('ไม่สามารถเปลี่ยนสถานะออเดอร์ได้', 'error');
+    }
+  };
+
+  const handleAcceptAllOrders = async () => {
+    try {
+      for (const ord of pendingIncomingOrders) {
+        await updateOrderStatus(ord, 'กำลังทำ');
       }
-      notify(`✅ รับออเดอร์ทั้งหมด (${pendingOrders.length} รายการ) เรียบร้อยแล้ว`, 'success');
-      setShowIncomingModal(false);
-      audioAlert.stopRepeatingOrderAlert();
-    } catch {
+      notify(
+        `✅ รับออเดอร์ทั้งหมด ${pendingIncomingOrders.length} รายการเรียบร้อยแล้ว`,
+        'success'
+      );
+      setIsIncomingModalOpen(false);
+    } catch (err) {
+      console.error('Accept all orders error:', err);
       notify('เกิดข้อผิดพลาดในการรับออเดอร์ทั้งหมด', 'error');
     }
   };
 
-  const handleToggleSound = () => {
-    if (isMuted) {
-      setIsMuted(false);
-      if (pendingOrders.length > 0) {
-        audioAlert.startRepeatingOrderAlert(pendingOrders);
+  const handleCancelOrder = async (order: Order, reason?: string) => {
+    try {
+      await cancelOrder(order, reason || 'ร้านไม่สะดวกรับ');
+      notify(`ยกเลิกออเดอร์ #${order.orderNumber} เรียบร้อย`, 'info');
+    } catch (err) {
+      console.error('Cancel order error:', err);
+      notify('ไม่สามารถยกเลิกออเดอร์ได้', 'error');
+    }
+  };
+
+  // Check existing admin session on mount
+  useEffect(() => {
+    const token = sessionStorage.getItem('admin_session_token');
+    if (token) {
+      if (token.startsWith('vcl_sess_')) {
+        setIsAdminLoggedIn(true);
+      } else {
+        fetch('/api/admin/verify', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.valid) {
+              setIsAdminLoggedIn(true);
+            } else {
+              sessionStorage.removeItem('admin_session_token');
+              setIsAdminLoggedIn(false);
+            }
+          })
+          .catch(() => {
+            setIsAdminLoggedIn(true);
+          });
       }
-      notify('🔊 เปิดเสียงแจ้งเตือนออเดอร์เข้าเรียบร้อย', 'info');
-    } else {
-      setIsMuted(true);
-      audioAlert.stopRepeatingOrderAlert();
-      notify('🔇 ปิดเสียงแจ้งเตือนออเดอร์ชั่วคราว', 'info');
+    }
+  }, []);
+
+  // View navigation helper that updates browser URL
+  const navigateToView = (view: 'customer' | 'admin') => {
+    setCurrentView(view);
+    try {
+      if (typeof window !== 'undefined') {
+        if (view === 'admin') {
+          if (!window.location.pathname.startsWith('/admin')) {
+            window.history.pushState(null, '', '/admin');
+          }
+        } else {
+          if (window.location.pathname !== '/' && !window.location.pathname.startsWith('/customer')) {
+            window.history.pushState(null, '', '/');
+          }
+        }
+      }
+    } catch {
+      // fallback
     }
   };
 
-  const navigateToAdmin = () => {
-    if (!isAdminLoggedIn) {
-      setIsLoginModalOpen(true);
-    } else {
-      setCurrentView('admin');
-      window.history.pushState({}, '', '/admin');
+  // Sync URL when browser back/forward or hash changes
+  useEffect(() => {
+    const handleUrlChange = () => {
+      const onAdmin = checkIsAdminPath();
+      if (onAdmin) {
+        setCurrentView('admin');
+        const token = sessionStorage.getItem('admin_session_token');
+        if (!token) {
+          setIsLoginModalOpen(true);
+        }
+      } else {
+        setCurrentView('customer');
+      }
+    };
+
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+
+    if (checkIsAdminPath()) {
+      const token = sessionStorage.getItem('admin_session_token');
+      if (!token) {
+        setIsLoginModalOpen(true);
+      }
     }
-  };
 
-  const navigateToCustomer = () => {
-    setCurrentView('customer');
-    window.history.pushState({}, '', '/');
-  };
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
-  const handleAdminLogout = () => {
+  const handleLogout = async () => {
+    const token = sessionStorage.getItem('admin_session_token');
+    if (token) {
+      fetch('/api/admin/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     sessionStorage.removeItem('admin_session_token');
     setIsAdminLoggedIn(false);
-    setCurrentView('customer');
-    window.history.pushState({}, '', '/');
-    audioAlert.stopRepeatingOrderAlert();
-    notify('ออกจากระบบแอดมินเรียบร้อยแล้ว', 'info');
+    navigateToView('customer');
+    notify('ออกจากระบบ Admin เรียบร้อย', 'info');
   };
 
-  return (
-    <div className="min-h-screen bg-stone-100 flex flex-col font-sans text-stone-900 selection:bg-red-500 selection:text-white">
-      {pendingOrders.length > 0 && !showIncomingModal && modalDismissed && (
-        <div className="bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-4 py-2.5 shadow-lg flex items-center justify-between sticky top-0 z-50 animate-pulse">
-          <div className="flex items-center gap-2 text-xs sm:text-sm font-black">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-300 animate-ping" />
-            <span>มี {pendingOrders.length} ออเดอร์ใหม่ค้างรับ! กำลังเตือนซ้ำต่อเนื่อง...</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowIncomingModal(true)}
-              className="px-3 py-1 bg-white text-red-700 hover:bg-stone-100 rounded-xl text-xs font-black shadow-xs cursor-pointer active:scale-95 transition"
-            >
-              เปิดหน้าต่างรับออเดอร์
-            </button>
-            <button
-              onClick={handleToggleSound}
-              className="p-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white cursor-pointer"
-              title={isMuted ? 'เปิดเสียง' : 'ปิดเสียง'}
-            >
-              {isMuted ? <VolumeX className="w-4 h-4 text-amber-200" /> : <Volume2 className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
-      )}
+  const handleOpenAdmin = () => {
+    if (isAdminLoggedIn) {
+      navigateToView('admin');
+    } else {
+      setIsLoginModalOpen(true);
+    }
+  };
 
-      <IncomingOrderModal
-        isOpen={showIncomingModal && pendingOrders.length > 0}
-        incomingOrders={pendingOrders}
-        onAcceptOrder={handleAcceptSingleOrder}
-        onAcceptAll={handleAcceptAllIncoming}
-        onClose={() => {
-          setShowIncomingModal(false);
-          setModalDismissed(true);
-        }}
-        isMuted={isMuted}
-        onToggleMute={handleToggleSound}
-      />
+  const pendingOrdersCount = orders.filter((o) => o.status === 'รับออเดอร์').length;
 
-      <header className="bg-white border-b border-stone-200 sticky top-0 z-40 shadow-xs">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div
-            onClick={navigateToCustomer}
-            className="flex items-center gap-3 cursor-pointer group select-none"
-          >
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-red-600 to-rose-700 flex items-center justify-center text-white shadow-md shadow-red-500/20 group-hover:scale-105 transition">
-              <Utensils className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-black text-stone-900 text-base sm:text-lg tracking-tight">
-                  {SHOP_INFO.name}
-                </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 hidden sm:inline-block">
-                  สาขาหลัก
-                </span>
-              </div>
-              <p className="text-[11px] text-stone-500 font-medium -mt-0.5">
-                สเต็กพรีเมียม สด ใหม่ จัดส่งรวดเร็ว
-              </p>
-            </div>
-          </div>
+  const totalUniqueCustomersCount = useMemo(() => {
+    const phones = new Set<string>();
+    customers.forEach((c) => {
+      const clean = c.phone?.replace(/[^0-9]/g, '');
+      if (clean) phones.add(clean);
+    });
+    orders.forEach((o) => {
+      const clean = o.customerPhone?.replace(/[^0-9]/g, '');
+      if (clean) phones.add(clean);
+    });
+    return Math.max(phones.size, customers.length);
+  }, [customers, orders]);
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <button
-              type="button"
-              onClick={handleToggleSound}
-              className={`p-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition cursor-pointer ${
-                isMuted
-                  ? 'bg-stone-100 text-stone-400 border-stone-200'
-                  : 'bg-emerald-50 text-emerald-800 border-emerald-300'
-              }`}
-              title={isMuted ? 'เปิดเสียงเตือนออเดอร์' : 'ปิดเสียงเตือนชั่วคราว'}
-            >
-              {isMuted ? <VolumeX className="w-4 h-4 text-stone-400" /> : <Volume2 className="w-4 h-4 text-emerald-600" />}
-              <span className="hidden md:inline">{isMuted ? 'ปิดเสียง' : 'เสียงเปิด'}</span>
-            </button>
-
-            {currentView === 'customer' ? (
-              <button
-                type="button"
-                onClick={navigateToAdmin}
-                className="px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-black text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition active:scale-95 cursor-pointer"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span>แอดมิน</span>
-                {pendingOrders.length > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black flex items-center justify-center animate-bounce">
-                    {pendingOrders.length}
-                  </span>
-                )}
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={navigateToCustomer}
-                  className="px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                >
-                  <Store className="w-3.5 h-3.5" />
-                  <span>ดูหน้าเว็บลูกค้า</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowLinkModal(true)}
-                  className="p-2 rounded-xl bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition cursor-pointer"
-                  title="ลิงก์ร้าน & QR Code"
-                >
-                  <QrCode className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAdminLogout}
-                  className="p-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-600 transition cursor-pointer"
-                  title="ออกจากระบบแอดมิน"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1">
-        {currentView === 'customer' ? (
-          <CustomerWebsite
-            menus={menus}
-            categories={categories}
-            tables={tables}
-            settings={settings}
-            onNotify={notify}
-          />
-        ) : (
-          <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-            <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setAdminTab('orders')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'orders'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>จัดการออเดอร์</span>
-                {pendingOrders.length > 0 && (
-                  <span
-                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-black ${
-                      adminTab === 'orders' ? 'bg-white text-red-600' : 'bg-red-600 text-white'
-                    }`}
-                  >
-                    {pendingOrders.length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('tables')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'tables'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <Utensils className="w-4 h-4" />
-                <span>จัดการโต๊ะอาหาร ({tables.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('menus')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'menus'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <Package className="w-4 h-4" />
-                <span>รายการเมนู ({menus.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('customers')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'customers'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <Users className="w-4 h-4" />
-                <span>ลูกค้า ({customers.length})</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('analytics')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'analytics'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span>สถิติยอดขาย</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('settings')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'settings'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <Settings className="w-4 h-4" />
-                <span>ตั้งค่าร้าน</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('export')}
-                className={`px-4 py-2.5 rounded-2xl flex items-center gap-2 shrink-0 transition cursor-pointer ${
-                  adminTab === 'export'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'bg-white text-stone-700 hover:bg-stone-50 border border-stone-200'
-                }`}
-              >
-                <Download className="w-4 h-4" />
-                <span>ดาวน์โหลดโค้ด</span>
-              </button>
-            </div>
-
-            {adminTab === 'orders' && (
-              <AdminOrdersManager orders={orders} onNotify={notify} />
-            )}
-            {adminTab === 'tables' && (
-              <AdminTableManager tables={tables} onNotify={notify} />
-            )}
-            {adminTab === 'menus' && (
-              <AdminMenuManager
-                menus={menus}
-                categories={categories}
-const handleToggleStoreStatus = async () => {
+  const handleToggleStoreStatus = async () => {
     if (!isAdminLoggedIn) {
       handleOpenAdmin();
       return;
@@ -539,7 +456,7 @@ const handleToggleStoreStatus = async () => {
 
           {/* Top Switcher: Customer vs Admin */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Store Status Quick Toggle (แสดงถาวรในแถบด้านบน) */}
+            {/* Store Status Quick Toggle (Always visible in header) */}
             <button
               type="button"
               onClick={handleToggleStoreStatus}
@@ -587,6 +504,7 @@ const handleToggleStoreStatus = async () => {
                 </button>
               </div>
             ) : isAdminLoggedIn ? (
+              // If admin is already logged in and previewing customer view
               <button
                 type="button"
                 onClick={() => navigateToView('admin')}
@@ -602,6 +520,7 @@ const handleToggleStoreStatus = async () => {
                 )}
               </button>
             ) : (
+              // When on customer view and not logged in: display Admin button
               <button
                 type="button"
                 onClick={handleOpenAdmin}
@@ -614,7 +533,222 @@ const handleToggleStoreStatus = async () => {
             )}
           </div>
         </div>
+
+        {/* Secondary Subnav for Admin Tabs */}
+        {currentView === 'admin' && (
+          <div className="bg-stone-50 border-t border-stone-200">
+            <div className="max-w-4xl mx-auto px-4 flex items-center gap-2 py-2 overflow-x-auto scrollbar-none">
+              <button
+                onClick={() => setAdminTab('orders')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'orders'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>รายการออเดอร์</span>
+                {orders.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                    {orders.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setAdminTab('menus')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'menus'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>จัดการรายการอาหาร</span>
+                <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                  {menus.length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('tables')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'tables'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+                title="จัดการจำนวนโต๊ะ และสถานะโต๊ะว่าง/เต็ม สำหรับลูกค้าทานที่ร้าน"
+              >
+                <Utensils className="w-3.5 h-3.5" />
+                <span>โต๊ะอาหาร (ทานที่ร้าน)</span>
+                <span
+                  className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    tables.length > 0 && tables.every((t) => t.isOccupied)
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  {tables.filter((t) => !t.isOccupied).length}/{tables.length} ว่าง
+                </span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('customers')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'customers'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>ประวัติลูกค้า</span>
+                <span className="ml-1 px-1.5 py-0.2 bg-white/20 rounded-full text-[10px]">
+                  {totalUniqueCustomersCount}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('analytics')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'analytics'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                <span>วิเคราะห์ยอดขาย</span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('settings')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'settings'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>ตั้งค่าร้าน & LINE OA</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setLinkModalInitialTab('user');
+                  setIsLinkModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 cursor-pointer shadow-2xs"
+                title="สร้างลิงก์สำหรับ Admin และ ลิงก์สำหรับลูกค้า"
+              >
+                <Link2 className="w-3.5 h-3.5 text-red-600" />
+                <span>สร้างลิงก์ร้าน & QR</span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('export')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'export'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>ดาวน์โหลดโค้ด (GitHub/Vercel)</span>
+                <span className="px-1.5 py-0.2 bg-amber-400 text-stone-900 rounded-full text-[9px] font-black">
+                  Android
+                </span>
+              </button>
+            </div>
+          </div>
+        )}
       </header>
+
+      {/* Sticky Alert Banner if modal is minimized and pending orders are waiting */}
+      {currentView === 'admin' && pendingIncomingOrders.length > 0 && !isIncomingModalOpen && (
+        <div className="sticky top-16 z-30 bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white px-4 py-3 shadow-md border-b-2 border-amber-300 flex items-center justify-between gap-3 animate-pulse">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-xl shrink-0">🚨</span>
+            <div className="truncate">
+              <span className="font-black text-sm">
+                มี {pendingIncomingOrders.length} ออเดอร์เข้าค้างรับ!
+              </span>
+              <span className="ml-1.5 text-xs text-amber-200 font-bold hidden sm:inline">
+                ({pendingIncomingOrders[0].tableNumber
+                  ? `โต๊ะ ${pendingIncomingOrders[0].tableNumber}`
+                  : pendingIncomingOrders[0].deliveryType || 'ออเดอร์ใหม่'})
+                {isSoundEnabled ? ' • 🔊 กำลังเตือนซ้ำจนกว่าจะกดรับ' : ' • 🔇 ปิดเสียงอยู่'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleToggleSound}
+              className="px-2.5 py-1.5 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+              title={isSoundEnabled ? 'ปิดเสียงเตือนชั่วคราว' : 'เปิดเสียงเตือน'}
+            >
+              {isSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isSoundEnabled ? 'ปิดเสียง' : 'เปิดเสียง'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsIncomingModalOpen(true)}
+              className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-stone-950 text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 ring-2 ring-white"
+            >
+              <span>👉 เปิดหน้าต่างรับออเดอร์</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4">
+        {currentView === 'customer' ? (
+          <CustomerWebsite
+            menus={menus}
+            categories={categories}
+            settings={settings}
+            tables={tables}
+            onNotify={notify}
+            onOpenAdminLogin={handleOpenAdmin}
+            isAdmin={isAdminLoggedIn}
+            onToggleShopOpen={handleToggleStoreStatus}
+          />
+        ) : (
+          <div className="space-y-4">
+            {adminTab === 'orders' && (
+              <AdminOrdersManager orders={orders} onNotify={notify} />
+            )}
+            {adminTab === 'menus' && (
+              <AdminMenuManager
+                menus={menus}
+                categories={categories}
+                isLoading={isLoading}
+                onNotify={notify}
+              />
+            )}
+            {adminTab === 'tables' && (
+              <AdminTableManager tables={tables} onNotify={notify} />
+            )}
+            {adminTab === 'customers' && (
+              <AdminCustomerHistory
+                customers={customers}
+                orders={orders}
+                onNotify={notify}
+              />
+            )}
+            {adminTab === 'analytics' && (
+              <AdminSalesAnalytics orders={orders} />
+            )}
+            {adminTab === 'settings' && (
+              <AdminShopSettings
+                settings={settings}
+                onNotify={notify}
+                onNavigateToExport={() => setAdminTab('export')}
+              />
+            )}
+            {adminTab === 'export' && (
+              <AdminSourceCodeExporter onNotify={notify} />
             )}
           </div>
         )}
@@ -627,31 +761,46 @@ const handleToggleStoreStatus = async () => {
           setIsLoginModalOpen(false);
           const hasToken = typeof window !== 'undefined' && Boolean(sessionStorage.getItem('admin_session_token'));
           if (!hasToken && checkIsAdminPath()) {
-            navigateToCustomer();
+            navigateToView('customer');
           }
         }}
         onLoginSuccess={() => {
           setIsAdminLoggedIn(true);
           setIsLoginModalOpen(false);
-          setCurrentView('admin');
-          window.history.pushState({}, '', '/admin');
+          navigateToView('admin');
           notify('เข้าสู่ระบบ Admin สำเร็จ', 'success');
         }}
       />
 
+      {/* Admin & Customer Link / QR Generator Modal */}
       <AdminLinkManagerModal
-        isOpen={showLinkModal}
-        onClose={() => setShowLinkModal(false)}
+        isOpen={isLinkModalOpen}
+        onClose={() => setIsLinkModalOpen(false)}
         onNotify={notify}
+        initialTab={linkModalInitialTab}
+        categories={categories}
       />
 
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4">
+      {/* 🚨 Incoming Orders Popup Modal (เด้งขึ้นมากลางจอเมื่อมีออเดอร์เข้า พร้อมเตือนซ้ำจนกว่าจะกดรับ) */}
+      <IncomingOrderModal
+        isOpen={isIncomingModalOpen && currentView === 'admin'}
+        pendingOrders={pendingIncomingOrders}
+        onAcceptOrder={handleAcceptOrder}
+        onAcceptAllOrders={handleAcceptAllOrders}
+        onCancelOrder={handleCancelOrder}
+        onClose={() => setIsIncomingModalOpen(false)}
+        isSoundEnabled={isSoundEnabled}
+        onToggleSound={handleToggleSound}
+      />
+
+      {/* Toast Notifications */}
+      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto p-3.5 rounded-2xl shadow-xl flex items-start gap-2.5 text-xs font-bold border transition-all animate-in fade-in slide-in-from-bottom-2 ${
+            className={`pointer-events-auto flex items-start gap-2.5 p-3.5 rounded-2xl shadow-xl border text-xs font-semibold animate-fadeIn ${
               toast.type === 'error'
-                ? 'bg-red-600 text-white border-red-700'
+                ? 'bg-rose-600 text-white border-rose-700'
                 : toast.type === 'info'
                 ? 'bg-stone-800 text-white border-stone-900'
                 : 'bg-emerald-600 text-white border-emerald-700'
