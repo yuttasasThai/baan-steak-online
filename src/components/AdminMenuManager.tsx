@@ -365,206 +365,320 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-stone-50 border-b border-stone-200 text-stone-600 font-bold">
-                  <th className="py-3 px-3 w-14 text-center">ลำดับ</th>
-                  <th className="py-3 px-3 min-w-[200px]">ชื่ออาหาร</th>
-                  <th className="py-3 px-3">หมวดหมู่</th>
-                  <th className="py-3 px-3">ราคา (บาท)</th>
-                  <th className="py-3 px-3 text-center">เปิด/ปิดการขาย</th>
-                  <th className="py-3 px-3 text-center">แสดงบนเว็บ</th>
-                  <th className="py-3 px-3 text-right">จัดการ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {filteredMenus.map((item, idx) => (
-                  <tr
-                    key={item.id}
-                    className={`hover:bg-stone-50/80 transition ${
-                      !item.isAvailable ? 'bg-rose-50/30' : ''
-                    }`}
-                  >
-                    {/* Reorder */}
-                    <td className="py-3 px-3 text-center">
-                      <div className="flex items-center justify-center gap-0.5">
-                        <button
-                          onClick={() => handleReorder(item, 'up')}
-                          disabled={idx === 0}
-                          className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-20"
-                          title="เลื่อนขึ้น"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleReorder(item, 'down')}
-                          disabled={idx === filteredMenus.length - 1}
-                          className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-20"
-                          title="เลื่อนลง"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Food Photo and Name */}
-                    <td className="py-3 px-3">
-                      <div className="flex items-center gap-2.5">
-                        {/* Interactive Photo Thumbnail */}
-                        <div
-                          onClick={() => handleTriggerQuickPhoto(item)}
-                          title="แตะเพื่อเปลี่ยนรูปภาพเมนูนี้จากโทรศัพท์ทันที"
-                          className="relative w-12 h-12 rounded-xl bg-stone-100 overflow-hidden border border-stone-200 shrink-0 cursor-pointer group shadow-2xs hover:border-red-400 transition"
-                        >
-                          {isUploadingPhoto === item.id ? (
-                            <div className="w-full h-full flex items-center justify-center bg-black/60 text-white">
-                              <Loader2 className="w-5 h-5 animate-spin text-white" />
-                            </div>
-                          ) : item.imageUrl ? (
-                            <>
-                              <img
-                                src={normalizeMenuImageUrl(item.imageUrl, item.name)}
-                                alt={item.name}
-                                referrerPolicy="no-referrer"
-                                className={`w-full h-full object-cover transition group-hover:scale-105 ${
-                                  !item.isAvailable ? 'grayscale brightness-75' : ''
-                                }`}
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null;
-                                  (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
-                                }}
-                              />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
-                                <Camera className="w-4 h-4" />
-                              </div>
-                            </>
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center text-stone-400 group-hover:text-red-600">
-                              <Camera className="w-4 h-4" />
-                              <span className="text-[8px] font-bold">ใส่รูป</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="min-w-0">
-                          <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-1.5">
-                            <span>{item.name}</span>
-                          </div>
-                          {item.description && (
-                            <div className="text-[11px] text-stone-500 line-clamp-1">
-                              {item.description}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* Category */}
-                    <td className="py-3 px-3">
-                      <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-600 font-medium">
-                        {item.category}
-                      </span>
-                    </td>
-
-                    {/* Price with inline click-to-edit */}
-                    <td className="py-3 px-3">
-                      {inlinePriceId === item.id ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            value={inlinePriceVal}
-                            onChange={(e) => setInlinePriceVal(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveInlinePrice(item);
-                              if (e.key === 'Escape') setInlinePriceId(null);
-                            }}
-                            className="w-16 px-1.5 py-1 bg-white border border-red-500 rounded text-xs font-bold"
-                            autoFocus
-                          />
-                          <button
-                            onClick={() => handleSaveInlinePrice(item)}
-                            className="p-1 bg-red-600 text-white rounded font-bold"
-                          >
-                            ✓
-                          </button>
+          <>
+            {/* Mobile Cards View (Visible on phones & tablets) */}
+            <div className="block md:hidden divide-y divide-stone-100">
+              {filteredMenus.map((item, idx) => (
+                <div key={item.id} className="p-4 space-y-3 bg-white">
+                  <div className="flex items-start gap-3">
+                    {/* Food Photo with Camera Icon */}
+                    <div
+                      onClick={() => handleTriggerQuickPhoto(item)}
+                      title="แตะเพื่อเปลี่ยนรูปภาพเมนูนี้"
+                      className="relative w-16 h-16 rounded-2xl bg-stone-100 overflow-hidden border border-stone-200 shrink-0 cursor-pointer shadow-xs active:scale-95 transition"
+                    >
+                      {isUploadingPhoto === item.id ? (
+                        <div className="w-full h-full flex items-center justify-center bg-black/60 text-white">
+                          <Loader2 className="w-5 h-5 animate-spin" />
                         </div>
                       ) : (
-                        <div
-                          onClick={() => {
-                            setInlinePriceId(item.id);
-                            setInlinePriceVal(String(item.price));
-                          }}
-                          className="font-extrabold text-sm text-red-600 cursor-pointer hover:underline"
-                          title="คลิกเพื่อแก้ไขราคาด่วน"
-                        >
-                          {item.price} บาท
-                        </div>
+                        <>
+                          <img
+                            src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                            alt={item.name}
+                            className={`w-full h-full object-cover ${!item.isAvailable ? 'grayscale opacity-75' : ''}`}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                            }}
+                          />
+                          <div className="absolute inset-0 bg-black/25 flex items-center justify-center text-white opacity-80">
+                            <Camera className="w-4 h-4" />
+                          </div>
+                        </>
                       )}
-                    </td>
+                    </div>
 
-                    {/* Toggle: เปิด/ปิดการขาย */}
-                    <td className="py-3 px-3 text-center">
-                      <button
-                        onClick={() => handleToggleAvail(item)}
-                        className={`px-3 py-1 rounded-full font-bold text-xs transition ${
-                          item.isAvailable
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
-                            : 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200'
-                        }`}
-                      >
-                        {item.isAvailable ? '🟢 พร้อมขาย' : '🔴 สินค้าหมด'}
-                      </button>
-                    </td>
-
-                    {/* Toggle: แสดงบนเว็บลูกค้า */}
-                    <td className="py-3 px-3 text-center">
-                      <button
-                        onClick={() => handleTogglePub(item)}
-                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition ${
-                          item.isPublished
-                            ? 'text-stone-700 bg-stone-100 hover:bg-stone-200'
-                            : 'text-stone-400 bg-stone-50 line-through'
-                        }`}
-                      >
-                        {item.isPublished ? 'แสดงบนเว็บ' : 'ซ่อนไว้'}
-                      </button>
-                    </td>
-
-                    {/* Edit and Delete */}
-                    <td className="py-3 px-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => handleTriggerQuickPhoto(item)}
-                          className="p-1.5 text-stone-600 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
-                          title="เปลี่ยนรูปภาพจากโทรศัพท์"
-                        >
-                          <Camera className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingItem(item);
-                            setIsFormOpen(true);
-                          }}
-                          className="p-1.5 text-stone-600 hover:text-red-600 hover:bg-stone-100 rounded-lg transition"
-                          title="แก้ไขรายละเอียด"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setItemToDelete(item)}
-                          className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
-                          title="ลบ"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    {/* Food Details */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-1">
+                        <h4 className="font-extrabold text-sm text-stone-900 truncate">{item.name}</h4>
+                        <span className="text-sm font-black text-red-600 shrink-0">{item.price} บาท</span>
                       </div>
-                    </td>
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-stone-100 text-stone-600 text-[10px] font-bold">
+                          {item.category}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.isAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                        }`}>
+                          {item.isAvailable ? '🟢 พร้อมขาย' : '🔴 หมด'}
+                        </span>
+                        <span className="text-[10px] text-stone-400">
+                          {item.isPublished ? 'แสดงบนเว็บ' : 'ซ่อน'}
+                        </span>
+                      </div>
+                      {item.description && (
+                        <p className="text-[11px] text-stone-500 line-clamp-1 mt-1">{item.description}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Primary Edit Buttons for Mobile */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingItem(item);
+                        setIsFormOpen(true);
+                      }}
+                      className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-950 font-extrabold text-xs rounded-xl border-2 border-amber-300 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-amber-700" />
+                      <span>✏️ แก้ไขเมนู (ชื่อ/ราคา/รูป)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleTriggerQuickPhoto(item)}
+                      className="py-2.5 px-3 bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-bold text-xs rounded-xl border border-stone-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5 text-stone-600" />
+                      <span>📸 เปลี่ยนรูปภาพ</span>
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleAvail(item)}
+                      className={`flex-1 py-1.5 px-2 rounded-xl font-bold border transition ${
+                        item.isAvailable
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                          : 'bg-rose-50 text-rose-800 border-rose-300'
+                      }`}
+                    >
+                      {item.isAvailable ? '🟢 พร้อมขาย (แตะเพื่อตั้งเป็นหมด)' : '🔴 หมด (แตะเพื่อตั้งเป็นพร้อมขาย)'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setItemToDelete(item)}
+                      className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-stone-200"
+                      title="ลบเมนู"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-500" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-stone-50 border-b border-stone-200 text-stone-600 font-bold">
+                    <th className="py-3 px-3 w-14 text-center">ลำดับ</th>
+                    <th className="py-3 px-3 min-w-[200px]">ชื่ออาหาร</th>
+                    <th className="py-3 px-3">หมวดหมู่</th>
+                    <th className="py-3 px-3">ราคา (บาท)</th>
+                    <th className="py-3 px-3 text-center">เปิด/ปิดการขาย</th>
+                    <th className="py-3 px-3 text-center">แสดงบนเว็บ</th>
+                    <th className="py-3 px-3 text-right">จัดการ</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-stone-100">
+                  {filteredMenus.map((item, idx) => (
+                    <tr
+                      key={item.id}
+                      className={`hover:bg-stone-50/80 transition ${
+                        !item.isAvailable ? 'bg-rose-50/30' : ''
+                      }`}
+                    >
+                      {/* Reorder */}
+                      <td className="py-3 px-3 text-center">
+                        <div className="flex items-center justify-center gap-0.5">
+                          <button
+                            onClick={() => handleReorder(item, 'up')}
+                            disabled={idx === 0}
+                            className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-20"
+                            title="เลื่อนขึ้น"
+                          >
+                            <ArrowUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleReorder(item, 'down')}
+                            disabled={idx === filteredMenus.length - 1}
+                            className="p-1 text-stone-400 hover:text-stone-800 disabled:opacity-20"
+                            title="เลื่อนลง"
+                          >
+                            <ArrowDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* Food Photo and Name */}
+                      <td className="py-3 px-3">
+                        <div className="flex items-center gap-2.5">
+                          {/* Interactive Photo Thumbnail */}
+                          <div
+                            onClick={() => handleTriggerQuickPhoto(item)}
+                            title="แตะเพื่อเปลี่ยนรูปภาพเมนูนี้จากโทรศัพท์ทันที"
+                            className="relative w-12 h-12 rounded-xl bg-stone-100 overflow-hidden border border-stone-200 shrink-0 cursor-pointer group shadow-2xs hover:border-red-400 transition"
+                          >
+                            {isUploadingPhoto === item.id ? (
+                              <div className="w-full h-full flex items-center justify-center bg-black/60 text-white">
+                                <Loader2 className="w-5 h-5 animate-spin text-white" />
+                              </div>
+                            ) : item.imageUrl ? (
+                              <>
+                                <img
+                                  src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                                  alt={item.name}
+                                  referrerPolicy="no-referrer"
+                                  className={`w-full h-full object-cover transition group-hover:scale-105 ${
+                                    !item.isAvailable ? 'grayscale brightness-75' : ''
+                                  }`}
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null;
+                                    (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                                  }}
+                                />
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                                  <Camera className="w-4 h-4" />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="w-full h-full flex flex-col items-center justify-center text-stone-400 group-hover:text-red-600">
+                                <Camera className="w-4 h-4" />
+                                <span className="text-[8px] font-bold">ใส่รูป</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-1.5">
+                              <span>{item.name}</span>
+                            </div>
+                            {item.description && (
+                              <div className="text-[11px] text-stone-500 line-clamp-1">
+                                {item.description}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Category */}
+                      <td className="py-3 px-3">
+                        <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-600 font-medium">
+                          {item.category}
+                        </span>
+                      </td>
+
+                      {/* Price with inline click-to-edit */}
+                      <td className="py-3 px-3">
+                        {inlinePriceId === item.id ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              value={inlinePriceVal}
+                              onChange={(e) => setInlinePriceVal(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlinePrice(item);
+                                if (e.key === 'Escape') setInlinePriceId(null);
+                              }}
+                              className="w-16 px-1.5 py-1 bg-white border border-red-500 rounded text-xs font-bold"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => handleSaveInlinePrice(item)}
+                              className="p-1 bg-red-600 text-white rounded font-bold"
+                            >
+                              ✓
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={() => {
+                              setInlinePriceId(item.id);
+                              setInlinePriceVal(String(item.price));
+                            }}
+                            className="font-extrabold text-sm text-red-600 cursor-pointer hover:underline"
+                            title="คลิกเพื่อแก้ไขราคาด่วน"
+                          >
+                            {item.price} บาท
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Toggle: เปิด/ปิดการขาย */}
+                      <td className="py-3 px-3 text-center">
+                        <button
+                          onClick={() => handleToggleAvail(item)}
+                          className={`px-3 py-1 rounded-full font-bold text-xs transition ${
+                            item.isAvailable
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200'
+                          }`}
+                        >
+                          {item.isAvailable ? '🟢 พร้อมขาย' : '🔴 สินค้าหมด'}
+                        </button>
+                      </td>
+
+                      {/* Toggle: แสดงบนเว็บลูกค้า */}
+                      <td className="py-3 px-3 text-center">
+                        <button
+                          onClick={() => handleTogglePub(item)}
+                          className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition ${
+                            item.isPublished
+                              ? 'text-stone-700 bg-stone-100 hover:bg-stone-200'
+                              : 'text-stone-400 bg-stone-50 line-through'
+                          }`}
+                        >
+                          {item.isPublished ? 'แสดงบนเว็บ' : 'ซ่อนไว้'}
+                        </button>
+                      </td>
+
+                      {/* Edit and Delete */}
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingItem(item);
+                              setIsFormOpen(true);
+                            }}
+                            className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 active:scale-95 text-amber-950 font-bold border border-amber-300 rounded-xl transition flex items-center gap-1 text-xs cursor-pointer shadow-2xs"
+                            title="แก้ไขชื่อเมนู, ราคา หรือเปลี่ยนรูปภาพ"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-amber-700" />
+                            <span>แก้ไข</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTriggerQuickPhoto(item)}
+                            className="p-1.5 text-stone-600 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition"
+                            title="เปลี่ยนรูปภาพจากโทรศัพท์"
+                          >
+                            <Camera className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setItemToDelete(item)}
+                            className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                            title="ลบ"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 

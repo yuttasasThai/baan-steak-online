@@ -24,7 +24,7 @@ import {
   Utensils,
   X,
 } from 'lucide-react';
-import { CartItem, CategoryItem, DiningType, MenuItem, RestaurantTable, ShopSettings } from '../types';
+import { CartItem, CategoryItem, DiningType, MenuItem, Order, RestaurantTable, ShopSettings } from '../types';
 import {
   calculateDeliveryFeeByDistance,
   calculateDistanceKm,
@@ -42,6 +42,7 @@ interface CustomerWebsiteProps {
   categories: CategoryItem[];
   settings?: ShopSettings;
   tables?: RestaurantTable[];
+  orders?: Order[];
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
   onOpenAdminLogin: () => void;
   isAdmin?: boolean;
@@ -53,6 +54,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   categories,
   settings,
   tables = [],
+  orders = [],
   onNotify,
   onOpenAdminLogin,
   isAdmin = false,
@@ -80,6 +82,48 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   const [completedOrderRewards, setCompletedOrderRewards] = useState<string[]>([]);
   const [completedOrderIsOutOfZone, setCompletedOrderIsOutOfZone] = useState<boolean>(false);
   const [completedOrderDiningType, setCompletedOrderDiningType] = useState<DiningType>('ส่งอาหารที่บ้าน');
+
+  // Customer Live Real-time Order Tracking state
+  const [trackingSearchQuery, setTrackingSearchQuery] = useState('');
+  const [showManualTracker, setShowManualTracker] = useState(false);
+
+  // Active tracked orders for customer
+  const customerTrackedOrders = React.useMemo(() => {
+    if (!orders || orders.length === 0) return [];
+
+    let storedNumbers: string[] = [];
+    if (completedOrderNumber) {
+      storedNumbers.push(completedOrderNumber);
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+      if (Array.isArray(saved)) {
+        storedNumbers = Array.from(new Set([...storedNumbers, ...saved]));
+      }
+    } catch {
+      // ignore
+    }
+
+    const trimmedQuery = trackingSearchQuery.trim().toLowerCase();
+
+    return orders
+      .filter((o) => {
+        // If searched manually
+        if (trimmedQuery) {
+          const matchNum = o.orderNumber.toLowerCase().includes(trimmedQuery);
+          const matchPhone = o.customerPhone && o.customerPhone.replace(/[^0-9]/g, '').includes(trimmedQuery);
+          return matchNum || matchPhone;
+        }
+
+        // Auto-match if from this session or stored in localStorage
+        if (storedNumbers.includes(o.orderNumber)) {
+          return true;
+        }
+
+        return false;
+      })
+      .slice(0, 3);
+  }, [orders, completedOrderNumber, trackingSearchQuery]);
 
   // Cover Image: Uses real-time settings from Firestore if updated, otherwise defaults to latest sent heroImage
   const activeHeroImage =
@@ -401,6 +445,13 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         Boolean(diningType === 'ส่งอาหารที่บ้าน' && distanceKm !== null && distanceKm > 12)
       );
       setCompletedOrderNumber(orderNum);
+      try {
+        const savedList = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+        const updated = Array.from(new Set([orderNum, ...(Array.isArray(savedList) ? savedList : [])])).slice(0, 5);
+        localStorage.setItem('baan_steak_my_order_numbers', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
       setCart([]);
       setIsCartOpen(false);
       // Clear customer name, phone, and address so names won't be repeated
@@ -567,6 +618,159 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           <span className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-full font-extrabold text-amber-900 shrink-0">
             รับกลับบ้าน
           </span>
+        </div>
+      )}
+
+      {/* 2.3 Live Real-time Order Tracking for Customer (ติดตามสถานะออเดอร์แบบเรียลไทม์) */}
+      {customerTrackedOrders.length > 0 && (
+        <div className="w-full bg-white rounded-3xl p-4 sm:p-5 border-2 border-amber-400 shadow-lg space-y-3.5 animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-3.5 w-3.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500"></span>
+              </span>
+              <h3 className="font-black text-stone-900 text-sm sm:text-base flex items-center gap-1.5">
+                <span>⚡ ติดตามสถานะออเดอร์ (เรียลไทม์)</span>
+              </h3>
+            </div>
+            <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+              สถานะสดจากร้าน
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {customerTrackedOrders.map((ord) => {
+              const currentStatus = ord.status;
+              const isTable = Boolean(ord.deliveryType === 'มาทานที่ร้าน' || ord.tableNumber);
+
+              return (
+                <div
+                  key={ord.id}
+                  className="bg-stone-50 rounded-2xl p-3.5 border border-stone-200 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="font-extrabold text-stone-900 text-sm">
+                        ออเดอร์ #{ord.orderNumber}
+                      </span>
+                      <span className="text-stone-500 ml-2">
+                        ({isTable ? `โต๊ะ ${ord.tableNumber || 1}` : ord.deliveryType})
+                      </span>
+                    </div>
+                    <div className="font-black text-red-600 text-sm sm:text-base">
+                      ฿{ord.totalAmount.toLocaleString()}
+                    </div>
+                  </div>
+
+                  {/* 4-Step Animated Progress Stepper */}
+                  <div className="grid grid-cols-4 gap-1.5 text-center text-[10px] sm:text-xs font-bold">
+                    {/* Step 1: รับออเดอร์ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'รับออเดอร์'
+                          ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300 animate-pulse'
+                          : 'bg-emerald-100 text-emerald-900'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🟡</div>
+                      <div>1. รับออเดอร์</div>
+                    </div>
+
+                    {/* Step 2: กำลังทำ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'กำลังทำ'
+                          ? 'bg-blue-600 text-white font-black shadow-xs ring-2 ring-blue-300 animate-pulse'
+                          : (currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง' || currentStatus === 'ส่งแล้ว')
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🍳</div>
+                      <div>2. กำลังทำ</div>
+                    </div>
+
+                    {/* Step 3: ส่งออเดอร์ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง'
+                          ? 'bg-orange-500 text-white font-black shadow-xs ring-2 ring-orange-300 animate-pulse'
+                          : currentStatus === 'ส่งแล้ว'
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🚚</div>
+                      <div>3. ส่งออเดอร์</div>
+                    </div>
+
+                    {/* Step 4: ส่งแล้ว */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'ส่งแล้ว'
+                          ? 'bg-emerald-600 text-white font-black shadow-xs'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">✅</div>
+                      <div>4. ส่งแล้ว</div>
+                    </div>
+                  </div>
+
+                  {/* Status explanation */}
+                  <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-xs text-stone-700 flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-stone-900">สถานะ:</span>
+                      <span className="font-black text-red-600">
+                        {currentStatus === 'รับออเดอร์' && 'ร้านได้รับออเดอร์แล้ว กำลังรอเริ่มปรุงอาหาร'}
+                        {currentStatus === 'กำลังทำ' && 'เชฟกำลังปรุงอาหารสดใหม่ในครัว'}
+                        {(currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง') && (isTable ? 'อาหารเสร็จเรียบร้อย กำลังยกเสิร์ฟที่โต๊ะ' : 'อาหารเสร็จเรียบร้อย ไรเดอร์กำลังนำส่ง')}
+                        {currentStatus === 'ส่งแล้ว' && 'จัดส่งเรียบร้อยแล้ว ทานให้อร่อยครับ'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Discrete Tracker Search Toggle */}
+      <div className="text-right">
+        <button
+          type="button"
+          onClick={() => setShowManualTracker(!showManualTracker)}
+          className="text-xs text-stone-500 hover:text-red-600 font-bold underline cursor-pointer"
+        >
+          {showManualTracker ? 'ปิดช่องค้นหาสถานะ' : '🔍 เช็คสถานะออเดอร์ด้วยเบอร์โทร/เลขออเดอร์'}
+        </button>
+      </div>
+
+      {showManualTracker && (
+        <div className="bg-stone-100 p-3 rounded-2xl border border-stone-200 space-y-2 animate-fadeIn text-xs">
+          <label className="font-bold text-stone-700 block">
+            กรอกเบอร์โทร หรือ เลขออเดอร์ เพื่อติดตามสถานะสด:
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={trackingSearchQuery}
+              onChange={(e) => setTrackingSearchQuery(e.target.value)}
+              placeholder="เช่น 0850451606 หรือ 1001"
+              className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-semibold"
+            />
+            {trackingSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setTrackingSearchQuery('')}
+                className="px-3 py-2 bg-stone-200 hover:bg-stone-300 rounded-xl font-bold text-stone-700 cursor-pointer"
+              >
+                ล้าง
+              </button>
+            )}
+          </div>
         </div>
       )}
 

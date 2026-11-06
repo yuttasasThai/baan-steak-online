@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Delete, Eye, EyeOff, Lock, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { CheckCircle2, Delete, Eye, EyeOff, KeyRound, Lock, ShieldCheck, Sparkles, X } from 'lucide-react';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -169,7 +169,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </button>
         </div>
 
-        {/* PIN Input Form */}
+        {/* PIN Input Form (Visible & Editable on all mobile/desktop devices) */}
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="space-y-1">
             <label className="block text-xs font-bold text-stone-700">

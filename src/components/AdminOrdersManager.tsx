@@ -12,6 +12,7 @@ import {
   Loader2,
   MapPin,
   Phone,
+  Printer,
   ShoppingBag,
   Store,
   Truck,
@@ -31,16 +32,18 @@ import {
   updateTableStatus,
 } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
+import { OrderReceiptModal } from './OrderReceiptModal';
 
 interface AdminOrdersManagerProps {
   orders: Order[];
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-const ACTIVE_STATUS_FILTERS: Array<'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'กำลังส่ง'> = [
+const ACTIVE_STATUS_FILTERS: Array<'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'ส่งออเดอร์' | 'กำลังส่ง'> = [
   'ทั้งหมด',
   'รับออเดอร์',
   'กำลังทำ',
+  'ส่งออเดอร์',
   'กำลังส่ง',
 ];
 
@@ -59,6 +62,12 @@ const STATUS_BADGE_STYLES: Record<
     text: 'text-blue-800',
     border: 'border-blue-300',
     label: '🔵 กำลังทำ',
+  },
+  ส่งออเดอร์: {
+    bg: 'bg-orange-100',
+    text: 'text-orange-800',
+    border: 'border-orange-300',
+    label: '🚚 ส่งออเดอร์',
   },
   กำลังส่ง: {
     bg: 'bg-orange-100',
@@ -156,11 +165,12 @@ export function formatOrderDateTime(isoString?: string): string {
 }
 
 export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, onNotify }) => {
-  const [selectedFilter, setSelectedFilter] = useState<'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'กำลังส่ง'>(
-    'ทั้งหมด'
-  );
+  const [selectedFilter, setSelectedFilter] = useState<
+    'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'ส่งออเดอร์' | 'กำลังส่ง'
+  >('ทั้งหมด');
   const [viewTab, setViewTab] = useState<'active' | 'archived' | 'cancelled'>('active');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [cancelReasonInput, setCancelReasonInput] = useState<string>('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
   const [isCancelling, setIsCancelling] = useState(false);
@@ -190,8 +200,8 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
   };
 
   const handleTestSound = () => {
-    audioAlert.testVoiceAlert(1);
-    onNotify('📢 กำลังเล่นเสียงพูด: "มีออเดอร์เข้า โต๊ะ 1"', 'info');
+    audioAlert.testVoiceAlert({ tableNumber: 1, deliveryType: 'มาทานที่ร้าน' }, 'รับออเดอร์');
+    onNotify('📢 กำลังเล่นเสียงพูด: "ออเดอร์ของ โต๊ะที่ 1 ทานที่ร้าน รับออเดอร์"', 'info');
   };
 
   const handleFreeTable = async (tableNumber: number | string) => {
@@ -298,17 +308,31 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
       ทั้งหมด: activeOrders.length,
       รับออเดอร์: activeOrders.filter((o) => o.status === 'รับออเดอร์').length,
       กำลังทำ: activeOrders.filter((o) => o.status === 'กำลังทำ').length,
+      ส่งออเดอร์: activeOrders.filter((o) => o.status === 'ส่งออเดอร์' || o.status === 'กำลังส่ง').length,
       กำลังส่ง: activeOrders.filter((o) => o.status === 'กำลังส่ง').length,
       ส่งแล้ว: archivedOrders.length,
       ยกเลิก: cancelledOrders.length,
     };
   }, [activeOrders, archivedOrders, cancelledOrders]);
 
-  // Handle strictly 1-way status change
+  // Handle strictly 1-way status change with voice alert
   const handleNextStatus = async (order: Order, nextStatus: OrderStatus) => {
     try {
       setUpdatingId(order.id);
       await updateOrderStatus(order, nextStatus);
+
+      // 🔊 เล่นเสียงเตือนพูดระบุสถานะออเดอร์ตามขั้นตอน:
+      // "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/กลับบ้าน/ส่งที่บ้าน) + สถานะออเดอร์"
+      audioAlert.playOrderStatusAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: nextStatus,
+        },
+        nextStatus
+      );
 
       if (nextStatus === 'ส่งแล้ว') {
         onNotify(
@@ -330,12 +354,25 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
     }
   };
 
-  // Confirm cancel order action
+  // Confirm cancel order action with voice alert
   const handleConfirmCancel = async () => {
     if (!orderToCancel) return;
     try {
       setIsCancelling(true);
       await cancelOrder(orderToCancel, cancelReasonInput.trim() || 'ยกเลิกโดยทางร้าน');
+
+      // 🔊 แจ้งเตือนเสียงยกเลิก
+      audioAlert.playOrderStatusAlert(
+        {
+          customerName: orderToCancel.customerName,
+          tableNumber: orderToCancel.tableNumber,
+          deliveryType: orderToCancel.deliveryType,
+          orderNumber: orderToCancel.orderNumber,
+          status: 'ยกเลิก',
+        },
+        'ยกเลิก'
+      );
+
       onNotify(
         `ยกเลิกออเดอร์ #${orderToCancel.orderNumber} เรียบร้อย (ลบออกจากรายการออเดอร์ และบันทึกประวัติเมนูเรียบร้อย)`,
         'info'
@@ -716,6 +753,17 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                               </button>
                             )}
 
+                            {/* ปุ่มพิมพ์บิล (Print Receipt) */}
+                            <button
+                              type="button"
+                              onClick={() => setReceiptOrder(order)}
+                              className="w-full py-1.5 px-2 bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 text-amber-950 border border-amber-300 active:scale-98 rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                              title="พิมพ์ใบเสร็จ / บิลออเดอร์นี้ (Thermal POS & A4)"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-amber-800" />
+                              <span>🖨️ พิมพ์บิล</span>
+                            </button>
+
                             {/* Link ดูรายละเอียด และ ลบออเดอร์ */}
                             <div className="flex items-center justify-between pt-1 border-t border-stone-200/60">
                               <button
@@ -825,6 +873,15 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                           <div className="flex items-center justify-center gap-1">
                             <button
                               type="button"
+                              onClick={() => setReceiptOrder(order)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                              title="พิมพ์ใบเสร็จออเดอร์นี้"
+                            >
+                              <Printer className="w-3 h-3 text-amber-700" />
+                              <span>พิมพ์บิล</span>
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => setDetailOrder(order)}
                               className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
                             >
@@ -925,6 +982,15 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                         </td>
                         <td className="py-3 px-3 text-center">
                           <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setReceiptOrder(order)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                              title="พิมพ์ใบเสร็จออเดอร์นี้"
+                            >
+                              <Printer className="w-3 h-3 text-amber-700" />
+                              <span>พิมพ์บิล</span>
+                            </button>
                             <button
                               type="button"
                               onClick={() => setDetailOrder(order)}
@@ -1251,6 +1317,16 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                 </div>
               )}
 
+              {/* ปุ่มพิมพ์บิล / ใบเสร็จ */}
+              <button
+                type="button"
+                onClick={() => setReceiptOrder(detailOrder)}
+                className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:brightness-105 active:scale-98 text-stone-950 font-black rounded-xl text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-amber-200"
+              >
+                <Printer className="w-4 h-4 text-stone-950" />
+                <span>🖨️ พิมพ์ใบเสร็จออเดอร์นี้ (Print Bill)</span>
+              </button>
+
               {/* ปุ่มลบออเดอร์นี้ออกจากระบบถาวร */}
               <button
                 type="button"
@@ -1488,6 +1564,14 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
           </div>
         </div>
       )}
+
+      {/* 9. ORDER RECEIPT PRINT MODAL */}
+      <OrderReceiptModal
+        order={receiptOrder}
+        isOpen={Boolean(receiptOrder)}
+        onClose={() => setReceiptOrder(null)}
+        onNotify={onNotify}
+      />
     </div>
   );
 };
