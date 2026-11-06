@@ -183,7 +183,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 pattern="[0-9]*"
                 maxLength={10}
                 value={pin}
-                placeholder="0850451606"
+                placeholder="••••••••••"
                 autoComplete="off"
                 onChange={(e) => {
                   const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 10);
