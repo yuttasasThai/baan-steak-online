@@ -45,6 +45,7 @@ interface CustomerWebsiteProps {
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
   onOpenAdminLogin: () => void;
   isAdmin?: boolean;
+  onToggleShopOpen?: () => Promise<void> | void;
 }
 
 export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
@@ -55,6 +56,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   onNotify,
   onOpenAdminLogin,
   isAdmin = false,
+  onToggleShopOpen,
 }) => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('ทั้งหมด');
@@ -398,17 +400,21 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       setCompletedOrderIsOutOfZone(
         Boolean(diningType === 'ส่งอาหารที่บ้าน' && distanceKm !== null && distanceKm > 12)
       );
-      setCompletedOrderDiningType(diningType);
       setCompletedOrderNumber(orderNum);
       setCart([]);
       setIsCartOpen(false);
-      // เคลียร์ข้อมูลลูกค้าทันที เพื่อไม่ให้ชื่อลูกค้าซ้ำกันในการสั่งครั้งต่อไป
+      // Clear customer name, phone, and address so names won't be repeated
       setCustomerName('');
       setCustomerPhone('');
       setAddress('');
       setGpsLocation(null);
       setIsOutOfZoneProceed(null);
       onNotify('สั่งอาหารสำเร็จเรียบร้อย', 'success');
+    } catch (err) {
+      onNotify('เกิดข้อผิดพลาดในการสั่งอาหาร กรุณาลองใหม่อีกครั้ง', 'error');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
   };
 
   return (
@@ -426,12 +432,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         />
       </div>
 
-      {/* 2. กรอบยาวแจ้งสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (สีเด่นเห็นชัดเจน) */}
-      {settings?.isOpen === false ? (
-        <div className="w-full py-2.5 sm:py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 text-white font-black text-sm sm:text-base border-2 border-rose-400 shadow-md flex items-center justify-center gap-2 tracking-wide text-center animate-fadeIn">
-          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
-          <span className="text-base sm:text-lg">🔴</span>
-          {/* 2. ปุ่มแจ้งและสลับสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (คลิกเพื่อสลับเปิด/ปิดได้ทันที) */}
+      {/* 2. ปุ่มแจ้งและสลับสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (คลิกเพื่อสลับเปิด/ปิดได้ทันที) */}
       <button
         type="button"
         onClick={() => {
@@ -463,6 +464,29 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           {isAdmin ? '👆 แตะเพื่อสลับสถานะ' : '⚙️ จัดการร้าน'}
         </span>
       </button>
+
+      {/* 2.0 Real-time Table Status Indicator (ใต้ปุ่ม ร้านเปิด/ร้านปิด ตามที่กำหนดในลิงก์ Admin) */}
+      {tables && tables.length > 0 && (
+        <div className="w-full bg-white rounded-2xl p-3 sm:p-3.5 border border-stone-200 shadow-2xs space-y-2.5 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-black text-stone-900">
+              <span className="text-sm">🍽️</span>
+              <span>สถานะโต๊ะอาหารในร้าน (เรียลไทม์)</span>
+            </div>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                tables.every((t) => t.isOccupied)
+                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+              }`}
+            >
+              {tables.every((t) => t.isOccupied)
+                ? '🔴 โต๊ะเต็มทุกโต๊ะ'
+                : `🟢 ว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
+            </span>
+          </div>
+
+          {/* Grid of Individual Tables showing ว่าง / เต็ม */}
           <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 gap-2">
             {tables.map((tbl) => {
               const isOccupied = tbl.isOccupied;
