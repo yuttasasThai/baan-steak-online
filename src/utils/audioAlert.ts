@@ -5,6 +5,17 @@ class AudioAlertService {
   private audioCtx: AudioContext | null = null;
   private isUnlocked = false;
   private voiceAudioElement: HTMLAudioElement | null = null;
+  private backgroundLoopAudio: HTMLAudioElement | null = null;
+
+  // Background and Tab Flashing state
+  private originalDocumentTitle = '';
+  private titleFlashTimer: any = null;
+  private titleFlashState = false;
+
+  private repeatTimer: any = null;
+  private isAlertLooping = false;
+  private pendingOrdersList: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = [];
+  private currentCycleIndex = 0;
 
   constructor() {
     try {
@@ -17,12 +28,21 @@ class AudioAlertService {
     }
 
     if (typeof window !== 'undefined') {
+      this.originalDocumentTitle = document.title || 'บ้าน สเต็กออนไลน์ (Baan Steak Online)';
+
       const unlockHandler = () => {
         this.unlock();
       };
       window.addEventListener('click', unlockHandler, { passive: true });
       window.addEventListener('touchstart', unlockHandler, { passive: true });
       window.addEventListener('keydown', unlockHandler, { passive: true });
+
+      // Stop title flash when user switches back to this tab
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && !this.isAlertLooping) {
+          this.stopTitleFlash();
+        }
+      });
 
       // Pre-warm SpeechSynthesis voices if available
       if ('speechSynthesis' in window) {
@@ -47,6 +67,23 @@ class AudioAlertService {
     }
   }
 
+  /**
+   * Request system notification permission (for background tab Chrome alerts)
+   */
+  public async requestNotificationPermission(): Promise<boolean> {
+    if (typeof window === 'undefined' || !('Notification' in window)) return false;
+    try {
+      if (Notification.permission === 'granted') return true;
+      if (Notification.permission !== 'denied') {
+        const permission = await Notification.requestPermission();
+        return permission === 'granted';
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+
   public unlock(): void {
     try {
       const ctx = this.getAudioContext();
@@ -63,6 +100,11 @@ class AudioAlertService {
         } catch {
           // fallback
         }
+      }
+
+      // Request notification permission quietly on first user gesture
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
       }
 
       this.isUnlocked = true;
@@ -109,100 +151,91 @@ class AudioAlertService {
       const gain1 = ctx.createGain();
       osc1.type = 'sine';
       osc1.frequency.setValueAtTime(659.25, now);
-      gain1.gain.setValueAtTime(0.35, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      gain1.gain.setValueAtTime(0, now);
+      gain1.gain.linearRampToValueAtTime(0.4, now + 0.04);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       osc1.connect(gain1);
       gain1.connect(ctx.destination);
       osc1.start(now);
-      osc1.stop(now + 0.35);
+      osc1.stop(now + 0.5);
 
-      // Note 2: C5 (523.25 Hz) after 0.18s
+      // Note 2: C5 (523.25 Hz)
       const osc2 = ctx.createOscillator();
       const gain2 = ctx.createGain();
       osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(523.25, now + 0.18);
-      gain2.gain.setValueAtTime(0.4, now + 0.18);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+      osc2.frequency.setValueAtTime(523.25, now + 0.22);
+      gain2.gain.setValueAtTime(0, now + 0.22);
+      gain2.gain.linearRampToValueAtTime(0.5, now + 0.26);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
       osc2.connect(gain2);
       gain2.connect(ctx.destination);
-      osc2.start(now + 0.18);
-      osc2.stop(now + 0.65);
-
-      // Note 3: G5 (783.99 Hz) short ping for attention
-      const osc3 = ctx.createOscillator();
-      const gain3 = ctx.createGain();
-      osc3.type = 'sine';
-      osc3.frequency.setValueAtTime(783.99, now + 0.4);
-      gain3.gain.setValueAtTime(0.3, now + 0.4);
-      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.85);
-      osc3.connect(gain3);
-      gain3.connect(ctx.destination);
-      osc3.start(now + 0.4);
-      osc3.stop(now + 0.85);
+      osc2.start(now + 0.22);
+      osc2.stop(now + 0.9);
     } catch (err) {
-      console.warn('Error playing chime:', err);
+      console.warn('AudioContext chime error:', err);
     }
   }
 
   /**
-   * Play crystal clear Thai spoken voice: "มีออเดอร์เข้า"
-   * Uses real MP3 audio recording with embedded base64 fallback,
-   * then supplements with Web Speech API for table-specific numbers if present.
+   * Play real Thai voice audio ("มีออเดอร์เข้า")
+   * Uses HTMLAudioElement which continues playing even when Chrome tab is in background!
    */
-  public playSpokenVoiceAudio(): Promise<boolean> {
+  public playSpokenVoiceAudio(): Promise<void> {
     return new Promise((resolve) => {
-      if (typeof window === 'undefined') {
-        resolve(false);
-        return;
+      let resolved = false;
+      const onDone = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      };
+
+      try {
+        let audio = this.voiceAudioElement;
+        if (!audio) {
+          audio = new Audio('/order-alert.mp3');
+          this.voiceAudioElement = audio;
+        }
+
+        audio.currentTime = 0;
+        audio.volume = 1.0;
+        audio.onended = onDone;
+        audio.onerror = () => {
+          // Fallback to embedded base64 audio
+          try {
+            const fallbackAudio = new Audio(ORDER_ALERT_AUDIO_DATA_URI);
+            fallbackAudio.volume = 1.0;
+            fallbackAudio.onended = onDone;
+            fallbackAudio.onerror = () => onDone();
+            fallbackAudio.play().catch(() => onDone());
+          } catch {
+            onDone();
+          }
+        };
+
+        const playPromise = audio.play();
+        if (playPromise) {
+          playPromise.catch(() => {
+            // Attempt fallback to base64
+            try {
+              const fallbackAudio = new Audio(ORDER_ALERT_AUDIO_DATA_URI);
+              fallbackAudio.volume = 1.0;
+              fallbackAudio.onended = onDone;
+              fallbackAudio.onerror = () => onDone();
+              fallbackAudio.play().catch(() => onDone());
+            } catch {
+              onDone();
+            }
+          });
+        }
+      } catch {
+        onDone();
       }
 
-      const audio = new Audio('/order-alert.mp3');
-      audio.volume = 1.0;
-
-      let hasResolved = false;
-      const onDone = () => {
-        if (!hasResolved) {
-          hasResolved = true;
-          resolve(true);
-        }
-      };
-
-      audio.onended = onDone;
-      audio.onerror = () => {
-        // Fallback to embedded base64 audio
-        try {
-          const fallbackAudio = new Audio(ORDER_ALERT_AUDIO_DATA_URI);
-          fallbackAudio.volume = 1.0;
-          fallbackAudio.onended = onDone;
-          fallbackAudio.onerror = () => onDone();
-          fallbackAudio.play().catch(() => onDone());
-        } catch {
-          onDone();
-        }
-      };
-
-      audio.play().catch(() => {
-        // Attempt fallback to base64
-        try {
-          const fallbackAudio = new Audio(ORDER_ALERT_AUDIO_DATA_URI);
-          fallbackAudio.volume = 1.0;
-          fallbackAudio.onended = onDone;
-          fallbackAudio.onerror = () => onDone();
-          fallbackAudio.play().catch(() => onDone());
-        } catch {
-          onDone();
-        }
-      });
-
       // Safety timeout
-      setTimeout(onDone, 2500);
+      setTimeout(onDone, 2600);
     });
   }
-
-  private repeatTimer: any = null;
-  private isAlertLooping = false;
-  private pendingOrdersList: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = [];
-  private currentCycleIndex = 0;
 
   /**
    * Speak supplementary text using Web Speech API (e.g. "โต๊ะ 1" or "รับกลับบ้าน")
@@ -230,6 +263,58 @@ class AudioAlertService {
       window.speechSynthesis.speak(utterance);
     } catch (err) {
       console.warn('SpeechSynthesis error:', err);
+    }
+  }
+
+  /**
+   * Send background Chrome notification when tab is in background
+   */
+  public sendBackgroundNotification(orderInfoText: string): void {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    try {
+      if (Notification.permission === 'granted') {
+        const notif = new Notification('🚨 มีออเดอร์เข้าใหม่! (ร้านบ้าน สเต็ก)', {
+          body: orderInfoText || 'มีออเดอร์ใหม่เข้ามา กรุณากดเพื่อดูและกดยืนยันรับออเดอร์',
+          icon: '/IMG_20261007_161813.jpg',
+          tag: 'incoming-order-alert',
+          requireInteraction: true,
+        });
+
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+        };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Start title flashing so other Chrome tabs see the alert in their tab bar
+   */
+  private startTitleFlash(count = 1): void {
+    if (typeof window === 'undefined') return;
+    if (this.titleFlashTimer) return;
+
+    this.titleFlashState = false;
+    this.titleFlashTimer = setInterval(() => {
+      this.titleFlashState = !this.titleFlashState;
+      if (this.titleFlashState) {
+        document.title = `🚨 (${count}) มีออเดอร์เข้าใหม่! 🥩`;
+      } else {
+        document.title = `🔔 [กดรับออเดอร์] ร้านบ้านสเต็ก`;
+      }
+    }, 1000);
+  }
+
+  private stopTitleFlash(): void {
+    if (this.titleFlashTimer) {
+      clearInterval(this.titleFlashTimer);
+      this.titleFlashTimer = null;
+    }
+    if (typeof window !== 'undefined' && this.originalDocumentTitle) {
+      document.title = this.originalDocumentTitle;
     }
   }
 
@@ -270,6 +355,7 @@ class AudioAlertService {
 
   /**
    * Start repeating alert loop until all pending incoming orders are accepted
+   * Works both in active tab and background Google Chrome tabs!
    */
   public startRepeatingOrderAlert(
     orders: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = []
@@ -281,8 +367,26 @@ class AudioAlertService {
       return;
     }
 
+    // Determine target order details for notification & speech
+    const firstOrder = this.pendingOrdersList[0];
+    const orderDetailText = firstOrder?.tableNumber
+      ? `มีออเดอร์เข้า โต๊ะ ${firstOrder.tableNumber}`
+      : firstOrder?.deliveryType === 'นัดรับอาหาร'
+      ? 'มีออเดอร์เข้า นัดรับอาหาร'
+      : firstOrder?.deliveryType === 'ส่งอาหารที่บ้าน'
+      ? 'มีออเดอร์เข้า ส่งอาหารที่บ้าน'
+      : 'มีออเดอร์ใหม่เข้ามาในระบบ';
+
+    // Start tab title flashing
+    this.startTitleFlash(this.pendingOrdersList.length);
+
+    // Send Chrome System Notification if tab is in background
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.sendBackgroundNotification(orderDetailText);
+    }
+
     if (this.isAlertLooping) {
-      return; // Already looping, list was updated
+      return;
     }
 
     this.isAlertLooping = true;
@@ -291,17 +395,35 @@ class AudioAlertService {
     // Play immediately first round
     this.playOneAlertCycle();
 
-    // Repeat every 6.2 seconds until stopped
+    // Background Audio Chaining
+    const scheduleNextBackgroundPlay = () => {
+      if (!this.isAlertLooping || this.pendingOrdersList.length === 0) {
+        return;
+      }
+
+      try {
+        if (!this.backgroundLoopAudio) {
+          this.backgroundLoopAudio = new Audio('/order-alert.mp3');
+          this.backgroundLoopAudio.volume = 1.0;
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    // Repeat every 5.5 seconds until stopped
     if (this.repeatTimer) {
       clearInterval(this.repeatTimer);
     }
+
     this.repeatTimer = setInterval(() => {
       if (!this.isAlertLooping || this.pendingOrdersList.length === 0) {
         this.stopRepeatingOrderAlert();
         return;
       }
       this.playOneAlertCycle();
-    }, 6200);
+      scheduleNextBackgroundPlay();
+    }, 5500);
   }
 
   /**
@@ -313,8 +435,11 @@ class AudioAlertService {
     this.pendingOrdersList = [...orders];
     if (this.pendingOrdersList.length === 0) {
       this.stopRepeatingOrderAlert();
-    } else if (!this.isAlertLooping) {
-      this.startRepeatingOrderAlert(orders);
+    } else {
+      this.startTitleFlash(this.pendingOrdersList.length);
+      if (!this.isAlertLooping) {
+        this.startRepeatingOrderAlert(orders);
+      }
     }
   }
 
@@ -328,6 +453,19 @@ class AudioAlertService {
     }
     this.isAlertLooping = false;
     this.pendingOrdersList = [];
+
+    // Stop Title Flashing
+    this.stopTitleFlash();
+
+    // Stop Background audio
+    if (this.backgroundLoopAudio) {
+      try {
+        this.backgroundLoopAudio.pause();
+        this.backgroundLoopAudio.currentTime = 0;
+      } catch {
+        // ignore
+      }
+    }
 
     // Immediately stop any active speech
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -343,9 +481,6 @@ class AudioAlertService {
     return this.isAlertLooping;
   }
 
-  /**
-   * Single shot alert (backward compatible)
-   */
   public triggerNewOrderAlert(info?: { tableNumber?: number | string; deliveryType?: string }): void {
     if (info) {
       this.startRepeatingOrderAlert([info]);
@@ -354,9 +489,6 @@ class AudioAlertService {
     }
   }
 
-  /**
-   * Direct manual test method for Admin to verify sound and voice
-   */
   public testVoiceAlert(tableNumber: number | string = 1): void {
     this.unlock();
     this.playChime();
@@ -370,4 +502,3 @@ class AudioAlertService {
 }
 
 export const audioAlert = new AudioAlertService();
-
