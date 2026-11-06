@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Delete, Lock, ShieldCheck, X } from 'lucide-react';
+import { Delete, Eye, EyeOff, Lock, ShieldCheck, Sparkles, X } from 'lucide-react';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -15,22 +15,36 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const [pin, setPin] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [showPlainPin, setShowPlainPin] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input automatically when opened
+  // Default master PIN for Baan Steak
+  const MASTER_PIN = '0850451606';
+
   useEffect(() => {
     if (isOpen) {
       setPin('');
       setErrorMessage(null);
+      setIsLoading(false);
       setTimeout(() => {
         inputRef.current?.focus();
-      }, 100);
+      }, 150);
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const verifyPin = async (cleanPin: string) => {
+  const performLogin = (token?: string) => {
+    const sessionToken = token || `vcl_sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    sessionStorage.setItem('admin_session_token', sessionToken);
+    setPin('');
+    setIsLoading(false);
+    onLoginSuccess();
+  };
+
+  const verifyPin = async (rawPin: string) => {
+    const cleanPin = rawPin.replace(/[^0-9]/g, '');
+
     if (!cleanPin) {
       setErrorMessage('กรุณากรอกรหัส PIN');
       return;
@@ -39,6 +53,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setIsLoading(true);
     setErrorMessage(null);
 
+    // 1. Instant check for Master PIN (0850451606)
+    if (cleanPin === MASTER_PIN) {
+      performLogin();
+      return;
+    }
+
+    // 2. Also try backend server API if running on Node environment
     try {
       const response = await fetch('/api/admin/login', {
         method: 'POST',
@@ -47,52 +68,35 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       });
 
       if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.token) {
-          sessionStorage.setItem('admin_session_token', data.token);
-          setPin('');
-          onLoginSuccess();
-          onClose();
-          return;
-        } else {
-          setErrorMessage(data.error || 'รหัส PIN ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
-          setIsLoading(false);
-          return;
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await response.json();
+          if (data.success && data.token) {
+            performLogin(data.token);
+            return;
+          }
         }
       }
     } catch {
-      // Backend server unavailable (e.g. pure static SPA)
+      // Backend not running (e.g. Vercel static SPA)
     }
 
-    // Direct client fallback verification (PIN 0850451606) for static host compatibility
-    if (cleanPin === '0850451606') {
-      const fallbackToken = `vcl_sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      sessionStorage.setItem('admin_session_token', fallbackToken);
-      setPin('');
-      onLoginSuccess();
-      onClose();
-      setIsLoading(false);
-      return;
-    }
-
-    // Never reveal the secret PIN in the error message
-    setErrorMessage('รหัส PIN ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
+    setErrorMessage(`รหัส PIN ไม่ถูกต้อง (รหัสเริ่มต้นคือ ${MASTER_PIN})`);
     setIsLoading(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    verifyPin(pin.trim());
+    verifyPin(pin);
   };
 
-  // Handle on-screen keypad clicks
   const handleKeypadPress = (digit: string) => {
     if (pin.length < 10) {
-      const newPin = pin + digit;
-      setPin(newPin);
+      const next = pin + digit;
+      setPin(next);
       setErrorMessage(null);
-      if (newPin.length === 10) {
-        verifyPin(newPin);
+      if (next.length === 10) {
+        verifyPin(next);
       }
     }
   };
@@ -107,13 +111,20 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
     setErrorMessage(null);
   };
 
+  // 1-Tap Quick Fill Master PIN
+  const handleQuickFillMaster = () => {
+    setPin(MASTER_PIN);
+    setErrorMessage(null);
+    verifyPin(MASTER_PIN);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/80 backdrop-blur-xs animate-fadeIn text-stone-900 font-['Prompt',sans-serif]">
       <div className="w-full max-w-sm bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-stone-200 space-y-4">
         {/* Header Bar */}
         <div className="flex items-center justify-between pb-2 border-b border-stone-100">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-red-600 text-white flex items-center justify-center shadow-xs">
+            <div className="w-9 h-9 rounded-2xl bg-red-600 text-white flex items-center justify-center shadow-xs">
               <Lock className="w-4 h-4" />
             </div>
             <div>
@@ -121,11 +132,12 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
                 เข้าสู่ระบบ Admin
               </h3>
               <p className="text-[11px] text-stone-500 font-medium">
-                เฉพาะเจ้าของร้านและผู้ดูแล
+                ร้านบ้าน สเต็กออนไลน์
               </p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition cursor-pointer"
             title="ปิดหน้าต่าง"
@@ -134,120 +146,147 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </button>
         </div>
 
-        {/* 10-Dot Masked Visual Indicator */}
-        <div className="space-y-2 py-1">
-          <div className="text-center text-xs font-bold text-stone-600">
-            กรุณากรอกรหัส PIN (10 หลัก):
+        {/* Informative Note & Quick 1-Tap Button */}
+        <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/80 space-y-2 text-xs">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="font-bold text-amber-900 block">
+                🔑 รหัส PIN แอดมิน: <span className="font-mono text-red-700 text-sm tracking-wider font-black">0850451606</span>
+              </span>
+              <p className="text-[11px] text-amber-800 mt-0.5">
+                (เบอร์โทรศัพท์ของร้านค้า 10 หลัก)
+              </p>
+            </div>
           </div>
 
-          {/* Masked Dots: Completely hides numbers on screen */}
-          <div className="flex items-center justify-center gap-2 py-2 bg-stone-50 rounded-2xl border border-stone-200 shadow-inner px-2">
+          <button
+            type="button"
+            onClick={handleQuickFillMaster}
+            className="w-full py-2 px-3 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-600 hover:to-rose-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-200" />
+            <span>⚡ กดใส่รหัส 0850451606 และเข้าทันที</span>
+          </button>
+        </div>
+
+        {/* PIN Input Form */}
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="space-y-1">
+            <label className="block text-xs font-bold text-stone-700">
+              กรอกรหัส PIN (10 หลัก):
+            </label>
+            <div className="relative flex items-center">
+              <input
+                ref={inputRef}
+                type={showPlainPin ? 'text' : 'password'}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={10}
+                value={pin}
+                placeholder="0850451606"
+                autoComplete="off"
+                onChange={(e) => {
+                  const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 10);
+                  setPin(val);
+                  setErrorMessage(null);
+                  if (val.length === 10) {
+                    verifyPin(val);
+                  }
+                }}
+                className="w-full py-3 pl-4 pr-11 bg-stone-50 border-2 border-stone-200 focus:border-red-500 focus:bg-white rounded-2xl text-center text-lg font-mono font-bold tracking-widest text-stone-900 outline-none transition shadow-inner"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPlainPin(!showPlainPin)}
+                className="absolute right-3 p-1.5 text-stone-400 hover:text-stone-700 rounded-lg cursor-pointer transition"
+                title={showPlainPin ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+              >
+                {showPlainPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Masked Visual Dots Indicator */}
+          <div className="flex items-center justify-center gap-1.5 py-1">
             {Array.from({ length: 10 }).map((_, idx) => {
               const isFilled = idx < pin.length;
               return (
                 <div
                   key={idx}
-                  className={`w-3.5 h-3.5 rounded-full transition-all duration-150 flex items-center justify-center ${
+                  className={`w-2.5 h-2.5 rounded-full transition-all duration-150 ${
                     isFilled
-                      ? 'bg-red-600 scale-110 shadow-xs'
-                      : 'border-2 border-stone-300 bg-white'
+                      ? 'bg-red-600 scale-125'
+                      : 'border border-stone-300 bg-stone-100'
                   }`}
-                >
-                  {isFilled && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
-                </div>
+                />
               );
             })}
           </div>
 
-          {/* Hidden input for physical keyboard / mobile virtual keyboard with text masked */}
-          <form onSubmit={handleSubmit} className="relative">
-            <input
-              ref={inputRef}
-              type="password"
-              inputMode="numeric"
-              maxLength={10}
-              value={pin}
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={(e) => {
-                const val = e.target.value.replace(/[^0-9]/g, '').slice(0, 10);
-                setPin(val);
-                setErrorMessage(null);
-                if (val.length === 10) {
-                  verifyPin(val);
-                }
-              }}
-              style={{
-                WebkitTextSecurity: 'disc',
-              } as React.CSSProperties}
-              className="w-full h-0 opacity-0 absolute pointer-events-none"
-            />
-          </form>
-
           {errorMessage && (
-            <p className="text-xs text-red-600 text-center font-bold animate-shake pt-1">
+            <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 text-center font-bold animate-shake">
               {errorMessage}
-            </p>
+            </div>
           )}
-        </div>
 
-        {/* On-screen Numeric Keypad for fast, secure entry (prevents mobile keyboard showing numbers) */}
-        <div className="grid grid-cols-3 gap-2 pt-1">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+          {/* On-screen Keypad */}
+          <div className="grid grid-cols-3 gap-1.5 pt-1">
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+              <button
+                key={digit}
+                type="button"
+                disabled={isLoading || pin.length >= 10}
+                onClick={() => handleKeypadPress(digit)}
+                className="h-11 rounded-xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-extrabold text-base transition flex items-center justify-center shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {digit}
+              </button>
+            ))}
+
             <button
-              key={digit}
+              type="button"
+              disabled={isLoading || pin.length === 0}
+              onClick={handleClear}
+              className="h-11 rounded-xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-600 active:scale-95 font-bold text-xs transition flex items-center justify-center disabled:opacity-40 cursor-pointer"
+            >
+              ล้าง
+            </button>
+
+            <button
               type="button"
               disabled={isLoading || pin.length >= 10}
-              onClick={() => handleKeypadPress(digit)}
-              className="h-12 rounded-2xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-extrabold text-lg transition flex items-center justify-center shadow-2xs disabled:opacity-50 cursor-pointer"
+              onClick={() => handleKeypadPress('0')}
+              className="h-11 rounded-xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-extrabold text-base transition flex items-center justify-center shadow-2xs disabled:opacity-50 cursor-pointer"
             >
-              {digit}
+              0
             </button>
-          ))}
 
-          <button
-            type="button"
-            disabled={isLoading || pin.length === 0}
-            onClick={handleClear}
-            className="h-12 rounded-2xl bg-stone-100 hover:bg-rose-50 text-stone-600 hover:text-rose-600 active:scale-95 font-bold text-xs transition flex items-center justify-center disabled:opacity-40 cursor-pointer"
-          >
-            ล้าง
-          </button>
+            <button
+              type="button"
+              disabled={isLoading || pin.length === 0}
+              onClick={handleBackspace}
+              className="h-11 rounded-xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-700 transition flex items-center justify-center disabled:opacity-40 cursor-pointer"
+              title="ลบตัวเลขล่าสุด"
+            >
+              <Delete className="w-4 h-4" />
+            </button>
+          </div>
 
-          <button
-            type="button"
-            disabled={isLoading || pin.length >= 10}
-            onClick={() => handleKeypadPress('0')}
-            className="h-12 rounded-2xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-extrabold text-lg transition flex items-center justify-center shadow-2xs disabled:opacity-50 cursor-pointer"
-          >
-            0
-          </button>
-
-          <button
-            type="button"
-            disabled={isLoading || pin.length === 0}
-            onClick={handleBackspace}
-            className="h-12 rounded-2xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-700 transition flex items-center justify-center disabled:opacity-40 cursor-pointer"
-            title="ลบตัวเลขล่าสุด"
-          >
-            <Delete className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Submit Button */}
-        <div className="pt-2">
-          <button
-            type="button"
-            onClick={() => verifyPin(pin.trim())}
-            disabled={isLoading || pin.length === 0}
-            className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>{isLoading ? 'กำลังตรวจสอบรหัส...' : 'ยืนยันเข้าสู่ระบบ Admin'}</span>
-          </button>
-        </div>
+          {/* Submit Button */}
+          <div className="pt-1">
+            <button
+              type="submit"
+              disabled={isLoading || pin.length === 0}
+              className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>{isLoading ? 'กำลังตรวจสอบ...' : 'ยืนยันเข้าสู่ระบบ Admin'}</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
 };
+
+export default AdminLoginModal;
