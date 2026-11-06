@@ -500,24 +500,121 @@ export function App() {
               <AdminMenuManager
                 menus={menus}
                 categories={categories}
-                onNotify={notify}
-              />
+const handleToggleStoreStatus = async () => {
+    if (!isAdminLoggedIn) {
+      handleOpenAdmin();
+      return;
+    }
+    const next = settings.isOpen === false;
+    await updateShopSettings({ isOpen: next });
+    notify(
+      next ? '🟢 เปิดร้านเรียบร้อย (ลูกค้าสั่งอาหารได้แล้ว)' : '🔴 ปิดร้านเรียบร้อย (ระบบงดรับออเดอร์ใหม่)',
+      next ? 'success' : 'info'
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col font-['Prompt',sans-serif]">
+      {/* Top Navigation Bar */}
+      <header className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-xs">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between gap-2">
+          {/* Logo / Shop Name */}
+          <div
+            onClick={() => navigateToView('customer')}
+            className="flex items-center gap-2 cursor-pointer shrink-0"
+            title="กลับไปหน้าหลัก"
+          >
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-black text-base sm:text-lg shadow-xs">
+              บ
+            </div>
+            <div>
+              <div className="font-extrabold text-sm sm:text-base leading-tight text-red-600">
+                {SHOP_INFO.name}
+              </div>
+              <div className="text-[9px] sm:text-[10px] text-stone-500 font-medium">
+                {SHOP_INFO.slogan} • อ.ชุมแพ
+              </div>
+            </div>
+          </div>
+
+          {/* Top Switcher: Customer vs Admin */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {/* Store Status Quick Toggle (แสดงถาวรในแถบด้านบน) */}
+            <button
+              type="button"
+              onClick={handleToggleStoreStatus}
+              className={`px-2 sm:px-2.5 py-1 rounded-xl text-[11px] sm:text-xs font-bold border transition flex items-center gap-1 cursor-pointer shrink-0 shadow-2xs ${
+                settings.isOpen !== false
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100'
+                  : 'bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100'
+              }`}
+              title="คลิกเพื่อสลับสถานะเปิด/ปิดร้าน (สำหรับร้านค้า)"
+            >
+              <span>{settings.isOpen !== false ? '🟢 ร้านเปิด' : '🔴 ร้านปิด'}</span>
+            </button>
+
+            {currentView === 'admin' ? (
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLinkModalInitialTab('user');
+                    setIsLinkModalOpen(true);
+                  }}
+                  className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[11px] sm:text-xs font-bold transition cursor-pointer flex items-center gap-1 shadow-2xs shrink-0"
+                  title="เปิดตัวสร้างลิงก์สำหรับ Admin และ ลิงก์สำหรับลูกค้า (User Link)"
+                >
+                  <Link2 className="w-3.5 h-3.5 text-red-600" />
+                  <span className="hidden md:inline">สร้างลิงก์ Admin / User</span>
+                  <span className="md:hidden">ลิงก์</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => navigateToView('customer')}
+                  className="px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] sm:text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  <span className="hidden sm:inline">ดูหน้าเว็บลูกค้า</span>
+                  <span className="sm:hidden">หน้าเว็บ</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="p-1 sm:p-1.5 rounded-xl text-stone-400 hover:text-red-600 hover:bg-stone-100 cursor-pointer shrink-0"
+                  title="ออกจากระบบ"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : isAdminLoggedIn ? (
+              <button
+                type="button"
+                onClick={() => navigateToView('admin')}
+                className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 bg-stone-900 text-white hover:bg-stone-800 text-[11px] sm:text-xs font-bold rounded-xl transition cursor-pointer shrink-0"
+                title="กลับหน้าระบบ Admin"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>แอดมิน</span>
+                {pendingOrdersCount > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+                    {pendingOrdersCount}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleOpenAdmin}
+                className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-[11px] sm:text-xs font-bold rounded-xl transition cursor-pointer border border-stone-200 shadow-2xs shrink-0"
+                title="เข้าสู่ระบบ Admin สำหรับร้านค้า"
+              >
+                <Lock className="w-3.5 h-3.5 text-stone-600" />
+                <span>Admin</span>
+              </button>
             )}
-            {adminTab === 'customers' && (
-              <AdminCustomerHistory customers={customers} orders={orders} />
-            )}
-            {adminTab === 'analytics' && (
-              <AdminSalesAnalytics orders={orders} />
-            )}
-            {adminTab === 'settings' && (
-              <AdminShopSettings
-                settings={settings}
-                onNotify={notify}
-                onNavigateToExport={() => setAdminTab('export')}
-              />
-            )}
-            {adminTab === 'export' && (
-              <AdminSourceCodeExporter onNotify={notify} />
+          </div>
+        </div>
+      </header>
             )}
           </div>
         )}
