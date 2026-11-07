@@ -11,7 +11,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderStatus, RestaurantTable, ShopSettings } from '../types';
+import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
@@ -265,9 +265,10 @@ export const INITIAL_CATEGORIES: CategoryItem[] = [
   { id: 'cat_steak', name: 'สเต็ก', orderIndex: 0 },
   { id: 'cat_salad', name: 'สลัด', orderIndex: 1 },
   { id: 'cat_snacks', name: 'ของทานเล่น', orderIndex: 2 },
+  { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 3 },
 ];
 
-// The EXACT 5 items requested by the user:
+// The core items for "บ้าน สเต็กออนไลน์" (สเต็ก, สลัด, ของทานเล่น, เครื่องดื่ม):
 export const EXACT_INITIAL_MENUS: Omit<MenuItem, 'id'>[] = [
   {
     name: 'สเต็กหมู',
@@ -326,6 +327,66 @@ export const EXACT_INITIAL_MENUS: Omit<MenuItem, 'id'>[] = [
     isAvailable: true,
     isPublished: true,
     orderIndex: 4,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    name: 'น้ำดื่มขวดเย็น',
+    price: 10,
+    category: 'เครื่องดื่ม',
+    description: 'น้ำดื่มสะอาดบริสุทธิ์ แช่เย็นสดชื่น ดับกระหาย',
+    imageUrl: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=600&q=80',
+    isAvailable: true,
+    isPublished: true,
+    orderIndex: 5,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    name: 'โค้ก / เป๊ปซี่ เย็นฉ่ำ',
+    price: 20,
+    category: 'เครื่องดื่ม',
+    description: 'น้ำอัดลมเย็นสดชื่น ซ่าถึงใจ เข้ากันดีกับสเต็ก',
+    imageUrl: 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=600&q=80',
+    isAvailable: true,
+    isPublished: true,
+    orderIndex: 6,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    name: 'ชามะนาวเย็น',
+    price: 25,
+    category: 'เครื่องดื่ม',
+    description: 'ชาดำผสมมะนาวแท้ รสชาติเปรี้ยวอมหวาน หอมกลิ่นชา ดื่มแล้วสดชื่นทันที',
+    imageUrl: 'https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=600&q=80',
+    isAvailable: true,
+    isPublished: true,
+    orderIndex: 7,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    name: 'ชาเขียวเย็น',
+    price: 25,
+    category: 'เครื่องดื่ม',
+    description: 'ชาเขียวหอมละมุน ชงสดเย็นชื่นใจ ดื่มง่าย หวานกำลังดี',
+    imageUrl: 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80',
+    isAvailable: true,
+    isPublished: true,
+    orderIndex: 8,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    name: 'น้ำส้มเย็นสดชื่น',
+    price: 25,
+    category: 'เครื่องดื่ม',
+    description: 'น้ำส้มรสชาติหวานอมเปรี้ยว สดชื่น อุดมด้วยวิตามินซี',
+    imageUrl: 'https://images.unsplash.com/photo-1613478223719-2ab802602423?auto=format&fit=crop&w=600&q=80',
+    isAvailable: true,
+    isPublished: true,
+    orderIndex: 9,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -716,6 +777,69 @@ export async function createOrder(data: {
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `orders/${orderId}`);
   }
+}
+
+// Append / Add extra items to an existing active order (ทั้งฝั่งลูกค้า และฝั่งแอดมิน)
+export async function appendItemsToOrder(
+  orderId: string,
+  newItems: Array<{ menuId: string; name: string; price: number; quantity: number }>,
+  customNote?: string
+): Promise<{ newSubtotal: number; newTotal: number }> {
+  if (!newItems || newItems.length === 0) {
+    throw new Error('กรุณาเลือกรายการอาหารที่ต้องการสั่งเพิ่ม');
+  }
+
+  const orderRef = doc(db, 'orders', orderId);
+  const snap = await getDoc(orderRef);
+  if (!snap.exists()) {
+    throw new Error('ไม่พบออเดอร์นี้ในระบบ');
+  }
+
+  const orderData = snap.data();
+  const currentItems = (orderData.items || []) as OrderItem[];
+
+  // Merge items: if same menuId, increase quantity; otherwise push new item
+  const merged: OrderItem[] = [...currentItems];
+  for (const it of newItems) {
+    const existingIdx = merged.findIndex((m) => m.menuId === it.menuId);
+    if (existingIdx >= 0) {
+      merged[existingIdx] = {
+        ...merged[existingIdx],
+        quantity: (merged[existingIdx].quantity || 1) + it.quantity,
+      };
+    } else {
+      merged.push({
+        menuId: it.menuId,
+        name: it.name,
+        price: Number(it.price) || 0,
+        quantity: it.quantity,
+      });
+    }
+  }
+
+  const addedSubtotal = newItems.reduce(
+    (sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+    0
+  );
+  const newSubtotal = (Number(orderData.subtotal) || 0) + addedSubtotal;
+  const newTotal = (Number(orderData.totalAmount) || 0) + addedSubtotal;
+
+  const currentNotes = orderData.notes || '';
+  const newNoteText = customNote
+    ? `${currentNotes ? currentNotes + ' | ' : ''}สั่งเพิ่ม: ${customNote}`
+    : currentNotes;
+
+  await updateDoc(orderRef, {
+    items: merged,
+    subtotal: newSubtotal,
+    totalAmount: newTotal,
+    hasAddition: true,
+    lastAdditionAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...(newNoteText ? { notes: newNoteText } : {}),
+  });
+
+  return { newSubtotal, newTotal };
 }
 
 // Cancel an order (Removes from active list, retains items history for best seller metrics without customer point accumulation)
@@ -1130,17 +1254,39 @@ export async function initializeBaanSteakMenu(forceReset: boolean = false): Prom
 
     const menusSnap = await getDocs(collection(db, 'menus'));
     
-    // Check if we already have the exact menus and don't need reset
+    // Check if we already have the menus and don't need reset
     if (!forceReset && !menusSnap.empty) {
       // Check if existing items contain old placeholder like "Wagyu" or "Salmon"
       let hasOldMockData = false;
+      let hasDrinks = false;
       menusSnap.forEach((docSnap) => {
         const data = docSnap.data();
         if (data.name && (data.name.includes('Wagyu') || data.name.includes('Salmon') || data.name.includes('ทีโบน'))) {
           hasOldMockData = true;
         }
+        if (data.category === 'เครื่องดื่ม') {
+          hasDrinks = true;
+        }
       });
       if (!hasOldMockData) {
+        // Ensure 'เครื่องดื่ม' category exists
+        const drinkCatRef = doc(db, 'categories', 'cat_drinks');
+        const drinkCatSnap = await getDoc(drinkCatRef);
+        if (!drinkCatSnap.exists()) {
+          await setDoc(drinkCatRef, { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 3 });
+        }
+        // If no drinks items yet, seed default drinks
+        if (!hasDrinks) {
+          const drinkItems = EXACT_INITIAL_MENUS.filter((m) => m.category === 'เครื่องดื่ม');
+          for (let i = 0; i < drinkItems.length; i++) {
+            const item = drinkItems[i];
+            const menuId = `menu_drink_${i + 1}`;
+            await setDoc(doc(db, 'menus', menuId), {
+              ...item,
+              orderIndex: 20 + i,
+            });
+          }
+        }
         return; // already clean and accurate
       }
     }
