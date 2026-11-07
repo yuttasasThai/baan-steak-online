@@ -246,6 +246,7 @@ export function App() {
           deliveryType: o.deliveryType,
           orderNumber: o.orderNumber,
           status: o.status || 'รับออเดอร์',
+          items: o.items,
         }))
       );
     } else {
@@ -274,6 +275,7 @@ export function App() {
             deliveryType: o.deliveryType,
             orderNumber: o.orderNumber,
             status: o.status || 'รับออเดอร์',
+            items: o.items,
           }))
         );
       }
@@ -797,7 +799,12 @@ export function App() {
         ) : (
           <div className="space-y-4">
             {adminTab === 'orders' && (
-              <AdminOrdersManager orders={orders} onNotify={notify} />
+              <AdminOrdersManager
+                orders={orders}
+                menus={menus}
+                tables={tables}
+                onNotify={notify}
+              />
             )}
             {adminTab === 'menus' && (
               <AdminMenuManager
