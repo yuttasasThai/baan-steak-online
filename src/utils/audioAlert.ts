@@ -6,11 +6,15 @@ export interface OrderSpeechTarget {
   deliveryType?: string;
   orderNumber?: string;
   status?: string;
+  items?: Array<{ name: string; quantity: number }>;
 }
 
 /**
  * รูปแบบตามที่ผู้ใช้กำหนด:
- * "ออเดอร์ของ" (โต๊ะที่.../คุณ... ทานที่ร้าน/โต๊ะที่.../คุณ... กลับบ้าน/คุณ...ส่งที่บ้าน) + ตามด้วย "สถานะออเดอร์"
+ * 1) เมื่อมีออเดอร์เข้า (สถานะ 'รับออเดอร์'):
+ *    "ออเดอร์ของ" (โต๊ะที่.../คุณ... ทานที่ร้าน/โต๊ะที่.../คุณ... กลับบ้าน/คุณ...ส่งที่บ้าน) + "รับออเดอร์ มีรายการดังนี้ [เมนู 1 xจำนวน, เมนู 2 xจำนวน...]"
+ * 2) เมื่อกดรับออเดอร์แล้ว (กำลังทำ / ส่งออเดอร์ / ส่งแล้ว):
+ *    "ออเดอร์ของ" (โต๊ะที่.../คุณ... ทานที่ร้าน/...) + "สถานะออเดอร์" (ไม่ต้องมีเสียงรายการอาหาร)
  */
 export function formatOrderStatusSpeech(
   order?: OrderSpeechTarget,
@@ -62,7 +66,22 @@ export function formatOrderStatusSpeech(
   else if (statusText === 'ส่งแล้ว' || statusText === 'สำเร็จ') statusPhrase = 'ส่งเรียบร้อยแล้ว';
   else if (statusText === 'ยกเลิก') statusPhrase = 'ยกเลิกแล้ว';
 
-  return `ออเดอร์ของ ${targetDesc} ${statusPhrase}`;
+  let result = `ออเดอร์ของ ${targetDesc} ${statusPhrase}`;
+
+  // หากเป็นสถานะ "รับออเดอร์" (ออเดอร์ใหม่เข้าค้างรับ) ให้ไล่รายการอาหารทั้งหมดด้วย
+  // เมื่อกดรับแล้ว (สถานะอื่น เช่น กำลังทำ, ส่งออเดอร์, ส่งแล้ว) ไม่ต้องพูดรายการอาหาร
+  if (statusText === 'รับออเดอร์' && order.items && order.items.length > 0) {
+    const itemsPhrase = order.items
+      .map((it) => {
+        const isDrink = /น้ำ|โค้ก|เป๊ปซี่|ชา|กาแฟ|นม|โซดา/i.test(it.name);
+        const unit = isDrink ? 'แก้ว' : 'จาน';
+        return `${it.name} ${it.quantity} ${unit}`;
+      })
+      .join(', ');
+    result += ` มีรายการดังนี้ ${itemsPhrase}`;
+  }
+
+  return result;
 }
 
 class AudioAlertService {
