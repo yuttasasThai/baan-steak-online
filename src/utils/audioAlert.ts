@@ -1,5 +1,70 @@
 import { ORDER_ALERT_AUDIO_DATA_URI } from './orderAlertAudioBase64';
 
+export interface OrderSpeechTarget {
+  customerName?: string;
+  tableNumber?: number | string;
+  deliveryType?: string;
+  orderNumber?: string;
+  status?: string;
+}
+
+/**
+ * รูปแบบตามที่ผู้ใช้กำหนด:
+ * "ออเดอร์ของ" (โต๊ะที่.../คุณ... ทานที่ร้าน/โต๊ะที่.../คุณ... กลับบ้าน/คุณ...ส่งที่บ้าน) + ตามด้วย "สถานะออเดอร์"
+ */
+export function formatOrderStatusSpeech(
+  order?: OrderSpeechTarget,
+  statusText: string = 'รับออเดอร์'
+): string {
+  if (!order) return `มีออเดอร์เข้า ${statusText}`;
+
+  const cleanName = (order.customerName || '')
+    .replace(/^โต๊ะ\s*\d+/i, '')
+    .replace(/^ลูกค้าหน้าร้าน/i, '')
+    .trim();
+  const hasName = Boolean(cleanName);
+
+  const isDineIn =
+    order.deliveryType === 'มาทานที่ร้าน' ||
+    (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '');
+  const isPickup =
+    order.deliveryType === 'นัดรับอาหาร' ||
+    (Boolean(order.deliveryType) && order.deliveryType!.includes('กลับบ้าน'));
+  const isDelivery =
+    order.deliveryType === 'ส่งอาหารที่บ้าน' ||
+    (Boolean(order.deliveryType) && order.deliveryType!.includes('ส่ง'));
+
+  let targetDesc = '';
+  if (isDineIn) {
+    const tablePart = order.tableNumber ? `โต๊ะที่ ${order.tableNumber} ` : '';
+    const namePart = hasName ? `คุณ ${cleanName} ` : '';
+    targetDesc = `${tablePart}${namePart}ทานที่ร้าน`.trim();
+  } else if (isPickup) {
+    const tablePart = order.tableNumber ? `โต๊ะที่ ${order.tableNumber} ` : '';
+    const namePart = hasName ? `คุณ ${cleanName} ` : '';
+    targetDesc = `${tablePart}${namePart}กลับบ้าน`.trim();
+  } else if (isDelivery) {
+    const namePart = hasName ? `คุณ ${cleanName} ` : '';
+    targetDesc = `${namePart}ส่งที่บ้าน`.trim();
+  } else {
+    targetDesc = hasName
+      ? `คุณ ${cleanName}`
+      : order.tableNumber
+      ? `โต๊ะที่ ${order.tableNumber}`
+      : 'ลูกค้า';
+  }
+
+  // ปรับเสียงคำอ่านสถานะออเดอร์ให้เป็นธรรมชาติ ชัดเจน
+  let statusPhrase = statusText;
+  if (statusText === 'รับออเดอร์') statusPhrase = 'รับออเดอร์';
+  else if (statusText === 'กำลังทำ') statusPhrase = 'กำลังทำ';
+  else if (statusText === 'ส่งออเดอร์' || statusText === 'กำลังส่ง') statusPhrase = 'ส่งออเดอร์';
+  else if (statusText === 'ส่งแล้ว' || statusText === 'สำเร็จ') statusPhrase = 'ส่งเรียบร้อยแล้ว';
+  else if (statusText === 'ยกเลิก') statusPhrase = 'ยกเลิกแล้ว';
+
+  return `ออเดอร์ของ ${targetDesc} ${statusPhrase}`;
+}
+
 class AudioAlertService {
   private isAudioEnabled = true;
   private audioCtx: AudioContext | null = null;
@@ -14,7 +79,7 @@ class AudioAlertService {
 
   private repeatTimer: any = null;
   private isAlertLooping = false;
-  private pendingOrdersList: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = [];
+  private pendingOrdersList: OrderSpeechTarget[] = [];
   private currentCycleIndex = 0;
 
   constructor() {
@@ -319,7 +384,8 @@ class AudioAlertService {
   }
 
   /**
-   * Play single alert cycle: Chime -> Spoken "มีออเดอร์เข้า" -> "โต๊ะ X" / Delivery type
+   * Play single alert cycle with the exact template:
+   * "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/โต๊ะที่.../คุณ... กลับบ้าน/คุณ...ส่งที่บ้าน) + สถานะออเดอร์"
    */
   public playOneAlertCycle(): void {
     if (!this.isAudioEnabled) return;
@@ -334,22 +400,27 @@ class AudioAlertService {
     this.unlock();
     this.playChime();
 
-    setTimeout(async () => {
-      await this.playSpokenVoiceAudio();
+    const speechText = formatOrderStatusSpeech(targetOrder, targetOrder?.status || 'รับออเดอร์');
 
-      if (targetOrder?.tableNumber) {
-        setTimeout(() => {
-          this.speakText(`โต๊ะ ${targetOrder.tableNumber}`);
-        }, 180);
-      } else if (targetOrder?.deliveryType === 'นัดรับอาหาร') {
-        setTimeout(() => {
-          this.speakText('นัดรับอาหาร');
-        }, 180);
-      } else if (targetOrder?.deliveryType === 'ส่งอาหารที่บ้าน') {
-        setTimeout(() => {
-          this.speakText('ส่งอาหารที่บ้าน');
-        }, 180);
-      }
+    setTimeout(() => {
+      this.speakText(speechText);
+    }, 280);
+  }
+
+  /**
+   * Trigger immediate voice alert for order status change:
+   * "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/กลับบ้าน/ส่งที่บ้าน) + สถานะออเดอร์"
+   */
+  public playOrderStatusAlert(order?: OrderSpeechTarget, status: string = 'รับออเดอร์'): void {
+    if (!this.isAudioEnabled) return;
+    this.unlock();
+    this.playChime();
+
+    const speechText = formatOrderStatusSpeech(order, status);
+    this.sendBackgroundNotification(speechText);
+
+    setTimeout(() => {
+      this.speakText(speechText);
     }, 280);
   }
 
@@ -357,9 +428,7 @@ class AudioAlertService {
    * Start repeating alert loop until all pending incoming orders are accepted
    * Works both in active tab and background Google Chrome tabs!
    */
-  public startRepeatingOrderAlert(
-    orders: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }> = []
-  ): void {
+  public startRepeatingOrderAlert(orders: OrderSpeechTarget[] = []): void {
     this.pendingOrdersList = [...orders];
 
     if (this.pendingOrdersList.length === 0) {
@@ -369,13 +438,7 @@ class AudioAlertService {
 
     // Determine target order details for notification & speech
     const firstOrder = this.pendingOrdersList[0];
-    const orderDetailText = firstOrder?.tableNumber
-      ? `มีออเดอร์เข้า โต๊ะ ${firstOrder.tableNumber}`
-      : firstOrder?.deliveryType === 'นัดรับอาหาร'
-      ? 'มีออเดอร์เข้า นัดรับอาหาร'
-      : firstOrder?.deliveryType === 'ส่งอาหารที่บ้าน'
-      ? 'มีออเดอร์เข้า ส่งอาหารที่บ้าน'
-      : 'มีออเดอร์ใหม่เข้ามาในระบบ';
+    const orderDetailText = formatOrderStatusSpeech(firstOrder, firstOrder?.status || 'รับออเดอร์');
 
     // Start tab title flashing
     this.startTitleFlash(this.pendingOrdersList.length);
@@ -395,12 +458,14 @@ class AudioAlertService {
     // Play immediately first round
     this.playOneAlertCycle();
 
-    // Background Audio Chaining
+    // Background Audio Chaining:
+    // Chrome does NOT throttle HTMLAudioElement event listeners in background tabs!
     const scheduleNextBackgroundPlay = () => {
       if (!this.isAlertLooping || this.pendingOrdersList.length === 0) {
         return;
       }
 
+      // If tab is in background, also re-trigger HTML5 Audio directly
       try {
         if (!this.backgroundLoopAudio) {
           this.backgroundLoopAudio = new Audio('/order-alert.mp3');
@@ -411,7 +476,7 @@ class AudioAlertService {
       }
     };
 
-    // Repeat every 5.5 seconds until stopped
+    // Repeat every 6.0 seconds until stopped
     if (this.repeatTimer) {
       clearInterval(this.repeatTimer);
     }
@@ -423,15 +488,13 @@ class AudioAlertService {
       }
       this.playOneAlertCycle();
       scheduleNextBackgroundPlay();
-    }, 5500);
+    }, 6000);
   }
 
   /**
    * Update active pending orders list during looping
    */
-  public updateRepeatingOrders(
-    orders: Array<{ tableNumber?: number | string; deliveryType?: string; orderNumber?: string }>
-  ): void {
+  public updateRepeatingOrders(orders: OrderSpeechTarget[]): void {
     this.pendingOrdersList = [...orders];
     if (this.pendingOrdersList.length === 0) {
       this.stopRepeatingOrderAlert();
@@ -481,7 +544,7 @@ class AudioAlertService {
     return this.isAlertLooping;
   }
 
-  public triggerNewOrderAlert(info?: { tableNumber?: number | string; deliveryType?: string }): void {
+  public triggerNewOrderAlert(info?: OrderSpeechTarget): void {
     if (info) {
       this.startRepeatingOrderAlert([info]);
     } else {
@@ -489,15 +552,11 @@ class AudioAlertService {
     }
   }
 
-  public testVoiceAlert(tableNumber: number | string = 1): void {
-    this.unlock();
-    this.playChime();
-    setTimeout(async () => {
-      await this.playSpokenVoiceAudio();
-      setTimeout(() => {
-        this.speakText(`โต๊ะ ${tableNumber}`);
-      }, 200);
-    }, 280);
+  public testVoiceAlert(
+    target: OrderSpeechTarget = { tableNumber: 1, deliveryType: 'มาทานที่ร้าน' },
+    status: string = 'รับออเดอร์'
+  ): void {
+    this.playOrderStatusAlert(target, status);
   }
 }
 
