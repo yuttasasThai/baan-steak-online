@@ -12,6 +12,7 @@ import {
   Loader2,
   MapPin,
   Phone,
+  Plus,
   Printer,
   ShoppingBag,
   Store,
@@ -21,7 +22,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { DiningType, Order, OrderStatus } from '../types';
+import { DiningType, MenuItem, Order, OrderStatus, RestaurantTable } from '../types';
 import {
   cancelOrder,
   clearOrdersHistory,
@@ -33,9 +34,13 @@ import {
 } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
 import { OrderReceiptModal } from './OrderReceiptModal';
+import { AdminCreateOrderModal } from './AdminCreateOrderModal';
+import { AdminAppendItemModal } from './AdminAppendItemModal';
 
 interface AdminOrdersManagerProps {
   orders: Order[];
+  menus?: MenuItem[];
+  tables?: RestaurantTable[];
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -164,7 +169,12 @@ export function formatOrderDateTime(isoString?: string): string {
   return `${formatOrderDate(isoString)} ${formatOrderTime(isoString)}`;
 }
 
-export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, onNotify }) => {
+export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
+  orders,
+  menus = [],
+  tables = [],
+  onNotify,
+}) => {
   const [selectedFilter, setSelectedFilter] = useState<
     'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'ส่งออเดอร์' | 'กำลังส่ง'
   >('ทั้งหมด');
@@ -175,6 +185,10 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
   const [cancelReasonInput, setCancelReasonInput] = useState<string>('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
   const [isCancelling, setIsCancelling] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // New order modal & append order modal states
+  const [isCreateOrderModalOpen, setIsCreateOrderModalOpen] = useState(false);
+  const [orderToAppend, setOrderToAppend] = useState<Order | null>(null);
 
   // Audio alert state (global audio alert is managed in App.tsx)
   const [isAudioEnabled, setIsAudioEnabled] = useState(() => audioAlert.isEnabled());
@@ -408,8 +422,19 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
           </p>
         </div>
 
-        {/* View Switcher: Active Orders / Delivered Orders / Cancelled Orders + Clear Button */}
-        <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-center">
+        {/* Action Buttons: Create Order POS / View Switcher / Clear History */}
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+          {/* ปุ่ม ➕ คีย์ออเดอร์ใหม่ (POS) */}
+          <button
+            type="button"
+            onClick={() => setIsCreateOrderModalOpen(true)}
+            className="px-3.5 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-md ring-2 ring-red-300 cursor-pointer"
+            title="แอดมินคีย์ออเดอร์ใหม่ สั่งหน้าร้าน โต๊ะ หรือทางโทรศัพท์"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[3]" />
+            <span>➕ คีย์ออเดอร์ใหม่ (POS)</span>
+          </button>
+
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
             <button
               type="button"
@@ -763,6 +788,19 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
                               <Printer className="w-3.5 h-3.5 text-amber-800" />
                               <span>🖨️ พิมพ์บิล</span>
                             </button>
+
+                            {/* ปุ่มเพิ่มรายการอาหารในออเดอร์เดิม (Admin append items) */}
+                            {(order.status === 'รับออเดอร์' || order.status === 'กำลังทำ') && (
+                              <button
+                                type="button"
+                                onClick={() => setOrderToAppend(order)}
+                                className="w-full py-1.5 px-2 bg-gradient-to-r from-stone-800 to-stone-900 hover:bg-black text-amber-300 border border-stone-700 active:scale-98 rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                                title="เพิ่มเมนูอาหารหรือเครื่องดื่มลงในออเดอร์นี้"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
+                                <span>➕ เพิ่มรายการอาหาร</span>
+                              </button>
+                            )}
 
                             {/* Link ดูรายละเอียด และ ลบออเดอร์ */}
                             <div className="flex items-center justify-between pt-1 border-t border-stone-200/60">
@@ -1570,6 +1608,24 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({ orders, 
         order={receiptOrder}
         isOpen={Boolean(receiptOrder)}
         onClose={() => setReceiptOrder(null)}
+        onNotify={onNotify}
+      />
+
+      {/* 10. ADMIN CREATE ORDER MODAL (POS) */}
+      <AdminCreateOrderModal
+        isOpen={isCreateOrderModalOpen}
+        onClose={() => setIsCreateOrderModalOpen(false)}
+        menus={menus}
+        tables={tables}
+        onNotify={onNotify}
+      />
+
+      {/* 11. ADMIN APPEND ITEM MODAL */}
+      <AdminAppendItemModal
+        isOpen={Boolean(orderToAppend)}
+        onClose={() => setOrderToAppend(null)}
+        order={orderToAppend}
+        menus={menus}
         onNotify={onNotify}
       />
     </div>
