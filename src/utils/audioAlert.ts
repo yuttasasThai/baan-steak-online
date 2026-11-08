@@ -31,9 +31,8 @@ export function formatOrderStatusSpeech(
   const isDineIn =
     order.deliveryType === 'มาทานที่ร้าน' ||
     (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '');
-  const isPickup =
-    order.deliveryType === 'นัดรับอาหาร' ||
-    (Boolean(order.deliveryType) && order.deliveryType!.includes('กลับบ้าน'));
+  const isTakeaway = order.deliveryType === 'สั่งกลับบ้าน';
+  const isPickup = order.deliveryType === 'นัดรับอาหาร';
   const isDelivery =
     order.deliveryType === 'ส่งอาหารที่บ้าน' ||
     (Boolean(order.deliveryType) && order.deliveryType!.includes('ส่ง'));
@@ -43,10 +42,12 @@ export function formatOrderStatusSpeech(
     const tablePart = order.tableNumber ? `โต๊ะที่ ${order.tableNumber} ` : '';
     const namePart = hasName ? `คุณ ${cleanName} ` : '';
     targetDesc = `${tablePart}${namePart}ทานที่ร้าน`.trim();
-  } else if (isPickup) {
-    const tablePart = order.tableNumber ? `โต๊ะที่ ${order.tableNumber} ` : '';
+  } else if (isTakeaway) {
     const namePart = hasName ? `คุณ ${cleanName} ` : '';
-    targetDesc = `${tablePart}${namePart}กลับบ้าน`.trim();
+    targetDesc = `${namePart}สั่งกลับบ้าน`.trim();
+  } else if (isPickup) {
+    const namePart = hasName ? `คุณ ${cleanName} ` : '';
+    targetDesc = `${namePart}นัดรับกลับบ้าน`.trim();
   } else if (isDelivery) {
     const namePart = hasName ? `คุณ ${cleanName} ` : '';
     targetDesc = `${namePart}ส่งที่บ้าน`.trim();
