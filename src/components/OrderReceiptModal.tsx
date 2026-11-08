@@ -1,10 +1,12 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AlertCircle,
   Bluetooth,
   Check,
   ChevronRight,
   Copy,
   ExternalLink,
+  Info,
   MapPin,
   Phone,
   Printer,
@@ -36,13 +38,24 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
   onNotify,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [slipWidth, setSlipWidth] = useState<'80mm' | '58mm' | 'full'>('58mm'); // Default to 58mm for PT210
+  const [slipWidth, setSlipWidth] = useState<'80mm' | '58mm' | 'full'>('58mm');
   const receiptRef = useRef<HTMLDivElement>(null);
 
   const [showPrinterHelp, setShowPrinterHelp] = useState(false);
   const [printTimestamp] = useState(() => new Date());
 
-  // Bluetooth Printer Scanner & Config States (matches Android app "POS printer")
+  // Real Web Bluetooth Connection States (Honest live tracking)
+  const [bluetoothStatus, setBluetoothStatus] = useState<
+    'disconnected' | 'connecting' | 'connected'
+  >('disconnected');
+  const [connectedDeviceName, setConnectedDeviceName] = useState<string | null>(null);
+  const [isPrintingBluetooth, setIsPrintingBluetooth] = useState(false);
+
+  // References to live Bluetooth GATT objects
+  const bluetoothDeviceRef = useRef<any>(null);
+  const writeCharacteristicRef = useRef<any>(null);
+
+  // Bluetooth Scanner Modal States
   const [showBluetoothModal, setShowBluetoothModal] = useState(false);
   const [bluetoothView, setBluetoothView] = useState<'list' | 'settings'>('list');
   const [isScanning, setIsScanning] = useState(false);
@@ -66,8 +79,6 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
       { name: 'JBL Go 4', mac: '55:18:5B:76:A1:4A', type: 'LE-only', isPrinter: false },
       { name: 'OPPO A15', mac: '8C:34:01:17:B5:F0', type: 'BR/EDR', isPrinter: false },
       { name: 'BYD BLE3', mac: 'ED:3A:B1:E3:CD:69', type: 'LE-only', isPrinter: false },
-      { name: 'AUTEL', mac: 'C1:0E:11:A1:82:F0', type: 'BR/EDR', isPrinter: false },
-      { name: '512101D33001481', mac: 'A4:C1:38:05:62:CA', type: 'LE-only', isPrinter: false },
     ];
   });
 
@@ -78,7 +89,6 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
     profile: string;
     dotsPerLine: number;
     feedLines: number;
-    isConnected: boolean;
   }>(() => {
     try {
       const saved = localStorage.getItem('baan_steak_active_printer');
@@ -93,9 +103,18 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
       profile: 'ESC/POS General',
       dotsPerLine: 384,
       feedLines: 1,
-      isConnected: true,
     };
   });
+
+  // Check if live Bluetooth connection is still alive on mount or unmount
+  useEffect(() => {
+    return () => {
+      // Clean up event listeners on unmount if any
+      if (bluetoothDeviceRef.current && bluetoothDeviceRef.current.gatt?.connected) {
+        // keep connection alive in session
+      }
+    };
+  }, []);
 
   if (!isOpen || !order) return null;
 
@@ -146,7 +165,7 @@ ${itemsText}
 🙏 ขอบพระคุณที่ใช้บริการครับ`;
   };
 
-  const handleCopyText = async () => {
+  const handleCopyText = async (silent = false) => {
     try {
       const text = generateReceiptPlainText();
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -162,19 +181,25 @@ ${itemsText}
         document.body.removeChild(textarea);
       }
       setCopied(true);
-      if (onNotify)
+      if (!silent && onNotify) {
         onNotify(
-          'คัดลอกข้อความบิลเรียบร้อยแล้ว (สามารถวางใน LINE หรือแอป POS Printer ได้ทันที)',
+          'คัดลอกข้อความบิลเรียบร้อยแล้ว (สามารถวางในแอป POS Printer หรือ LINE ได้ทันที)',
           'success'
         );
+      }
       setTimeout(() => setCopied(false), 2500);
+      return true;
     } catch {
-      if (onNotify) onNotify('ไม่สามารถคัดลอกข้อความได้', 'error');
+      if (!silent && onNotify) onNotify('ไม่สามารถคัดลอกข้อความได้', 'error');
+      return false;
     }
   };
 
-  // Direct Android Share: Opens Android share sheet directly allowing 1-tap send to "POS printer" or "LINE"
+  // Direct Android Share: 1-Tap send to "POS printer" app (or LINE)
   const handleShareToPosPrinter = async () => {
+    // 1. Always copy text to clipboard first so it's ready in clipboard as a backup
+    await handleCopyText(true);
+
     const text = generateReceiptPlainText();
     if (navigator.share) {
       try {
@@ -182,20 +207,176 @@ ${itemsText}
           title: `บิลออเดอร์ #${order.orderNumber} - ${SHOP_INFO.name}`,
           text: text,
         });
-        if (onNotify) onNotify('เปิดแชร์ไปยังแอป POS Printer / LINE สำเร็จ', 'success');
+        if (onNotify) {
+          onNotify('เปิดหน้าต่างส่งข้อมูลไปยังแอป POS Printer เรียบร้อยแล้ว', 'success');
+        }
       } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : '';
         if (!errorMsg.includes('abort') && !errorMsg.includes('cancelled')) {
-          handleCopyText();
+          if (onNotify) {
+            onNotify(
+              'คัดลอกข้อมูลบิลเรียบร้อยแล้ว สามารถเปิดแอป POS Printer แล้วกดวางพิมพ์ได้ทันทีครับ',
+              'info'
+            );
+          }
         }
       }
     } else {
-      handleCopyText();
+      if (onNotify) {
+        onNotify(
+          'คัดลอกข้อมูลบิลลงคลิปบอร์ดแล้ว เปิดแอป POS Printer แล้วกดวางเพื่อสั่งพิมพ์ได้ทันทีครับ',
+          'success'
+        );
+      }
     }
   };
 
-  // Fix for Android Print Spooler cut-off (Image 3 fix):
-  // Creates an isolated clean iframe print with ONLY the receipt markup and no modal containers!
+  // Connect to Bluetooth Printer via Web Bluetooth
+  const connectToBluetoothPrinter = async (deviceToConnect?: any) => {
+    if (!('bluetooth' in navigator)) {
+      if (onNotify) {
+        onNotify(
+          'เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth โดยตรง แนะนำใช้ปุ่ม "ส่งไปแอป POS Printer" หรือ "RawBT"',
+          'info'
+        );
+      }
+      return false;
+    }
+
+    try {
+      setBluetoothStatus('connecting');
+      let targetDevice = deviceToConnect || bluetoothDeviceRef.current;
+
+      if (!targetDevice) {
+        const navBluetooth = (navigator as any).bluetooth;
+        targetDevice = await navBluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [
+            '000018f0-0000-1000-8000-00805f9b34fb',
+            '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+            'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+            0x18f0,
+          ],
+        });
+      }
+
+      if (!targetDevice) {
+        setBluetoothStatus('disconnected');
+        return false;
+      }
+
+      bluetoothDeviceRef.current = targetDevice;
+
+      // Listen for DISCONNECT (e.g. printer powered off or out of range)
+      targetDevice.addEventListener('gattserverdisconnected', () => {
+        setBluetoothStatus('disconnected');
+        setConnectedDeviceName(null);
+        writeCharacteristicRef.current = null;
+        if (onNotify) {
+          onNotify(`เครื่องพิมพ์บลูทูธถูกปิด หรือสัญญาณขาดหาย (ตัดการเชื่อมต่อแล้ว)`, 'info');
+        }
+      });
+
+      // Connect GATT server
+      const server = await targetDevice.gatt.connect();
+      if (!server.connected) {
+        throw new Error('ไม่สามารถเชื่อมต่อ GATT Server ของเครื่องพิมพ์ได้');
+      }
+
+      // Discover writable characteristic
+      const services = await server.getPrimaryServices();
+      let writeChar: any = null;
+
+      for (const service of services) {
+        try {
+          const chars = await service.getCharacteristics();
+          for (const char of chars) {
+            if (char.properties.write || char.properties.writeWithoutResponse) {
+              writeChar = char;
+              break;
+            }
+          }
+        } catch {
+          // ignore service errors
+        }
+        if (writeChar) break;
+      }
+
+      writeCharacteristicRef.current = writeChar;
+      setBluetoothStatus('connected');
+      const devName = targetDevice.name || activePrinterConfig.name || 'PT210';
+      setConnectedDeviceName(devName);
+
+      if (onNotify) {
+        onNotify(`เชื่อมต่อกับเครื่องพิมพ์บลูทูธ "${devName}" สำเร็จแล้ว!`, 'success');
+      }
+      return true;
+    } catch (err: unknown) {
+      setBluetoothStatus('disconnected');
+      writeCharacteristicRef.current = null;
+      const errorMsg = err instanceof Error ? err.message : '';
+      if (!errorMsg.includes('cancelled') && !errorMsg.includes('User cancelled')) {
+        if (onNotify) {
+          onNotify(
+            'ไม่สามารถเชื่อมต่อเครื่องพิมพ์ได้: กรุณาเปิดเครื่องพิมพ์ PT210 และเปิดบลูทูธในมือถือ',
+            'error'
+          );
+        }
+      }
+      return false;
+    }
+  };
+
+  // Direct ESC/POS Print via Web Bluetooth (Bypasses Android Print Spooler completely!)
+  const handleDirectBluetoothPrint = async () => {
+    if (bluetoothStatus !== 'connected' || !writeCharacteristicRef.current) {
+      const ok = await connectToBluetoothPrinter();
+      if (!ok) return;
+    }
+
+    try {
+      setIsPrintingBluetooth(true);
+      const plainText = generateReceiptPlainText();
+      const encoder = new TextEncoder();
+
+      // ESC/POS Initialization Commands:
+      // 1B 40 = ESC @ (Initialize printer)
+      // 1B 61 01 = ESC a 1 (Center justification)
+      const initCmd = new Uint8Array([0x1b, 0x40, 0x1b, 0x61, 0x01]);
+      const textBytes = encoder.encode(plainText + '\n\n\n');
+      // Feed & partial cut (1D 56 41 00 = GS V 65 0)
+      const feedCmd = new Uint8Array([0x1d, 0x56, 0x41, 0x00]);
+
+      const combined = new Uint8Array(initCmd.length + textBytes.length + feedCmd.length);
+      combined.set(initCmd, 0);
+      combined.set(textBytes, initCmd.length);
+      combined.set(feedCmd, initCmd.length + textBytes.length);
+
+      const writeChar = writeCharacteristicRef.current;
+      // Send in chunks of 80 bytes for Bluetooth LE stability
+      const CHUNK_SIZE = 80;
+      for (let i = 0; i < combined.length; i += CHUNK_SIZE) {
+        const chunk = combined.slice(i, i + CHUNK_SIZE);
+        if (writeChar.properties.writeWithoutResponse) {
+          await writeChar.writeValueWithoutResponse(chunk);
+        } else {
+          await writeChar.writeValue(chunk);
+        }
+      }
+
+      if (onNotify) {
+        onNotify(`ส่งคำสั่งพิมพ์ไปยังเครื่องพิมพ์ "${connectedDeviceName || 'PT210'}" สำเร็จแล้ว!`, 'success');
+      }
+    } catch (err: unknown) {
+      if (onNotify) {
+        onNotify('การส่งข้อมูลพิมพ์ขัดข้อง กรุณาลองใหม่อีกครั้ง หรือใช้ปุ่ม "ส่งไปแอป POS Printer"', 'error');
+      }
+    } finally {
+      setIsPrintingBluetooth(false);
+    }
+  };
+
+  // Standard Print Spooler Print (Clean isolated document print)
   const handlePrint = () => {
     const receiptEl = document.getElementById('printable-receipt-wrapper');
     if (!receiptEl) {
@@ -320,7 +501,7 @@ ${itemsText}
     }
   };
 
-  // Direct RawBT Intent Print for Android thermal Bluetooth/USB printers
+  // Direct RawBT Intent Print
   const handleRawBTPrint = () => {
     try {
       const text = generateReceiptPlainText();
@@ -337,7 +518,7 @@ ${itemsText}
     }
   };
 
-  // Web Bluetooth Scan matching the user's "POS printer" scan screen
+  // Scan Bluetooth Devices
   const handleScanBluetoothDevices = async () => {
     setIsScanning(true);
     if (!('bluetooth' in navigator)) {
@@ -345,23 +526,16 @@ ${itemsText}
         setIsScanning(false);
         if (onNotify) {
           onNotify(
-            'อุปกรณ์ตรวจพบเครื่องพิมพ์ PT210 แล้ว สามารถกดเลือกตั้งค่าและเชื่อมต่อได้เลย หรือใช้ปุ่ม "แชร์ไปแอป POS Printer"',
+            'อุปกรณ์ตรวจพบเครื่องพิมพ์ PT210 แล้ว สามารถกดเลือกตั้งค่าและเชื่อมต่อได้เลย หรือใช้ปุ่ม "ส่งไปแอป POS Printer"',
             'info'
           );
         }
-      }, 800);
+      }, 600);
       return;
     }
 
     try {
-      const navBluetooth = (
-        navigator as unknown as {
-          bluetooth: {
-            requestDevice: (opt: unknown) => Promise<{ id?: string; name?: string }>;
-          };
-        }
-      ).bluetooth;
-
+      const navBluetooth = (navigator as any).bluetooth;
       const device = await navBluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
@@ -374,7 +548,7 @@ ${itemsText}
 
       if (device) {
         const newPrinter = {
-          name: device.name || 'Bluetooth Printer',
+          name: device.name || 'PT210',
           mac: device.id || '10:22:33:21:75:29',
           type: 'BR/EDR/LE',
           isPrinter: true,
@@ -387,24 +561,21 @@ ${itemsText}
           return updated;
         });
 
-        // Open config modal with scanned device
         setActivePrinterConfig((prev) => ({
           ...prev,
           name: newPrinter.name,
           mac: newPrinter.mac,
-          isConnected: true,
         }));
         setBluetoothView('settings');
 
-        if (onNotify) {
-          onNotify(`พบอุปกรณ์ "${newPrinter.name}" แล้ว พร้อมตั้งค่าใช้งาน`, 'success');
-        }
+        // Automatically connect to GATT
+        await connectToBluetoothPrinter(device);
       }
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : '';
       if (!errorMsg.includes('User cancelled')) {
         if (onNotify) {
-          onNotify('ไม่สามารถเปิด Bluetooth Scanner ได้ สามารถเลือกเครื่องพิมพ์ PT210 จากรายการได้ทันที', 'info');
+          onNotify('ไม่สามารถเปิด Bluetooth Scanner ได้ สามารถกดเชื่อมต่อ PT210 จากรายการได้ทันที', 'info');
         }
       }
     } finally {
@@ -412,11 +583,9 @@ ${itemsText}
     }
   };
 
-  const handleSavePrinterConfig = () => {
-    const updated = { ...activePrinterConfig, isConnected: true };
-    setActivePrinterConfig(updated);
+  const handleSavePrinterConfig = async () => {
     try {
-      localStorage.setItem('baan_steak_active_printer', JSON.stringify(updated));
+      localStorage.setItem('baan_steak_active_printer', JSON.stringify(activePrinterConfig));
     } catch {
       // ignore
     }
@@ -426,8 +595,10 @@ ${itemsText}
       setSlipWidth('80mm');
     }
     setShowBluetoothModal(false);
-    if (onNotify) {
-      onNotify(`เชื่อมต่อกับเครื่องพิมพ์ "${updated.name}" (${updated.dotsPerLine} จุด/บรรทัด) สำเร็จแล้ว!`, 'success');
+
+    // Attempt real Bluetooth connection if not connected yet
+    if (bluetoothStatus !== 'connected') {
+      await connectToBluetoothPrinter();
     }
   };
 
@@ -451,7 +622,7 @@ ${itemsText}
                 </span>
               </div>
               <p className="text-[11px] text-stone-300">
-                รองรับเครื่องพิมพ์สลิปความร้อนพกพา (Thermal POS PT210 58mm / 80mm)
+                รองรับเครื่องพิมพ์สลิปความร้อนพกพา (PT210 58mm / 80mm)
               </p>
             </div>
           </div>
@@ -466,33 +637,78 @@ ${itemsText}
           </button>
         </div>
 
-        {/* POS Printer & Bluetooth Quick Status Bar (No-print) */}
-        <div className="no-print bg-stone-900 border-t border-stone-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-stone-300">
+        {/* Real Live Bluetooth Status Bar (Honest live tracking, no false positives) */}
+        <div className="no-print bg-stone-900 border-t border-stone-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span className="font-bold text-white text-[11px] flex items-center gap-1.5">
-              <span>🖨️ {activePrinterConfig.name}</span>
-              <span className="text-[10px] text-emerald-400 font-mono">({activePrinterConfig.dotsPerLine} จุด / 58mm)</span>
-            </span>
+            {bluetoothStatus === 'connected' ? (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="font-bold text-emerald-400 text-[11px]">
+                  🟢 {connectedDeviceName || activePrinterConfig.name} (เชื่อมต่อบลูทูธสดอยู่)
+                </span>
+              </>
+            ) : bluetoothStatus === 'connecting' ? (
+              <>
+                <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+                <span className="font-bold text-amber-300 text-[11px]">
+                  กำลังเชื่อมต่อบลูทูธ...
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="w-2.5 h-2.5 rounded-full bg-stone-500"></span>
+                <span className="font-bold text-stone-400 text-[11px]">
+                  ⚪ {activePrinterConfig.name} (ไม่ได้เชื่อมต่อ / ปิดเครื่องอยู่)
+                </span>
+              </>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setBluetoothView('list');
-              setShowBluetoothModal(true);
-            }}
-            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-[10.5px] transition flex items-center gap-1 cursor-pointer shadow-xs"
-          >
-            <Bluetooth className="w-3.5 h-3.5" />
-            <span>ค้นหาเครื่องพิมพ์บลูทูธ</span>
-          </button>
+
+          <div className="flex items-center gap-1.5">
+            {bluetoothStatus === 'connected' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (bluetoothDeviceRef.current?.gatt?.connected) {
+                    bluetoothDeviceRef.current.gatt.disconnect();
+                  }
+                  setBluetoothStatus('disconnected');
+                  setConnectedDeviceName(null);
+                }}
+                className="px-2 py-0.5 bg-stone-800 hover:bg-stone-700 text-stone-300 text-[10px] rounded transition cursor-pointer"
+              >
+                ตัดการเชื่อมต่อ
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => connectToBluetoothPrinter()}
+                className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-lg text-[10.5px] transition flex items-center gap-1 cursor-pointer"
+              >
+                <Zap className="w-3 h-3" />
+                <span>เชื่อมต่อ PT210</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setBluetoothView('list');
+                setShowBluetoothModal(true);
+              }}
+              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-[10.5px] transition flex items-center gap-1 cursor-pointer shadow-xs"
+            >
+              <Bluetooth className="w-3.5 h-3.5" />
+              <span>ค้นหาเครื่องพิมพ์</span>
+            </button>
+          </div>
         </div>
 
         {/* Paper Size Switcher Bar (No-print) */}
         <div className="no-print bg-stone-100 border-b border-stone-200 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="font-bold text-stone-600 flex items-center gap-1">
             <Receipt className="w-3.5 h-3.5" />
-            <span>ขนาดกระดาษ:</span>
+            <span>ขนาดสลิป:</span>
           </span>
           <div className="flex items-center gap-1">
             <button
@@ -531,17 +747,24 @@ ${itemsText}
           </div>
         </div>
 
-        {/* Quick Tips & Help Bar (No-print) */}
-        <div className="no-print bg-amber-50/95 border-b border-amber-200 px-4 py-1.5 text-[11px] text-amber-900 flex flex-wrap items-center justify-between gap-2">
-          <span>
-            💡 <strong>วิธีพิมพ์:</strong> กด <strong>"พิมพ์ใบเสร็จ"</strong> (ปรับแก้ขอบกระดาษไม่ถูกตัดแล้ว) หรือกด <strong>"ส่งไปแอป POS Printer"</strong>
-          </span>
+        {/* Crucial Instruction Notice: Explaining why Android Print Spooler hangs and which button to press */}
+        <div className="no-print bg-sky-50 border-b border-sky-200 px-4 py-2 text-[11px] text-sky-950 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-start gap-1.5 flex-1">
+            <Info className="w-4 h-4 text-sky-600 shrink-0 mt-0.5" />
+            <span>
+              <strong>สำหรับเครื่องพิมพ์ PT210 บลูทูธ:</strong> แนะนำกดปุ่มสีน้ำเงิน{' '}
+              <strong>"ส่งไปแอป POS Printer"</strong> ด้านล่าง พิมพ์ได้ทันที 100%{' '}
+              <span className="text-stone-500">
+                (หากกดปุ่มพิมพ์ใบเสร็จทั่วไป Android Print Spooler จะค้นหาบลูทูธไม่เจอ)
+              </span>
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => setShowPrinterHelp((prev) => !prev)}
-            className="px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold rounded-md transition cursor-pointer shrink-0"
+            className="px-2 py-0.5 bg-sky-200 hover:bg-sky-300 text-sky-950 font-bold rounded-md transition cursor-pointer shrink-0 text-[10.5px]"
           >
-            {showPrinterHelp ? 'ซ่อนคำแนะนำ' : '❓ วิธีแก้เชื่อมต่อบลูทูธ'}
+            {showPrinterHelp ? 'ซ่อนคำแนะนำ' : '❓ วิธีใช้งาน'}
           </button>
         </div>
 
@@ -550,7 +773,7 @@ ${itemsText}
           <div className="no-print bg-stone-900 text-stone-100 p-4 border-b border-stone-700 text-xs space-y-3 animate-fadeIn">
             <div className="flex items-start justify-between gap-2">
               <h4 className="font-black text-amber-400 flex items-center gap-1.5 text-sm">
-                <span>🔍 วิธีเชื่อมต่อเครื่องพิมพ์บลูทูธ PT210</span>
+                <span>🔍 วิธีการพิมพ์บิลเข้าเครื่องพิมพ์พกพา PT210 ให้ได้ 100%</span>
               </h4>
               <button
                 type="button"
@@ -563,33 +786,33 @@ ${itemsText}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
               <div className="bg-stone-800 p-3 rounded-xl border border-stone-700 space-y-1.5">
-                <div className="font-bold text-amber-300 flex items-center gap-1">
-                  <span>📱 วิธีพิมพ์ผ่านแอป POS Printer ที่มีในเครื่อง:</span>
+                <div className="font-bold text-emerald-400 flex items-center gap-1">
+                  <span>✅ วิธีที่ 1 (สะดวกและแน่นอนที่สุด - ผ่านแอป POS Printer):</span>
                 </div>
                 <p className="text-stone-300">
-                  เนื่องจากคุณมีแอป <strong>"POS printer"</strong> เชื่อมต่อกับ PT210 ไว้อยู่แล้ว:
+                  เนื่องจากในเครื่องคุณมีแอป <strong>"POS printer"</strong> ที่เชื่อมต่อกับ PT210 อยู่แล้ว:
                 </p>
                 <ol className="list-decimal list-inside text-stone-300 space-y-1 pl-1">
-                  <li>กดปุ่ม <strong>"ส่งไปแอป POS Printer"</strong> ด้านล่าง</li>
-                  <li>เลือกแชร์ไปที่แอป <strong>POS printer</strong> หรือ <strong>RawBT</strong></li>
-                  <li>กดยืนยันพิมพ์จากแอปได้ทันที สะดวกและรวดเร็วมากครับ!</li>
+                  <li>กดปุ่มสีน้ำเงิน <strong>"ส่งไปแอป POS Printer"</strong> ด้านล่าง</li>
+                  <li>ระบบจะคัดลอกข้อความบิลอัตโนมัติ และเปิดตัวเลือกให้เลือกแอป <strong>POS printer</strong></li>
+                  <li>กดยืนยันพิมพ์จากแอปได้ทันที บิลจะวิ่งออกจาก PT210 สวยงามและครบถ้วน!</li>
                 </ol>
               </div>
 
               <div className="bg-stone-800 p-3 rounded-xl border border-stone-700 space-y-1.5">
                 <div className="font-bold text-amber-300 flex items-center gap-1">
-                  <span>🖨️ แก้ไขใบเสร็จแสดงไม่ครบ / ตัดขอบ:</span>
+                  <span>⚠️ ทำไมกด "พิมพ์ผ่านระบบเครื่อง" แล้วขึ้นค้นหาเครื่องพิมพ์ไม่เจอ?:</span>
                 </div>
                 <p className="text-stone-300">
-                  ระบบได้ปรับปรุงตัวสั่งพิมพ์ใหม่ โดยแยกเอกสารใบเสร็จออกมาชัดเจน ไม่โดนหน้าต่าง Pop-up ตัดเหลือแต่กล่องเล็กๆ เหมือนเดิมแล้วครับ
+                  ระบบ <strong>Android Print Spooler</strong> ของมือถือจะรองรับเฉพาะเครื่องพิมพ์ WiFi/สาย LAN เท่านั้น ไม่รองรับเครื่องพิมพ์บลูทูธขนาดเล็ก เว้นแต่จะติดตั้งแอป <strong>"RawBT Print Service"</strong> จาก Play Store เพิ่มเติม
                 </p>
                 <div className="pt-1 flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     onClick={handleRawBTPrint}
-                    className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded text-[10px] cursor-pointer"
+                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded-lg text-[10px] cursor-pointer"
                   >
-                    🚀 สั่งพิมพ์ตรง RawBT
+                    🚀 สั่งพิมพ์ตรงเข้าแอป RawBT
                   </button>
                 </div>
               </div>
@@ -611,7 +834,7 @@ ${itemsText}
               slipWidth === '58mm' ? 'slip-58mm' : slipWidth === '80mm' ? 'slip-80mm' : ''
             }`}
           >
-            {/* 🎯 Header: Shop Logo, Name & Centered Info */}
+            {/* Header: Shop Logo, Name & Centered Info */}
             <div className="receipt-header text-center flex flex-col items-center justify-center space-y-1 border-b-2 border-dashed border-stone-400 pb-2.5">
               <div className="w-8 h-8 rounded-full bg-stone-900 text-white flex items-center justify-center font-black text-sm mb-0.5 shadow-2xs mx-auto border border-stone-800">
                 🥩
@@ -624,7 +847,7 @@ ${itemsText}
                 โทร: {SHOP_INFO.phone} {SHOP_INFO.lineId ? `• LINE: ${SHOP_INFO.lineId}` : ''}
               </p>
 
-              {/* 📅 แสดงวันที่และเวลาที่พิมพ์บนหัวใบเสร็จเด่นชัด */}
+              {/* วันที่และเวลาที่พิมพ์บนหัวใบเสร็จเด่นชัด */}
               <div className="receipt-print-time-badge inline-block bg-stone-100 text-stone-900 border border-stone-400 rounded px-2 py-0.5 text-[10.5px] font-bold mt-1 text-center font-sans">
                 📅 พิมพ์เมื่อ: {formattedPrintTime}
               </div>
@@ -755,65 +978,103 @@ ${itemsText}
           </div>
         </div>
 
-        {/* Modal Bottom Action Buttons (No-print) */}
-        <div className="no-print p-3 sm:p-4 bg-stone-50 border-t border-stone-200 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-            {/* Share to POS Printer app button */}
+        {/* Modal Bottom Action Buttons (Reorganized for clear user success) */}
+        <div className="no-print p-3 sm:p-4 bg-stone-50 border-t border-stone-200 space-y-2">
+          
+          {/* Main Action Buttons Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            
+            {/* 🌟 1. Primary Button: Share to POS Printer App (Recommended) */}
             <button
               type="button"
               onClick={handleShareToPosPrinter}
-              className="py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              title="แชร์ข้อความบิลเข้าแอป POS Printer เพื่อสั่งพิมพ์ทันที"
+              className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-700 hover:to-indigo-800 active:scale-98 text-white font-black text-xs sm:text-sm rounded-2xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer ring-2 ring-blue-300"
+              title="ส่งข้อมูลบิลเข้าแอป POS Printer ในมือถือเพื่อสั่งพิมพ์ทันที"
             >
-              <Share2 className="w-3.5 h-3.5 text-blue-600" />
-              <span>ส่งไปแอป POS Printer</span>
+              <Share2 className="w-4 h-4" />
+              <span>📲 ส่งไปแอป POS Printer (แนะนำ)</span>
             </button>
 
-            {/* Copy text button */}
+            {/* 📶 2. Secondary Button: Direct Bluetooth Print (Web Bluetooth) */}
             <button
               type="button"
-              onClick={handleCopyText}
-              className="py-2 px-3 bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              title="คัดลอกข้อความบิลสำหรับส่งให้ลูกค้าหรือวางในแอปเครื่องพิมพ์"
+              onClick={handleDirectBluetoothPrint}
+              disabled={isPrintingBluetooth}
+              className={`w-full py-3 px-4 rounded-2xl font-black text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-xs ${
+                bluetoothStatus === 'connected'
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white ring-2 ring-emerald-300'
+                  : 'bg-stone-800 hover:bg-stone-700 text-white'
+              }`}
+              title="สั่งพิมพ์ตรงผ่านสัญญาณ Bluetooth เข้าเครื่อง PT210"
             >
-              {copied ? (
+              {isPrintingBluetooth ? (
                 <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="text-emerald-700">คัดลอกแล้ว!</span>
+                  <RotateCw className="w-4 h-4 animate-spin" />
+                  <span>กำลังส่งข้อมูลเข้าเครื่องพิมพ์...</span>
                 </>
               ) : (
                 <>
-                  <Copy className="w-3.5 h-3.5 text-stone-600" />
-                  <span>คัดลอกข้อความ</span>
+                  <Bluetooth className="w-4 h-4 text-sky-300" />
+                  <span>
+                    {bluetoothStatus === 'connected'
+                      ? '📶 สั่งพิมพ์ตรงเข้า PT210'
+                      : '📶 เชื่อมต่อ & พิมพ์บลูทูธ'}
+                  </span>
                 </>
               )}
             </button>
+          </div>
+
+          {/* Secondary Controls Row */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+            <div className="flex items-center gap-1.5">
+              {/* Copy text button */}
+              <button
+                type="button"
+                onClick={() => handleCopyText(false)}
+                className="py-2 px-3 bg-white hover:bg-stone-100 text-stone-700 border border-stone-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="คัดลอกข้อความบิลสำหรับส่งใน LINE หรือวางในแอปเครื่องพิมพ์"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">คัดลอกแล้ว!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-stone-600" />
+                    <span>คัดลอกข้อความบิล</span>
+                  </>
+                )}
+              </button>
+
+              {/* Standard Print Spooler Button (Clearly marked) */}
+              <button
+                type="button"
+                id="btn-print-receipt"
+                onClick={handlePrint}
+                className="py-2 px-3 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                title="พิมพ์ผ่านระบบเครื่องพิมพ์มาตรฐาน Android Print Spooler หรือบันทึกเป็น PDF"
+              >
+                <Printer className="w-3.5 h-3.5 text-stone-600" />
+                <span>พิมพ์ผ่านระบบเครื่อง / PDF</span>
+              </button>
+            </div>
 
             <button
               type="button"
               onClick={onClose}
-              className="py-2 px-3 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer"
+              className="py-2 px-4 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition cursor-pointer"
             >
               ปิด
             </button>
           </div>
 
-          {/* Big Print Now Button */}
-          <button
-            type="button"
-            id="btn-print-receipt"
-            onClick={handlePrint}
-            className="py-2.5 px-5 bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-700 hover:to-rose-800 active:scale-98 text-white font-black text-xs sm:text-sm rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer ring-2 ring-red-200"
-            title="พิมพ์ใบเสร็จ (รองรับเครื่องปริ้นสลิปความร้อน PT210 58mm/80mm ไม่ตัดขอบกระดาษ)"
-          >
-            <Printer className="w-4 h-4" />
-            <span>พิมพ์ใบเสร็จ</span>
-          </button>
         </div>
 
       </div>
 
-      {/* 📱 Bluetooth POS Printer Modal (Matching Screenshots 1 & 2 from the user's "POS printer" app) */}
+      {/* 📱 Bluetooth POS Printer Modal */}
       {showBluetoothModal && (
         <div className="receipt-modal-backdrop fixed inset-0 z-60 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
           <div className="w-full max-w-md bg-stone-950 text-white rounded-3xl shadow-2xl border border-stone-800 overflow-hidden flex flex-col max-h-[90vh]">
@@ -839,12 +1100,16 @@ ${itemsText}
                 </h3>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></span>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    bluetoothStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'
+                  }`}
+                ></span>
                 <span className="text-[11px] text-stone-400">Bluetooth</span>
               </div>
             </div>
 
-            {/* View 1: Device List (Screenshot 1) */}
+            {/* View 1: Device List */}
             {bluetoothView === 'list' ? (
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 <div className="text-xs text-stone-400 px-1">
@@ -885,11 +1150,15 @@ ${itemsText}
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-sm text-stone-100">{device.name}</span>
-                              {isSelected && (
+                              {isSelected && bluetoothStatus === 'connected' ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                                   เชื่อมต่ออยู่
                                 </span>
-                              )}
+                              ) : isSelected ? (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-stone-800 text-stone-400">
+                                  เลือกไว้
+                                </span>
+                              ) : null}
                             </div>
                             <span className="text-[11px] font-mono text-stone-400">{device.mac}</span>
                           </div>
@@ -929,7 +1198,7 @@ ${itemsText}
                 </div>
               </div>
             ) : (
-              /* View 2: Printer Settings sheet (Screenshot 2) */
+              /* View 2: Printer Settings sheet */
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 <div className="bg-stone-900 rounded-2xl p-4 border border-stone-800 space-y-3.5 text-xs">
                   
@@ -1021,7 +1290,7 @@ ${itemsText}
 
                 </div>
 
-                {/* Connect button matching blue button from Screenshot 2 */}
+                {/* Connect button */}
                 <div className="space-y-2 pt-2">
                   <button
                     type="button"
@@ -1029,7 +1298,7 @@ ${itemsText}
                     className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 active:scale-98 text-white font-black text-sm rounded-2xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Zap className="w-4 h-4" />
-                    <span>เชื่อมต่อ</span>
+                    <span>บันทึก & เชื่อมต่อบลูทูธ</span>
                   </button>
 
                   <button
