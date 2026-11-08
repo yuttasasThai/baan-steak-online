@@ -374,18 +374,21 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
 
     const isTableOrder = Boolean(urlTableNumber || diningType === 'มาทานที่ร้าน');
+    const isTakeawayOrder = diningType === 'สั่งกลับบ้าน';
     const effectiveName = isTableOrder
       ? (customerName.trim() || (selectedTableNumber ? `โต๊ะ ${selectedTableNumber}` : 'ลูกค้าทานที่ร้าน'))
+      : isTakeawayOrder
+      ? (customerName.trim() || 'ลูกค้าสั่งกลับบ้าน')
       : customerName.trim();
 
-    // สำหรับทานที่ร้าน ช่องชื่อลูกค้า เบอร์โทร และเลขโต๊ะ จะใส่หรือไม่ใส่ก็ได้
-    if (!isTableOrder && !effectiveName) {
+    // สำหรับทานที่ร้าน และ สั่งกลับบ้าน ช่องชื่อลูกค้าและเบอร์โทร ไม่บังคับใส่
+    if (!isTableOrder && !isTakeawayOrder && !effectiveName) {
       onNotify('กรุณากรอกชื่อสำหรับเรียกรับอาหาร', 'error');
       return;
     }
 
     // เบอร์โทรศัพท์ บังคับเฉพาะกรณี ส่งที่บ้าน และ นัดรับอาหาร เท่านั้น
-    if (!isTableOrder) {
+    if (!isTableOrder && !isTakeawayOrder) {
       const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
       if (cleanPhone.length < 9) {
         onNotify('กรุณากรอกเบอร์โทรศัพท์ที่ติดต่อได้ (อย่างน้อย 9 หลัก)', 'error');
@@ -394,8 +397,8 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
 
     // Validation according to dining type
-    if (diningType === 'มาทานที่ร้าน') {
-      // สำหรับทานที่ร้าน ไม่บล็อก สั่งได้ทันที
+    if (diningType === 'มาทานที่ร้าน' || diningType === 'สั่งกลับบ้าน') {
+      // สำหรับทานที่ร้าน หรือ สั่งกลับบ้าน ไม่บล็อก สั่งได้ทันที
     } else if (diningType === 'ส่งอาหารที่บ้าน') {
       if (!address.trim()) {
         onNotify('กรุณากรอกที่อยู่ หรือจุดสังเกตการส่งอาหาร', 'error');
@@ -420,6 +423,8 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       const effectiveAddress =
         diningType === 'มาทานที่ร้าน'
           ? (address.trim() || (selectedTableNumber ? `ทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)'))
+          : diningType === 'สั่งกลับบ้าน'
+          ? (address.trim() || 'สั่งกลับบ้าน (ไม่มีค่าจัดส่ง)')
           : diningType === 'นัดรับอาหาร'
           ? (address.trim() || 'นัดรับอาหาร (โทรนัดหมายกับทางร้าน)')
           : address.trim();
@@ -427,6 +432,8 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       const effectiveDeliveryArea =
         diningType === 'มาทานที่ร้าน'
           ? (selectedTableNumber ? `มาทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)')
+          : diningType === 'สั่งกลับบ้าน'
+          ? 'สั่งกลับบ้าน (ไม่มีค่าจัดส่ง)'
           : diningType === 'นัดรับอาหาร'
           ? 'นัดรับอาหาร (ยังไม่รวมค่าส่ง)'
           : deliveryCalculation
@@ -438,7 +445,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
       const orderNum = await createOrder({
         customerName: effectiveName,
-        customerPhone: isTableOrder ? (customerPhone.trim() || '-') : customerPhone.trim(),
+        customerPhone: (isTableOrder || isTakeawayOrder) ? (customerPhone.trim() || '-') : customerPhone.trim(),
         address: effectiveAddress,
         deliveryType: diningType,
         tableNumber: selectedTableNumber !== null ? selectedTableNumber : (urlTableNumber ? Number(urlTableNumber) : undefined),
@@ -1150,7 +1157,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   <label className="block text-xs font-bold text-stone-800">
                     เลือกรูปแบบการรับอาหาร <span className="text-red-500">*</span>
                   </label>
-                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
                     <button
                       type="button"
                       onClick={() => setDiningType('มาทานที่ร้าน')}
@@ -1166,6 +1173,19 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
                     <button
                       type="button"
+                      onClick={() => setDiningType('สั่งกลับบ้าน')}
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
+                        diningType === 'สั่งกลับบ้าน'
+                          ? 'bg-purple-600 text-white shadow-xs font-black'
+                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                      <span className="text-[11px] sm:text-xs">2) สั่งกลับบ้าน</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => setDiningType('ส่งอาหารที่บ้าน')}
                       className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
                         diningType === 'ส่งอาหารที่บ้าน'
@@ -1174,7 +1194,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       }`}
                     >
                       <Truck className="w-4 h-4" />
-                      <span className="text-[11px] sm:text-xs">2) ส่งที่บ้าน</span>
+                      <span className="text-[11px] sm:text-xs">3) ส่งที่บ้าน</span>
                     </button>
 
                     <button
@@ -1190,7 +1210,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       }`}
                     >
                       <MapPin className="w-4 h-4" />
-                      <span className="text-[11px] sm:text-xs">3) นัดรับอาหาร</span>
+                      <span className="text-[11px] sm:text-xs">4) นัดรับอาหาร</span>
                     </button>
                   </div>
                 </div>
@@ -1274,8 +1294,44 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       />
                     </div>
                   </div>
+                ) : diningType === 'สั่งกลับบ้าน' ? (
+                  /* 3. กรณีสั่งกลับบ้าน: ชื่อและเบอร์โทร ไม่บังคับใส่ */
+                  <div className="space-y-3 bg-purple-50/70 p-3.5 rounded-2xl border border-purple-200 animate-fadeIn">
+                    <div className="flex items-center gap-2 text-purple-900 font-extrabold text-xs">
+                      <ShoppingBag className="w-4 h-4 text-purple-700 shrink-0" />
+                      <span>🛍️ รูปแบบ: สั่งกลับบ้าน (รอรับที่หน้าร้าน • ไม่มีค่าจัดส่ง)</span>
+                    </div>
+
+                    {/* ชื่อลูกค้า (ไม่บังคับใส่) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ชื่อลูกค้า / ชื่อเรียกรับอาหาร <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="เช่น คุณสมศักดิ์, พี่เอก (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    {/* เบอร์โทรศัพท์ (ไม่บังคับใส่) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        เบอร์โทรศัพท์ <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="เช่น 081-234-5678 (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  </div>
                 ) : (
-                  /* 3. กรณีส่งที่บ้าน หรือ นัดรับ: มีช่องพิมพ์ชื่อ และ เบอร์โทรศัพท์ */
+                  /* 4. กรณีส่งที่บ้าน หรือ นัดรับ: มีช่องพิมพ์ชื่อ และ เบอร์โทรศัพท์ */
                   <div className="space-y-3">
                     <div>
                       <label className="block text-xs font-semibold text-stone-700 mb-1">
@@ -1695,6 +1751,11 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                     ทางร้านกำลังปรุงอาหารและจะนำไปเสิร์ฟที่ โต๊ะ {selectedTableNumber || urlTableNumber} ครับ
                   </p>
                 </div>
+              ) : completedOrderDiningType === 'สั่งกลับบ้าน' ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-100 text-purple-900 border border-purple-300 rounded-full text-xs font-black">
+                  <ShoppingBag className="w-3.5 h-3.5 text-purple-700" />
+                  <span>🛍️ รูปแบบ: สั่งกลับบ้าน (รอรับหน้าร้าน)</span>
+                </span>
               ) : completedOrderDiningType === 'นัดรับอาหาร' ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-400 text-stone-950 border-2 border-amber-600 rounded-full text-xs font-black shadow-xs">
                   <MapPin className="w-3.5 h-3.5 text-stone-950" />

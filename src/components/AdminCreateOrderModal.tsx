@@ -88,16 +88,19 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
     }
 
     const isDineIn = diningType === 'มาทานที่ร้าน';
+    const isTakeaway = diningType === 'สั่งกลับบ้าน';
     const effectiveName = isDineIn
       ? customerName.trim() || `โต๊ะ ${tableNumber || 1}`
+      : isTakeaway
+      ? customerName.trim() || 'ลูกค้าสั่งกลับบ้าน'
       : customerName.trim();
 
-    if (!isDineIn && !effectiveName) {
+    if (!isDineIn && !isTakeaway && !effectiveName) {
       onNotify('กรุณากรอกชื่อลูกค้า', 'error');
       return;
     }
 
-    if (!isDineIn && !customerPhone.trim()) {
+    if (!isDineIn && !isTakeaway && !customerPhone.trim()) {
       onNotify('กรุณากรอกเบอร์โทรศัพท์ลูกค้า', 'error');
       return;
     }
@@ -106,6 +109,8 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
       setIsSubmitting(true);
       const effectiveAddress = isDineIn
         ? `ทานที่ร้าน โต๊ะ ${tableNumber || 1}`
+        : isTakeaway
+        ? 'สั่งกลับบ้าน (ไม่มีค่าจัดส่ง)'
         : diningType === 'นัดรับอาหาร'
         ? address.trim() || 'นัดรับที่ร้าน'
         : address.trim() || 'จัดส่งถึงบ้าน';
@@ -119,13 +124,13 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
 
       const orderNumber = await createOrder({
         customerName: effectiveName,
-        customerPhone: isDineIn ? customerPhone.trim() || '-' : customerPhone.trim(),
+        customerPhone: (isDineIn || isTakeaway) ? customerPhone.trim() || '-' : customerPhone.trim(),
         address: effectiveAddress,
         deliveryType: diningType,
         tableNumber: isDineIn ? Number(tableNumber) || 1 : undefined,
         items: orderItems,
         subtotal,
-        deliveryArea: isDineIn ? `ทานที่ร้าน โต๊ะ ${tableNumber}` : diningType,
+        deliveryArea: isDineIn ? `ทานที่ร้าน โต๊ะ ${tableNumber}` : isTakeaway ? 'สั่งกลับบ้าน' : diningType,
         deliveryFee: diningType === 'ส่งอาหารที่บ้าน' ? deliveryFee : 0,
         totalAmount,
       });
@@ -151,7 +156,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
             </div>
             <div>
               <h3 className="font-black text-base sm:text-lg">➕ คีย์ออเดอร์ใหม่ (POS สั่งหน้าร้าน)</h3>
-              <p className="text-xs text-white/85">บันทึกออเดอร์สำหรับลูกค้าหน้าร้าน โต๊ะอาหาร หรือโทรสั่ง</p>
+              <p className="text-xs text-white/85">บันทึกออเดอร์สำหรับลูกค้าหน้าร้าน โต๊ะอาหาร สั่งกลับบ้าน หรือโทรสั่ง</p>
             </div>
           </div>
           <button
@@ -170,7 +175,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
             <label className="block text-xs font-bold text-stone-700 mb-1.5">
               รูปแบบการรับอาหาร <span className="text-red-500">*</span>
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <button
                 type="button"
                 onClick={() => setDiningType('มาทานที่ร้าน')}
@@ -186,6 +191,19 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
 
               <button
                 type="button"
+                onClick={() => setDiningType('สั่งกลับบ้าน')}
+                className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border ${
+                  diningType === 'สั่งกลับบ้าน'
+                    ? 'bg-purple-600 text-white border-purple-700 shadow-xs ring-2 ring-purple-300'
+                    : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>2) สั่งกลับบ้าน</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setDiningType('ส่งอาหารที่บ้าน')}
                 className={`py-2 px-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer border ${
                   diningType === 'ส่งอาหารที่บ้าน'
@@ -194,7 +212,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
                 }`}
               >
                 <Truck className="w-4 h-4" />
-                <span>2) ส่งที่บ้าน</span>
+                <span>3) ส่งที่บ้าน</span>
               </button>
 
               <button
@@ -207,7 +225,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
                 }`}
               >
                 <MapPin className="w-4 h-4" />
-                <span>3) นัดรับ/กลับบ้าน</span>
+                <span>4) นัดรับอาหาร</span>
               </button>
             </div>
           </div>
@@ -247,26 +265,26 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1">
-                  ชื่อลูกค้า / ชื่อเรียก {diningType === 'มาทานที่ร้าน' ? <span className="text-stone-400 font-normal">(ไม่ใส่ก็ได้)</span> : <span className="text-red-500">*</span>}
+                  ชื่อลูกค้า / ชื่อเรียก {(diningType === 'มาทานที่ร้าน' || diningType === 'สั่งกลับบ้าน') ? <span className="text-stone-400 font-normal">(ไม่ใส่ก็ได้)</span> : <span className="text-red-500">*</span>}
                 </label>
                 <input
                   type="text"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder={diningType === 'มาทานที่ร้าน' ? `เช่น โต๊ะ ${tableNumber} หรือ คุณสมศักดิ์` : 'เช่น คุณสมศักดิ์, พี่เอก'}
+                  placeholder={(diningType === 'มาทานที่ร้าน' || diningType === 'สั่งกลับบ้าน') ? 'เช่น คุณสมศักดิ์ (หรือเว้นว่างไว้)' : 'เช่น คุณสมศักดิ์, พี่เอก'}
                   className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:outline-none focus:border-red-500"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-stone-700 mb-1">
-                  เบอร์โทรศัพท์ {diningType === 'มาทานที่ร้าน' ? <span className="text-stone-400 font-normal">(ไม่ใส่ก็ได้)</span> : <span className="text-red-500">*</span>}
+                  เบอร์โทรศัพท์ {(diningType === 'มาทานที่ร้าน' || diningType === 'สั่งกลับบ้าน') ? <span className="text-stone-400 font-normal">(ไม่ใส่ก็ได้)</span> : <span className="text-red-500">*</span>}
                 </label>
                 <input
                   type="tel"
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="เช่น 081-234-5678"
+                  placeholder="เช่น 081-234-5678 (หรือเว้นว่างไว้)"
                   className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:outline-none focus:border-red-500"
                 />
               </div>

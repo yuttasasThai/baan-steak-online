@@ -94,8 +94,16 @@ const STATUS_BADGE_STYLES: Record<
   },
 };
 
-// Render Delivery / Dining Type Badge: มาเอง, นำส่ง, นัดรับ
+// Render Delivery / Dining Type Badge: มาเอง, สั่งกลับบ้าน, นำส่ง, นัดรับ
 export function renderDeliveryTypeBadge(deliveryType?: DiningType, tableNumber?: number | string) {
+  if (deliveryType === 'สั่งกลับบ้าน') {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 text-purple-900 border border-purple-300 rounded-xl text-xs font-black whitespace-nowrap shadow-2xs">
+        <ShoppingBag className="w-3.5 h-3.5 text-purple-700 shrink-0" />
+        <span>🛍️ สั่งกลับบ้าน</span>
+      </span>
+    );
+  }
   if (deliveryType === 'นัดรับอาหาร') {
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-400 via-amber-300 to-yellow-400 text-stone-950 border-2 border-amber-600 rounded-xl text-xs font-black shadow-md ring-2 ring-amber-300 whitespace-nowrap animate-pulse">
@@ -778,15 +786,15 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               </button>
                             )}
 
-                            {/* ปุ่มพิมพ์บิล (Print Receipt) */}
+                            {/* ปุ่มพิมพ์ใบเสร็จ (Print Receipt) */}
                             <button
                               type="button"
                               onClick={() => setReceiptOrder(order)}
                               className="w-full py-1.5 px-2 bg-gradient-to-r from-amber-50 to-yellow-50 hover:from-amber-100 hover:to-yellow-100 text-amber-950 border border-amber-300 active:scale-98 rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
-                              title="พิมพ์ใบเสร็จ / บิลออเดอร์นี้ (Thermal POS & A4)"
+                              title="พิมพ์ใบเสร็จออเดอร์นี้ (Thermal POS & A4)"
                             >
                               <Printer className="w-3.5 h-3.5 text-amber-800" />
-                              <span>🖨️ พิมพ์บิล</span>
+                              <span>พิมพ์ใบเสร็จ</span>
                             </button>
 
                             {/* ปุ่มเพิ่มรายการอาหารในออเดอร์เดิม (Admin append items) */}
@@ -916,7 +924,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               title="พิมพ์ใบเสร็จออเดอร์นี้"
                             >
                               <Printer className="w-3 h-3 text-amber-700" />
-                              <span>พิมพ์บิล</span>
+                              <span>พิมพ์ใบเสร็จ</span>
                             </button>
                             <button
                               type="button"
@@ -1027,7 +1035,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               title="พิมพ์ใบเสร็จออเดอร์นี้"
                             >
                               <Printer className="w-3 h-3 text-amber-700" />
-                              <span>พิมพ์บิล</span>
+                              <span>พิมพ์ใบเสร็จ</span>
                             </button>
                             <button
                               type="button"
@@ -1355,14 +1363,14 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                 </div>
               )}
 
-              {/* ปุ่มพิมพ์บิล / ใบเสร็จ */}
+              {/* ปุ่มพิมพ์ใบเสร็จ */}
               <button
                 type="button"
                 onClick={() => setReceiptOrder(detailOrder)}
                 className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-500 hover:brightness-105 active:scale-98 text-stone-950 font-black rounded-xl text-xs shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-amber-200"
               >
                 <Printer className="w-4 h-4 text-stone-950" />
-                <span>🖨️ พิมพ์ใบเสร็จออเดอร์นี้ (Print Bill)</span>
+                <span>พิมพ์ใบเสร็จ</span>
               </button>
 
               {/* ปุ่มลบออเดอร์นี้ออกจากระบบถาวร */}
