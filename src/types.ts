@@ -26,7 +26,7 @@ export type OrderStatus =
   | 'ส่งแล้ว'
   | 'ยกเลิก';
 
-export type DiningType = 'มาทานที่ร้าน' | 'ส่งอาหารที่บ้าน' | 'นัดรับอาหาร';
+export type DiningType = 'มาทานที่ร้าน' | 'สั่งกลับบ้าน' | 'ส่งอาหารที่บ้าน' | 'นัดรับอาหาร';
 
 export interface OrderItem {
   menuId: string;
