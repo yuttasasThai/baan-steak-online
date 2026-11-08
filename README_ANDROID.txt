@@ -1,5 +1,5 @@
 ==========================================================
-คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.12.0)
+คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.16.0)
 ร้าน บ้าน สเต็กออนไลน์ (Baan Steak Online)
 Repository: https://github.com/yuttasasThai/baan-steak-online
 ==========================================================
@@ -7,20 +7,18 @@ Repository: https://github.com/yuttasasThai/baan-steak-online
 ✨ ไฟล์นี้สร้างขึ้นจากเบราว์เซอร์โดยตรง (Client-Side In-Memory ZIP)
 รับประกันว่าเป็นไฟล์ .zip แท้ 100% ไม่ใช่ .html
 
-ไฟล์ที่ได้รับการแก้ไขใน rev-2.12.0:
-1. [src/components] OrderReceiptModal.tsx - 🖨️ เพิ่มหน้าต่างพิมพ์ใบเสร็จออเดอร์ (Print Bill) รองรับเครื่องพิมพ์ความร้อน POS 80mm/58mm และคัดลอกส่ง LINE
-2. [src/components] AdminOrdersManager.tsx - เพิ่มปุ่ม "พิมพ์บิล" ในทุกรายการออเดอร์ (ค้างอยู่, ส่งแล้ว, ยกเลิก) และในหน้าต่างดูรายละเอียด
-3. [src/components] IncomingOrderModal.tsx - 🚨 เพิ่มปุ่ม "พิมพ์บิล" ในหน้าต่างเด้งออเดอร์ใหม่ พร้อมสถานะเรียลไทม์ รับออเดอร์/กำลังทำ/ส่งออเดอร์
-4. [src/utils] audioAlert.ts - 🔊 ระบบเสียงพูดเตือนสถานะออเดอร์ทุกขั้นตอน: "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/กลับบ้าน/ส่งที่บ้าน) + สถานะออเดอร์"
-5. [src/components] CustomerWebsite.tsx - ⚡ แสดงสถานะออเดอร์เรียลไทม์ฝั่งลูกค้า พร้อมแอนิเมชัน 4 สเต็ป (รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว)
-6. [src] App.tsx - ⭐ เพิ่มปุ่ม "หน้าต่างออเดอร์ (N)" บนแถบ Header + ซิงก์เสียงเตือนทุกขั้นตอน
-7. [src/components] AdminOrdersManager.tsx - เชื่อมต่อเสียงเตือน playOrderStatusAlert ในทุกการเปลี่ยนสถานะและยกเลิกออเดอร์
-8. [/] package.json - ⚡ ล็อกเวอร์ชัน tailwind 4.3.4 (แก้ npm error notarget @tailwindcss/oxide 4.3.5 บน Vercel)
-9. [src] types.ts - เพิ่มสถานะ ส่งออเดอร์ ใน OrderStatus union
-10. [src/services] menuService.ts - อัปเดต normalizeOrderStatus และ NEXT_ORDER_STATUS_MAP รองรับ ส่งออเดอร์
-11. [src] revisionInfo.ts - บันทึกหมายเลขเวอร์ชัน 2.11.0 และสรุปรายการอัปเดตระบบ
-12. [src] types.ts - โครงสร้างข้อมูล TypeScript: TableItem, OrderStatus, OrderFilterStatus
-13. [src/components] AdminSourceCodeExporter.tsx - หน้าจอตัวช่วยดาวน์โหลดโค้ด และปุ่มคัดลอกโค้ดไปวางบน GitHub สำหรับ Android
+ไฟล์ที่ได้รับการแก้ไขใน rev-2.16.0:
+1. [src/components] OrderReceiptModal.tsx - 🟢 ตรวจจับสถานะบลูทูธตามจริง (ปิดเครื่อง PT210 จะตัดการเชื่อมต่อทันที ไม่ขึ้นต่อสำเร็จหลอก) + ปุ่มหลัก "ส่งไปแอป POS Printer (แนะนำ)" เพื่อเลี่ยงหน้าค้นหาค้างของ Android Print Spooler + รองรับพิมพ์ตรงบลูทูธ (Web Bluetooth ESC/POS)
+2. [src] revisionInfo.ts - 🏷️ บันทึกเวอร์ชัน 2.16.0 อัปเดตระบบตรวจสอบสถานะเครื่องพิมพ์บลูทูธตามจริงและปุ่มแชร์แอป POS Printer
+3. [src] types.ts - 🛍️ เพิ่มรูปแบบการจัดส่ง "สั่งกลับบ้าน" (Takeaway) ใน DiningType
+4. [src/components] AdminCreateOrderModal.tsx - 🛍️ เพิ่มปุ่ม "สั่งกลับบ้าน" พร้อมปรับช่องพิมพ์ชื่อและเบอร์โทรศัพท์ให้เป็นแบบ "ไม่บังคับใส่ (ไม่ใส่ก็ได้)" ทั้งสั่งกลับบ้านและทานที่ร้าน
+5. [src/components] CustomerWebsite.tsx - 🔒 หน้าเว็บลูกค้า: แสดงติดตามสถานะเฉพาะของตัวเอง + เพิ่มปุ่ม "สั่งกลับบ้าน" ไม่บังคับใส่ชื่อเบอร์ + ทานที่ร้านจองโต๊ะอัตโนมัติเมื่อสแกน QR
+6. [src/components] AdminOrdersManager.tsx - 🛍️ แสดงป้าย "สั่งกลับบ้าน" สีม่วงในรายการออเดอร์ + ปุ่ม "พิมพ์ใบเสร็จ" ครบทุกจุด + ปุ่มคีย์ออเดอร์ใหม่ POS
+7. [src] index.css - 📜 ปรับปรุง CSS @media print ให้ตัวใบเสร็จแสดงผลกึ่งกลาง จัดวางโลโก้และวันที่เวลาพิมพ์เด่นชัด ย่อระยะห่างประหยัดกระดาษ 35-50%
+8. [src/utils] audioAlert.ts - 🔊 เสียงเตือนพูดไล่รายการอาหารและจำนวนทั้งหมดเมื่อมีออเดอร์ใหม่เข้า และพูดเฉพาะสถานะเมื่อกดรับแล้ว พร้อมรองรับเสียงสั่งกลับบ้าน
+9. [src/services] menuService.ts - 🥤 หมวดหมู่ "เครื่องดื่ม" และเมนูน้ำดื่ม/โค้ก/ชา + ฟังก์ชัน appendItemsToOrder สั่งอาหารเพิ่ม
+10. [src] App.tsx - ⭐ ซิงก์เสียงเตือน + ส่ง props menus & tables + ป้องกันหน้าต่างเด้งบนหน้าลูกค้า
+11. [src/components] AdminSourceCodeExporter.tsx - หน้าจอตัวช่วยดาวน์โหลดโค้ด และปุ่มคัดลอกโค้ดไปวางบน GitHub สำหรับ Android
 
 วิธีอัปเดตผ่านโทรศัพท์ Android:
 1. แตกไฟล์ ZIP นี้ในแอป "ไฟล์ (Files)" ของเครื่องมือถือ
