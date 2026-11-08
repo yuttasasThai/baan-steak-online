@@ -19,14 +19,16 @@
   animation: fadeIn 0.15s ease-out forwards;
 }
 
-/* 🖨️ Thermal POS Receipt Printing Styles */
+/* 🖨️ Thermal POS Receipt Printing Styles (58mm & 80mm Optimized) */
 @media print {
-  body {
+  html, body {
     visibility: hidden;
-    background: #fff !important;
-    color: #000 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    width: auto !important;
+    height: auto !important;
   }
 
   .no-print,
@@ -38,24 +40,178 @@
   #printable-receipt-wrapper,
   #printable-receipt-wrapper * {
     visibility: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   #printable-receipt-wrapper {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    padding: 6px !important;
+    margin: 0 auto !important;
+    padding: 2mm 1.5mm !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     border: none !important;
+    border-radius: 0 !important;
     box-shadow: none !important;
-    background: #fff !important;
-    color: #000 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif, monospace !important;
+    line-height: 1.25 !important;
+    word-break: break-word !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* 🎯 จัดวางโลโก้และชื่อร้านไว้ตรงกลางชัดเจน */
+  #printable-receipt-wrapper .receipt-header,
+  #printable-receipt-wrapper #receipt-header,
+  #printable-receipt-wrapper .shop-header-block {
+    text-align: center !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+
+  #printable-receipt-wrapper h1,
+  #printable-receipt-wrapper .shop-name-title {
+    text-align: center !important;
+    font-weight: 900 !important;
+    color: #000000 !important;
+    margin: 0 auto 2px auto !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  /* 📅 แสดงวันที่และเวลาที่พิมพ์บนหัวใบเสร็จเด่นชัด */
+  #printable-receipt-wrapper .receipt-print-time-badge,
+  #printable-receipt-wrapper #receipt-print-time {
+    display: block !important;
+    text-align: center !important;
+    font-weight: 700 !important;
+    border: 1px dashed #000000 !important;
+    padding: 2px 4px !important;
+    margin: 3px auto !important;
+    border-radius: 3px !important;
+    width: fit-content !important;
+    max-width: 95% !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* 📏 สเปกหน้ากว้าง 58 มม. (เครื่องพิมพ์พกพาขนาดเล็ก / 2 นิ้ว) */
+  #printable-receipt-wrapper[data-slip-size="58mm"],
+  #printable-receipt-wrapper.slip-58mm {
+    width: 48mm !important;
+    max-width: 50mm !important;
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+    padding: 1mm 0.5mm !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="58mm"] h1,
+  #printable-receipt-wrapper.slip-58mm h1 {
+    font-size: 13.5px !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="58mm"] .receipt-print-time-badge,
+  #printable-receipt-wrapper.slip-58mm .receipt-print-time-badge {
+    font-size: 9.5px !important;
+    padding: 1px 3px !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="58mm"] .text-sm,
+  #printable-receipt-wrapper.slip-58mm .text-sm {
+    font-size: 11px !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="58mm"] .text-xs,
+  #printable-receipt-wrapper.slip-58mm .text-xs {
+    font-size: 9.5px !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="58mm"] .text-\[11px\],
+  #printable-receipt-wrapper[data-slip-size="58mm"] .text-\[10px\],
+  #printable-receipt-wrapper[data-slip-size="58mm"] .text-\[9px\],
+  #printable-receipt-wrapper.slip-58mm .text-\[11px\],
+  #printable-receipt-wrapper.slip-58mm .text-\[10px\],
+  #printable-receipt-wrapper.slip-58mm .text-\[9px\] {
+    font-size: 9px !important;
+    line-height: 1.18 !important;
+  }
+
+  /* 📏 สเปกหน้ากว้าง 80 มม. (เครื่องพิมพ์มาตรฐานเคาน์เตอร์ POS / 3 นิ้ว) */
+  #printable-receipt-wrapper[data-slip-size="80mm"],
+  #printable-receipt-wrapper.slip-80mm {
+    width: 72mm !important;
+    max-width: 76mm !important;
+    font-size: 11.5px !important;
+    line-height: 1.26 !important;
+    padding: 2mm 1mm !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="80mm"] h1,
+  #printable-receipt-wrapper.slip-80mm h1 {
+    font-size: 16px !important;
+  }
+
+  #printable-receipt-wrapper[data-slip-size="80mm"] .receipt-print-time-badge,
+  #printable-receipt-wrapper.slip-80mm .receipt-print-time-badge {
+    font-size: 10.5px !important;
+    padding: 2px 4px !important;
+  }
+
+  /* กรณีไม่ระบุขนาด (Fallback ปกติ) */
+  #printable-receipt-wrapper:not([data-slip-size="58mm"]):not([data-slip-size="80mm"]) {
+    width: 74mm !important;
+    max-width: 78mm !important;
+    font-size: 11.5px !important;
+  }
+
+  /* 🌿 ปรับลดระยะห่างช่วยประหยัดกระดาษความร้อน (Paper-Saving Compact Spacing) */
+  #printable-receipt-wrapper .py-2\.5,
+  #printable-receipt-wrapper .py-3 {
+    padding-top: 2.5px !important;
+    padding-bottom: 2.5px !important;
+  }
+
+  #printable-receipt-wrapper .py-1 {
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+  }
+
+  #printable-receipt-wrapper .pb-3,
+  #printable-receipt-wrapper .pb-2\.5 {
+    padding-bottom: 2.5px !important;
+  }
+
+  #printable-receipt-wrapper .pt-3,
+  #printable-receipt-wrapper .pt-2\.5,
+  #printable-receipt-wrapper .pt-2 {
+    padding-top: 2.5px !important;
+  }
+
+  #printable-receipt-wrapper .space-y-1 > :not([hidden]) ~ :not([hidden]) {
+    margin-top: 1.5px !important;
+  }
+
+  #printable-receipt-wrapper .border-dashed {
+    border-color: #000000 !important;
+    border-style: dashed !important;
+    border-width: 1px !important;
+  }
+
+  /* ป้องกันการตัดหน้ากลางรายการ */
+  #printable-receipt-wrapper > div,
+  #printable-receipt-wrapper .divide-y > div {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 
   @page {
-    margin: 4mm;
+    margin: 0mm;
     size: auto;
   }
 }
