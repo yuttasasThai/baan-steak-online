@@ -32,6 +32,9 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
   const [slipWidth, setSlipWidth] = useState<'80mm' | '58mm' | 'full'>('80mm');
   const receiptRef = useRef<HTMLDivElement>(null);
 
+  const [showPrinterHelp, setShowPrinterHelp] = useState(false);
+  const [printTimestamp] = useState(() => new Date());
+
   if (!isOpen || !order) return null;
 
   const isTable = Boolean(order.deliveryType === 'มาทานที่ร้าน' || order.tableNumber);
@@ -42,7 +45,9 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
     ? '🛍️ นัดรับกลับบ้าน (Pickup)'
     : '🛵 ส่งถึงบ้าน (Delivery)';
 
-  // Build plain text for copying to LINE / Messenger
+  const formattedPrintTime = `${formatOrderDate(printTimestamp.toISOString())} ${formatOrderTime(printTimestamp.toISOString())}`;
+
+  // Build plain text for copying to LINE / Messenger / RawBT
   const generateReceiptPlainText = () => {
     const itemsText = order.items
       .map(
@@ -56,7 +61,8 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
 โทร: ${SHOP_INFO.phone}
 --------------------------------
 เลขออเดอร์: #${order.orderNumber}
-วันที่: ${formatOrderDate(order.createdAt)} เวลา: ${formatOrderTime(order.createdAt)}
+วันที่สั่ง: ${formatOrderDate(order.createdAt)} เวลา: ${formatOrderTime(order.createdAt)}
+พิมพ์เมื่อ: ${formattedPrintTime}
 รูปแบบ: ${diningLabel}
 ลูกค้า: ${order.customerName}
 เบอร์โทร: ${order.customerPhone || '-'}
@@ -91,7 +97,7 @@ ${itemsText}
         document.body.removeChild(textarea);
       }
       setCopied(true);
-      if (onNotify) onNotify('คัดลอกข้อความบิลเรียบร้อยแล้ว (สามารถวางใน LINE ได้ทันที)', 'success');
+      if (onNotify) onNotify('คัดลอกข้อความบิลเรียบร้อยแล้ว (สามารถวางใน LINE หรือแอปเครื่องพิมพ์ได้ทันที)', 'success');
       setTimeout(() => setCopied(false), 2500);
     } catch {
       if (onNotify) onNotify('ไม่สามารถคัดลอกข้อความได้', 'error');
@@ -100,6 +106,52 @@ ${itemsText}
 
   const handlePrint = () => {
     window.print();
+  };
+
+  // Direct RawBT Intent Print for Android thermal Bluetooth/USB printers
+  const handleRawBTPrint = () => {
+    try {
+      const text = generateReceiptPlainText();
+      // RawBT URL scheme accepts UTF-8 encoded text via rawbt:data:text/plain;base64,
+      const utf8Bytes = new TextEncoder().encode(text);
+      let binary = '';
+      for (let i = 0; i < utf8Bytes.length; i++) {
+        binary += String.fromCharCode(utf8Bytes[i]);
+      }
+      const base64 = btoa(binary);
+      window.location.href = `rawbt:data:text/plain;base64,${base64}`;
+      if (onNotify) onNotify('กำลังส่งข้อมูลไปยังแอปเครื่องพิมพ์ RawBT...', 'info');
+    } catch {
+      handlePrint();
+    }
+  };
+
+  // Web Bluetooth Direct Print Attempt (if browser supports Web Bluetooth)
+  const handleBluetoothDirectPrint = async () => {
+    if (!('bluetooth' in navigator)) {
+      setShowPrinterHelp(true);
+      if (onNotify) {
+        onNotify('เบราว์เซอร์นี้ไม่รองรับ Web Bluetooth โดยตรง แนะนำติดตั้งแอป RawBT Print Service แล้วกดพิมพ์ปกติ', 'info');
+      }
+      return;
+    }
+
+    try {
+      if (onNotify) onNotify('กำลังเปิดหน้าต่างค้นหาเครื่องพิมพ์ Bluetooth...', 'info');
+      // Request any bluetooth device with printer-like services or acceptAllDevices
+      const navBluetooth = (navigator as unknown as { bluetooth: { requestDevice: (opt: unknown) => Promise<{ name?: string }> } }).bluetooth;
+      const device = await navBluetooth.requestDevice({
+        acceptAllDevices: true,
+      });
+      if (device && onNotify) {
+        onNotify(`เชื่อมต่อกับเครื่องพิมพ์ "${device.name || 'Bluetooth Printer'}" แล้ว ให้กดปุ่มพิมพ์ใบเสร็จ`, 'success');
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : '';
+      if (!errorMsg.includes('User cancelled')) {
+        setShowPrinterHelp(true);
+      }
+    }
   };
 
   return (
@@ -122,7 +174,7 @@ ${itemsText}
                 </span>
               </div>
               <p className="text-[11px] text-stone-300">
-                รองรับทั้งเครื่องพิมพ์สลิปความร้อน (Thermal POS 80mm/58mm) และเครื่องพิมพ์ทั่วไป
+                รองรับเครื่องพิมพ์สลิปความร้อน (Thermal POS 80mm/58mm) และเครื่องพิมพ์ทั่วไป
               </p>
             </div>
           </div>
@@ -138,10 +190,10 @@ ${itemsText}
         </div>
 
         {/* Paper Size Switcher Bar (No-print) */}
-        <div className="no-print bg-stone-100 border-b border-stone-200 px-4 py-2 flex items-center justify-between gap-2 text-xs">
+        <div className="no-print bg-stone-100 border-b border-stone-200 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="font-bold text-stone-600 flex items-center gap-1">
             <Receipt className="w-3.5 h-3.5" />
-            <span>ความกว้างสลิป:</span>
+            <span>ขนาดสลิป:</span>
           </span>
           <div className="flex items-center gap-1">
             <button
@@ -180,39 +232,134 @@ ${itemsText}
           </div>
         </div>
 
+        {/* Quick thermal printer tip & Printer Help Button (No-print) */}
+        <div className="no-print bg-amber-50/95 border-b border-amber-200 px-4 py-2 text-[11px] text-amber-900 flex flex-wrap items-center justify-between gap-2">
+          <span>
+            💡 <strong>ตั้งค่าเครื่องปริ้นสลิป:</strong> ระยะขอบ (Margins) = <strong>ไม่มี (None)</strong>, ปิด <strong>หัวกระดาษ/ท้ายกระดาษ</strong>
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowPrinterHelp((prev) => !prev)}
+            className="px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold rounded-md transition cursor-pointer shrink-0"
+          >
+            {showPrinterHelp ? 'ซ่อนคำแนะนำ' : '❓ ค้นหาเครื่องพิมพ์ไม่เจอ? คลิกดูวิธีแก้'}
+          </button>
+        </div>
+
+        {/* Printer Help Expandable Panel (No-print) */}
+        {showPrinterHelp && (
+          <div className="no-print bg-stone-900 text-stone-100 p-4 border-b border-stone-700 text-xs space-y-3 animate-fadeIn">
+            <div className="flex items-start justify-between gap-2">
+              <h4 className="font-black text-amber-400 flex items-center gap-1.5 text-sm">
+                <span>🔍 วิธีแก้ปัญหา: ค้นหาเครื่องพิมพ์ไม่เจอในหน้าพิมพ์</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowPrinterHelp(false)}
+                className="text-stone-400 hover:text-white p-0.5"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] leading-relaxed">
+              {/* สำหรับมือถือ Android / แท็บเล็ต */}
+              <div className="bg-stone-800 p-3 rounded-xl border border-stone-700 space-y-1.5">
+                <div className="font-bold text-amber-300 flex items-center gap-1">
+                  <span>📱 สำหรับมือถือ Android / แท็บเล็ต (บลูทูธ):</span>
+                </div>
+                <p className="text-stone-300">
+                  เครื่องพิมพ์ความร้อนบลูทูธ (Bluetooth POS) จะ<strong>ไม่แสดงในหน้าพิมพ์ของเบราว์เซอร์</strong>จนกว่าจะติดตั้ง Print Service ในมือถือ:
+                </p>
+                <ol className="list-decimal list-inside text-stone-300 space-y-1 pl-1">
+                  <li>
+                    เปิด Play Store ค้นหาแอป <strong>"RawBT Print Service"</strong> หรือ <strong>"ESC POS Bluetooth Print Service"</strong> (โหลดฟรี)
+                  </li>
+                  <li>
+                    ไปที่ <strong>การตั้งค่ามือถือ (Settings) &gt; อุปกรณ์ที่เชื่อมต่อ &gt; การพิมพ์ (Printing)</strong> แล้วกดเปิดใช้งาน Service
+                  </li>
+                  <li>กลับมากด <strong>"พิมพ์ใบเสร็จ"</strong> เครื่องพิมพ์บลูทูธจะโผล่ขึ้นมาให้เลือกทันทีครับ!</li>
+                </ol>
+                <div className="pt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleRawBTPrint}
+                    className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black rounded-lg text-[10px] transition cursor-pointer"
+                  >
+                    🚀 สั่งพิมพ์ตรงผ่านแอป RawBT ทันที
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBluetoothDirectPrint}
+                    className="px-2.5 py-1.5 bg-stone-700 hover:bg-stone-600 text-white font-bold rounded-lg text-[10px] transition cursor-pointer"
+                  >
+                    📶 ค้นหาเครื่องพิมพ์ Bluetooth (Web Bluetooth)
+                  </button>
+                </div>
+              </div>
+
+              {/* สำหรับคอมพิวเตอร์ Windows / Mac */}
+              <div className="bg-stone-800 p-3 rounded-xl border border-stone-700 space-y-1.5">
+                <div className="font-bold text-amber-300 flex items-center gap-1">
+                  <span>💻 สำหรับคอมพิวเตอร์ (Windows / Mac USB):</span>
+                </div>
+                <ol className="list-decimal list-inside text-stone-300 space-y-1 pl-1">
+                  <li>เสียบสาย USB เครื่องพิมพ์เข้ากับคอมพิวเตอร์ และเปิดสวิตช์เครื่องพิมพ์</li>
+                  <li>
+                    ติดตั้งไดรเวอร์เครื่องพิมพ์ (เช่น POS-58 / POS-80 Driver หรือ Xprinter Driver) โดยเลือกพอร์ตเป็น <strong>USB001</strong>
+                  </li>
+                  <li>ในหน้าต่างสั่งพิมพ์ของ Chrome ที่ช่อง <strong>ปลายทาง (Destination)</strong> ให้เลือกชื่อเครื่องพิมพ์ความร้อนที่ติดตั้ง</li>
+                </ol>
+                <div className="p-2 bg-stone-900/80 rounded-lg text-emerald-400 text-[10.5px] font-medium border border-stone-700">
+                  ✨ <strong>เคล็ดลับ:</strong> หากต่อเครื่องพิมพ์ไม่ได้ สามารถกดปุ่ม <strong>"คัดลอกข้อความบิล"</strong> เพื่อนำข้อความไปส่งใน LINE หรือวางพิมพ์ในแอปของเครื่องพิมพ์ได้ทันทีครับ
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Printable Receipt Paper Container */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1 bg-stone-200/60 flex justify-center">
           <div
             id="printable-receipt-wrapper"
+            data-slip-size={slipWidth}
             ref={receiptRef}
             style={{
               maxWidth: slipWidth === '58mm' ? '280px' : slipWidth === '80mm' ? '380px' : '100%',
               width: '100%',
             }}
-            className="bg-white p-4 sm:p-5 shadow-md border border-stone-300 font-mono text-stone-900 text-xs transition-all duration-150 leading-relaxed rounded-xl"
+            className={`bg-white p-4 sm:p-5 shadow-md border border-stone-300 font-mono text-stone-900 text-xs transition-all duration-150 leading-relaxed rounded-xl ${
+              slipWidth === '58mm' ? 'slip-58mm' : slipWidth === '80mm' ? 'slip-80mm' : ''
+            }`}
           >
-            {/* Header: Shop Name & Info */}
-            <div className="text-center space-y-0.5 border-b-2 border-dashed border-stone-400 pb-3">
-              <h1 className="text-base sm:text-lg font-black text-stone-950 font-sans tracking-tight">
+            {/* 🎯 Header: Shop Logo, Name & Centered Info */}
+            <div className="receipt-header text-center flex flex-col items-center justify-center space-y-1 border-b-2 border-dashed border-stone-400 pb-2.5">
+              {/* Emblem / Shop Icon */}
+              <div className="w-8 h-8 rounded-full bg-stone-900 text-white flex items-center justify-center font-black text-sm mb-0.5 shadow-2xs mx-auto border border-stone-800">
+                🥩
+              </div>
+              <h1 className="shop-name-title text-base sm:text-lg font-black text-stone-950 font-sans tracking-tight text-center">
                 {SHOP_INFO.name}
               </h1>
-              <p className="text-[11px] text-stone-600">{SHOP_INFO.slogan}</p>
-              <p className="text-[11px] text-stone-700 font-semibold">
-                โทร: {SHOP_INFO.phone}
+              <p className="text-[11px] text-stone-600 text-center">{SHOP_INFO.slogan}</p>
+              <p className="text-[11px] text-stone-700 font-semibold text-center">
+                โทร: {SHOP_INFO.phone} {SHOP_INFO.lineId ? `• LINE: ${SHOP_INFO.lineId}` : ''}
               </p>
-              {SHOP_INFO.lineId && (
-                <p className="text-[10px] text-stone-500">LINE: {SHOP_INFO.lineId}</p>
-              )}
+
+              {/* 📅 แสดงวันที่และเวลาที่พิมพ์บนหัวใบเสร็จเด่นชัด */}
+              <div className="receipt-print-time-badge inline-block bg-stone-100 text-stone-900 border border-stone-400 rounded px-2 py-0.5 text-[10.5px] font-bold mt-1 text-center font-sans">
+                📅 พิมพ์เมื่อ: {formattedPrintTime}
+              </div>
             </div>
 
             {/* Receipt Meta & Dining Badge */}
-            <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1 text-[11px]">
+            <div className="py-2 border-b border-dashed border-stone-400 space-y-1 text-[11px]">
               <div className="flex justify-between items-center font-sans font-bold">
                 <span className="text-stone-500">เลขออเดอร์:</span>
                 <span className="text-sm font-black text-red-700">#{order.orderNumber}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-stone-500">วันที่:</span>
+                <span className="text-stone-500">วันที่สั่ง:</span>
                 <span className="font-semibold">{formatOrderDate(order.createdAt)}</span>
               </div>
               <div className="flex justify-between">
@@ -364,11 +511,13 @@ ${itemsText}
           {/* Big Print Now Button */}
           <button
             type="button"
+            id="btn-print-receipt"
             onClick={handlePrint}
             className="py-2.5 px-5 bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-700 hover:to-rose-800 active:scale-98 text-white font-black text-xs sm:text-sm rounded-2xl shadow-md transition flex items-center gap-2 cursor-pointer ring-2 ring-red-200"
+            title="พิมพ์ใบเสร็จผ่าน window.print() รองรับเครื่องปริ้นสลิปความร้อน 58mm/80mm"
           >
             <Printer className="w-4 h-4" />
-            <span>🖨️ พิมพ์บิลทันที (Print)</span>
+            <span>พิมพ์ใบเสร็จ</span>
           </button>
         </div>
 
