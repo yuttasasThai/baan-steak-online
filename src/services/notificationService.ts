@@ -74,7 +74,57 @@ export function formatOrderNotificationMessage(
 }
 
 /**
+ * Sends a push message via LINE Official Account (Messaging API) using the backend proxy endpoint
+ * This is the official replacement recommended by LINE Corporation after LINE Notify discontinuation.
+ */
+export async function sendLineOaPush(
+  channelAccessToken: string,
+  destinationId: string,
+  message: string
+): Promise<NotificationResult> {
+  const cleanToken = channelAccessToken.trim();
+  const cleanTo = destinationId.trim();
+
+  if (!cleanToken) {
+    return { success: false, error: 'กรุณาระบุ Channel Access Token ของ LINE Official Account' };
+  }
+  if (!cleanTo) {
+    return { success: false, error: 'กรุณาระบุ Destination ID (User ID หรือ Group ID)' };
+  }
+
+  try {
+    const res = await fetch('/api/notify/line-oa', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        channelAccessToken: cleanToken,
+        destinationId: cleanTo,
+        message,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.success) {
+      return { success: true, message: 'ส่งแจ้งเตือนเข้า LINE Official Account สำเร็จ' };
+    }
+
+    return {
+      success: false,
+      error: data.error || `HTTP ${res.status}: ส่งแจ้งเตือน LINE OA ไม่สำเร็จ`,
+      status: res.status,
+    };
+  } catch (err: unknown) {
+    const errText = err instanceof Error ? err.message : String(err);
+    console.warn('LINE OA proxy call failed:', errText);
+    return { success: false, error: `ไม่สามารถส่งผ่าน LINE OA: ${errText}` };
+  }
+}
+
+/**
  * Sends a notification message via LINE Notify Token using the backend proxy endpoint
+ * Note: LINE Notify will be officially sunset on 31 March 2025.
  */
 export async function sendLineNotify(
   token: string,
@@ -165,32 +215,46 @@ export async function sendWebhook(
 
 /**
  * Triggers order notification based on ShopSettings:
- * Sends to LINE Notify and/or Webhook URL if enabled.
+ * Sends to LINE OA (Messaging API), Webhook URL, or legacy LINE Notify if configured.
  */
 export async function sendOrderNotification(
   order: Partial<Order>,
   settings?: ShopSettings
 ): Promise<{
-  lineResult?: NotificationResult;
+  lineOaResult?: NotificationResult;
   webhookResult?: NotificationResult;
+  lineNotifyResult?: NotificationResult;
 }> {
   if (!settings || !settings.lineNotifyEnabled) {
     return {};
   }
 
   const message = formatOrderNotificationMessage(order, settings.name || 'บ้าน สเต็กออนไลน์');
-  const results: { lineResult?: NotificationResult; webhookResult?: NotificationResult } = {};
+  const results: {
+    lineOaResult?: NotificationResult;
+    webhookResult?: NotificationResult;
+    lineNotifyResult?: NotificationResult;
+  } = {};
 
-  // 1. Send via LINE Notify Token
-  if (settings.lineNotifyToken && settings.lineNotifyToken.trim()) {
+  // 1. Send via LINE Official Account (Messaging API - Official Primary)
+  if (
+    settings.lineChannelAccessToken &&
+    settings.lineChannelAccessToken.trim() &&
+    settings.lineDestinationId &&
+    settings.lineDestinationId.trim()
+  ) {
     try {
-      results.lineResult = await sendLineNotify(settings.lineNotifyToken, message);
+      results.lineOaResult = await sendLineOaPush(
+        settings.lineChannelAccessToken,
+        settings.lineDestinationId,
+        message
+      );
     } catch (err) {
-      console.warn('Failed to send LINE Notify for order:', err);
+      console.warn('Failed to send LINE OA push for order:', err);
     }
   }
 
-  // 2. Send via Webhook URL
+  // 2. Send via Webhook URL (Discord, Make, Zapier, n8n, etc.)
   if (settings.webhookUrl && settings.webhookUrl.trim()) {
     try {
       results.webhookResult = await sendWebhook(settings.webhookUrl, message, {
@@ -203,24 +267,46 @@ export async function sendOrderNotification(
     }
   }
 
+  // 3. Fallback: Send via legacy LINE Notify Token (if still valid before March 31, 2025)
+  if (settings.lineNotifyToken && settings.lineNotifyToken.trim()) {
+    try {
+      results.lineNotifyResult = await sendLineNotify(settings.lineNotifyToken, message);
+    } catch (err) {
+      console.warn('Failed to send LINE Notify for order:', err);
+    }
+  }
+
   return results;
 }
 
-/**
- * Sends a test notification to verify LINE Notify token and Webhook URL
- */
-export async function sendTestNotification(
-  token?: string,
-  webhookUrl?: string,
-  shopName: string = 'บ้าน สเต็กออนไลน์'
-): Promise<NotificationResult> {
-  const hasToken = Boolean(token && token.trim());
-  const hasWebhook = Boolean(webhookUrl && webhookUrl.trim());
+export interface TestNotificationParams {
+  channelAccessToken?: string;
+  destinationId?: string;
+  webhookUrl?: string;
+  lineNotifyToken?: string;
+  shopName?: string;
+}
 
-  if (!hasToken && !hasWebhook) {
+/**
+ * Sends a test notification to verify LINE OA, Webhook URL, or LINE Notify token
+ */
+export async function sendTestNotification({
+  channelAccessToken,
+  destinationId,
+  webhookUrl,
+  lineNotifyToken,
+  shopName = 'บ้าน สเต็กออนไลน์',
+}: TestNotificationParams): Promise<NotificationResult> {
+  const hasLineOa = Boolean(
+    channelAccessToken && channelAccessToken.trim() && destinationId && destinationId.trim()
+  );
+  const hasWebhook = Boolean(webhookUrl && webhookUrl.trim());
+  const hasNotify = Boolean(lineNotifyToken && lineNotifyToken.trim());
+
+  if (!hasLineOa && !hasWebhook && !hasNotify) {
     return {
       success: false,
-      error: 'กรุณาระบุ LINE Notify Token หรือ Webhook URL ก่อนกดทดสอบ',
+      error: 'กรุณาระบุข้อมูล LINE OA (Token + ID), Webhook URL หรือ LINE Notify Token ก่อนกดทดสอบ',
     };
   }
 
@@ -240,36 +326,48 @@ export async function sendTestNotification(
     `เมื่อมีลูกค้าสั่งอาหารใหม่เข้ามา ระบบจะส่งรายละเอียดออเดอร์มาที่นี่โดยอัตโนมัติทันทีครับ 🥩✨`,
   ].join('\n');
 
+  const successes: string[] = [];
   const errors: string[] = [];
-  let isAnySuccess = false;
 
-  if (hasToken) {
-    const res = await sendLineNotify(token!, testMessage);
+  // Test LINE OA Messaging API
+  if (hasLineOa) {
+    const res = await sendLineOaPush(channelAccessToken!, destinationId!, testMessage);
     if (res.success) {
-      isAnySuccess = true;
+      successes.push('LINE OA Messaging API สำเร็จ');
     } else {
-      errors.push(`LINE Notify: ${res.error || 'ผิดพลาด'}`);
+      errors.push(`LINE OA: ${res.error || 'ผิดพลาด'}`);
     }
   }
 
+  // Test Webhook
   if (hasWebhook) {
     const res = await sendWebhook(webhookUrl!, testMessage, { isTest: true });
     if (res.success) {
-      isAnySuccess = true;
+      successes.push('Webhook สำเร็จ');
     } else {
       errors.push(`Webhook: ${res.error || 'ผิดพลาด'}`);
     }
   }
 
-  if (isAnySuccess) {
+  // Test Legacy LINE Notify
+  if (hasNotify) {
+    const res = await sendLineNotify(lineNotifyToken!, testMessage);
+    if (res.success) {
+      successes.push('LINE Notify สำเร็จ');
+    } else {
+      errors.push(`LINE Notify: ${res.error || 'ผิดพลาด'}`);
+    }
+  }
+
+  if (successes.length > 0) {
     return {
       success: true,
-      message: `ส่งข้อความทดสอบสำเร็จเรียบร้อย! กรุณาตรวจสอบในแชท LINE หรือช่องทาง Webhook ของท่าน`,
+      message: `✅ ${successes.join(' และ ')} เรียบร้อย! กรุณาตรวจสอบข้อความในแชท`,
     };
   }
 
   return {
     success: false,
-    error: errors.join(' | ') || 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจสอบ Token หรือ Webhook URL',
+    error: errors.join(' | ') || 'ส่งข้อความทดสอบไม่สำเร็จ กรุณาตรวจสอบการตั้งค่า',
   };
 }

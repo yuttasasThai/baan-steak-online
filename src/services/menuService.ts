@@ -30,8 +30,11 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   heroBannerUrl: '/IMG_20261007_161813.jpg',
   hideAdminButtonInCustomerView: false,
   lineNotifyEnabled: false,
-  lineNotifyToken: '',
+  notificationProvider: 'line_oa',
+  lineChannelAccessToken: '',
+  lineDestinationId: '',
   webhookUrl: '',
+  lineNotifyToken: '',
   lineNotifySendOnCreate: true,
 };
 
