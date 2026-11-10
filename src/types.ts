@@ -78,6 +78,11 @@ export interface ShopSettings {
   shopLongitude: number;
   heroBannerUrl?: string;
   hideAdminButtonInCustomerView?: boolean; // ซ่อนปุ่ม Admin บนหน้าลูกค้า (ให้เข้าผ่านลิงก์ /admin เท่านั้น)
+  // LINE Notify & Webhook Notifications
+  lineNotifyEnabled?: boolean; // เปิด/ปิด การแจ้งเตือนเมื่อมีออเดอร์ใหม่เข้า
+  lineNotifyToken?: string; // LINE Notify Access Token
+  webhookUrl?: string; // Webhook URL ทางเลือกเสริม (เช่น Discord, Make, Zapier, n8n)
+  lineNotifySendOnCreate?: boolean; // ส่งการแจ้งเตือนทันทีเมื่อมีออเดอร์ใหม่เข้า (ค่าเริ่มต้น true)
 }
 
 export interface CustomerRecord {
