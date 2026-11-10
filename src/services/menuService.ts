@@ -13,6 +13,7 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
+import { sendOrderNotification } from './notificationService';
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   name: 'บ้าน สเต็กออนไลน์',
@@ -28,6 +29,10 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   shopLongitude: 102.1005,
   heroBannerUrl: '/IMG_20261007_161813.jpg',
   hideAdminButtonInCustomerView: false,
+  lineNotifyEnabled: false,
+  lineNotifyToken: '',
+  webhookUrl: '',
+  lineNotifySendOnCreate: true,
 };
 
 export const SHOP_INFO = {
@@ -120,6 +125,10 @@ export function subscribeShopSettings(
               ? data.heroBannerUrl
               : '/IMG_20261007_161813.jpg',
           hideAdminButtonInCustomerView: Boolean(data.hideAdminButtonInCustomerView),
+          lineNotifyEnabled: Boolean(data.lineNotifyEnabled),
+          lineNotifyToken: typeof data.lineNotifyToken === 'string' ? data.lineNotifyToken : '',
+          webhookUrl: typeof data.webhookUrl === 'string' ? data.webhookUrl : '',
+          lineNotifySendOnCreate: data.lineNotifySendOnCreate !== false,
         });
       } else {
         onUpdate(DEFAULT_SHOP_SETTINGS);
@@ -268,14 +277,62 @@ export const INITIAL_CATEGORIES: CategoryItem[] = [
   { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 3 },
 ];
 
-// The core items for "บ้าน สเต็กออนไลน์" (สเต็ก, สลัด, ของทานเล่น, เครื่องดื่ม):
+export const CATEGORY_PRIORITY_ORDER = ['สเต็ก', 'สลัด', 'ของทานเล่น', 'เครื่องดื่ม'];
+
+export function getCategoryPriorityIndex(categoryName?: string, categories?: CategoryItem[]): number {
+  if (!categoryName) return 999;
+  const trimmed = categoryName.trim();
+  const idx = CATEGORY_PRIORITY_ORDER.indexOf(trimmed);
+  if (idx !== -1) return idx;
+  if (categories && categories.length > 0) {
+    const found = categories.find((c) => c.name.trim() === trimmed || c.id === trimmed);
+    if (found) return 100 + (found.orderIndex ?? 0);
+  }
+  return 999;
+}
+
+export function sortCategories(categories: CategoryItem[]): CategoryItem[] {
+  return [...categories].sort((a, b) => {
+    const idxA = getCategoryPriorityIndex(a.name);
+    const idxB = getCategoryPriorityIndex(b.name);
+    if (idxA !== idxB) return idxA - idxB;
+    return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
+  });
+}
+
+/**
+ * จัดเรียงเมนูอาหารตามความต้องการ:
+ * 1) หมวดหมู่ตามลำดับ: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม
+ * 2) ภายในหมวดหมู่: เรียงตามราคาจาก "ราคาน้อยอยู่ข้างบน" ไปหา "ราคาแพงอยู่ข้างล่าง" (เช่น สเต็กไก่ 59 บ. ก่อน สเต็กหมู 69 บ.)
+ * 3) หากราคาเท่ากัน: ใช้ orderIndex และชื่อภาษาไทยตามลำดับ
+ */
+export function sortMenus(items: MenuItem[], categories?: CategoryItem[]): MenuItem[] {
+  return [...items].sort((a, b) => {
+    const catA = getCategoryPriorityIndex(a.category, categories);
+    const catB = getCategoryPriorityIndex(b.category, categories);
+    if (catA !== catB) return catA - catB;
+
+    // Within category: lowest price first (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
+    if (a.price !== b.price) {
+      return a.price - b.price;
+    }
+
+    if ((a.orderIndex ?? 0) !== (b.orderIndex ?? 0)) {
+      return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
+    }
+    return a.name.localeCompare(b.name, 'th');
+  });
+}
+
+// The core items for "บ้าน สเต็กออนไลน์" (สเต็ก, สลัด, ของทานเล่น, เครื่องดื่ม)
+// เรียงลำดับ: สเต็กไก่ (59) -> สเต็กหมู (69) -> สลัด (49) -> ของทานเล่น (35) -> เครื่องดื่ม (10, 20, 25):
 export const EXACT_INITIAL_MENUS: Omit<MenuItem, 'id'>[] = [
   {
-    name: 'สเต็กหมู',
-    price: 69,
+    name: 'สเต็กไก่',
+    price: 59,
     category: 'สเต็ก',
-    description: 'สเต็กหมูหมักนุ่มสูตรพิเศษ ย่างหอมกรุ่น เสิร์ฟพร้อมเฟรนช์ฟรายส์ สลัดผัก และน้ำสลัด',
-    imageUrl: '/images/steak_moo_1791353856229.jpg',
+    description: 'สเต็กอกไก่นุ่ม ย่างพริกไทยดำหอมกลมกล่อม เสิร์ฟพร้อมเฟรนช์ฟรายส์และสลัดผักสด',
+    imageUrl: '/images/steak_gai_1791353798435.jpg',
     isAvailable: true,
     isPublished: true,
     orderIndex: 0,
@@ -283,11 +340,11 @@ export const EXACT_INITIAL_MENUS: Omit<MenuItem, 'id'>[] = [
     updatedAt: new Date().toISOString(),
   },
   {
-    name: 'สเต็กไก่',
-    price: 59,
+    name: 'สเต็กหมู',
+    price: 69,
     category: 'สเต็ก',
-    description: 'สเต็กอกไก่นุ่ม ย่างพริกไทยดำหอมกลมกล่อม เสิร์ฟพร้อมเฟรนช์ฟรายส์และสลัดผักสด',
-    imageUrl: '/images/steak_gai_1791353798435.jpg',
+    description: 'สเต็กหมูหมักนุ่มสูตรพิเศษ ย่างหอมกรุ่น เสิร์ฟพร้อมเฟรนช์ฟรายส์ สลัดผัก และน้ำสลัด',
+    imageUrl: '/images/steak_moo_1791353856229.jpg',
     isAvailable: true,
     isPublished: true,
     orderIndex: 1,
@@ -488,8 +545,8 @@ export function subscribeMenus(
           updatedAt: data.updatedAt || '',
         });
       });
-      items.sort((a, b) => a.orderIndex - b.orderIndex);
-      onUpdate(items);
+      const sortedItems = sortMenus(items);
+      onUpdate(sortedItems);
     },
     (error) => {
       if (onError) onError(error);
@@ -518,8 +575,8 @@ export function subscribeCategories(
           orderIndex: Number(data.orderIndex) || 0,
         });
       });
-      items.sort((a, b) => a.orderIndex - b.orderIndex);
-      onUpdate(items);
+      const sortedCats = sortCategories(items);
+      onUpdate(sortedCats);
     },
     (error) => {
       if (onError) onError(error);
@@ -771,6 +828,39 @@ export async function createOrder(data: {
           console.warn('Customer upsert on createOrder non-fatal warning:', custErr);
         }
       }
+    }
+
+    // Trigger LINE Notify & Webhook notification in background
+    try {
+      const settingsDocRef = doc(db, 'settings', 'shop');
+      const settingsSnap = await getDoc(settingsDocRef);
+      const currentSettings = settingsSnap.exists()
+        ? (settingsSnap.data() as ShopSettings)
+        : DEFAULT_SHOP_SETTINGS;
+
+      if (currentSettings.lineNotifyEnabled && currentSettings.lineNotifySendOnCreate !== false) {
+        sendOrderNotification(
+          {
+            id: orderId,
+            orderNumber,
+            customerName: data.customerName,
+            customerPhone: data.customerPhone,
+            address: data.address,
+            deliveryType: data.deliveryType,
+            tableNumber: data.tableNumber,
+            items: data.items,
+            subtotal: data.subtotal,
+            deliveryFee: data.deliveryFee,
+            totalAmount: data.totalAmount,
+            createdAt: payload.createdAt,
+          },
+          currentSettings
+        ).catch((notifyErr) => {
+          console.warn('Background order notification warning:', notifyErr);
+        });
+      }
+    } catch (notifyErr) {
+      console.warn('Order notification trigger non-fatal error:', notifyErr);
     }
 
     return orderNumber;
@@ -1199,6 +1289,41 @@ export async function reorderMenuItem(
     updateMenuItem(item.id, { orderIndex: resolvedTarget }),
     updateMenuItem(targetItem.id, { orderIndex: currentOrder }),
   ]);
+}
+
+/**
+ * ปรับปรุงและบันทึกลำดับ orderIndex ใน Firestore ทั้งหมดใหม่ทันที
+ * ตามเงื่อนไข:
+ * 1) หมวดหมู่นำหน้า: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม
+ * 2) ราคา: ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง (เช่น สเต็กไก่ 59 บ. ก่อน สเต็กหมู 69 บ.)
+ */
+export async function reorderMenusByCategoryAndPrice(categories?: CategoryItem[]): Promise<void> {
+  const menusRef = collection(db, 'menus');
+  const snap = await getDocs(menusRef);
+  const items: MenuItem[] = [];
+  snap.forEach((docSnap) => {
+    const data = docSnap.data();
+    items.push({
+      id: docSnap.id,
+      name: data.name || '',
+      price: Number(data.price) || 0,
+      category: data.category || 'สเต็ก',
+      imageUrl: data.imageUrl || '',
+      description: data.description || '',
+      isAvailable: Boolean(data.isAvailable),
+      isPublished: data.isPublished !== undefined ? Boolean(data.isPublished) : true,
+      orderIndex: Number(data.orderIndex) || 0,
+    });
+  });
+
+  const sorted = sortMenus(items, categories);
+  const updates = sorted.map((item, idx) =>
+    updateDoc(doc(db, 'menus', item.id), {
+      orderIndex: idx,
+      updatedAt: new Date().toISOString(),
+    })
+  );
+  await Promise.all(updates);
 }
 
 export async function addCategory(name: string, orderIndex: number): Promise<string> {
