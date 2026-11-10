@@ -22,15 +22,43 @@ export function formatOrderStatusSpeech(
 ): string {
   if (!order) return `มีออเดอร์เข้า ${statusText}`;
 
-  const cleanName = (order.customerName || '')
-    .replace(/^โต๊ะ\s*\d+/i, '')
+  // Extract table number
+  let tableNum = '';
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
+    tableNum = String(order.tableNumber).replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+  }
+
+  const rawName = (order.customerName || '').trim();
+
+  // If tableNum not found, try to extract from customerName e.g. "โต๊ะ 1" or "โต๊ะที่ 1"
+  if (!tableNum) {
+    const match = rawName.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
+    if (match) {
+      tableNum = match[1];
+    }
+  }
+
+  // Clean customer name from table prefixes and generic placeholder text
+  let cleanName = rawName
+    .replace(/^โต๊ะ(?:ที่)?\s*\d+\s*(?:คุณ\s*)?/i, '')
     .replace(/^ลูกค้าหน้าร้าน/i, '')
+    .replace(/^ลูกค้าทานที่ร้าน/i, '')
+    .replace(/^ลูกค้าสั่งกลับบ้าน/i, '')
+    .replace(/^คุณ\s*/i, '')
     .trim();
+
+  // If cleanName is just the word "โต๊ะ" or a number, treat as no name
+  if (/^โต๊ะ\s*\d*$/i.test(cleanName) || /^\d+$/.test(cleanName)) {
+    cleanName = '';
+  }
+
   const hasName = Boolean(cleanName);
 
   const isDineIn =
     order.deliveryType === 'มาทานที่ร้าน' ||
-    (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '');
+    Boolean(tableNum) ||
+    (order.deliveryType !== 'สั่งกลับบ้าน' && order.deliveryType !== 'นัดรับอาหาร' && !order.deliveryType?.includes('ส่ง'));
+
   const isTakeaway = order.deliveryType === 'สั่งกลับบ้าน';
   const isPickup = order.deliveryType === 'นัดรับอาหาร';
   const isDelivery =
@@ -38,24 +66,29 @@ export function formatOrderStatusSpeech(
     (Boolean(order.deliveryType) && order.deliveryType!.includes('ส่ง'));
 
   let targetDesc = '';
-  if (isDineIn) {
-    const tablePart = order.tableNumber ? `โต๊ะที่ ${order.tableNumber} ` : '';
-    const namePart = hasName ? `คุณ ${cleanName} ` : '';
-    targetDesc = `${tablePart}${namePart}ทานที่ร้าน`.trim();
+  if (isDineIn || Boolean(tableNum)) {
+    if (tableNum && hasName) {
+      // ระบุทั้งโต๊ะและระบุชื่อ -> "โต๊ะที่ [X] คุณ [ชื่อ]"
+      targetDesc = `โต๊ะที่ ${tableNum} คุณ${cleanName}`;
+    } else if (tableNum) {
+      // ระบุแค่ชื่อโต๊ะ -> "โต๊ะที่ [X]"
+      targetDesc = `โต๊ะที่ ${tableNum}`;
+    } else if (hasName) {
+      targetDesc = `คุณ${cleanName} ทานที่ร้าน`;
+    } else {
+      targetDesc = 'ลูกค้าทานที่ร้าน';
+    }
   } else if (isTakeaway) {
-    const namePart = hasName ? `คุณ ${cleanName} ` : '';
-    targetDesc = `${namePart}สั่งกลับบ้าน`.trim();
+    targetDesc = hasName ? `คุณ${cleanName} สั่งกลับบ้าน` : 'ลูกค้าสั่งกลับบ้าน';
   } else if (isPickup) {
-    const namePart = hasName ? `คุณ ${cleanName} ` : '';
-    targetDesc = `${namePart}นัดรับกลับบ้าน`.trim();
+    targetDesc = hasName ? `คุณ${cleanName} นัดรับกลับบ้าน` : 'ลูกค้านัดรับกลับบ้าน';
   } else if (isDelivery) {
-    const namePart = hasName ? `คุณ ${cleanName} ` : '';
-    targetDesc = `${namePart}ส่งที่บ้าน`.trim();
+    targetDesc = hasName ? `คุณ${cleanName} ส่งที่บ้าน` : 'ลูกค้าส่งที่บ้าน';
   } else {
     targetDesc = hasName
-      ? `คุณ ${cleanName}`
-      : order.tableNumber
-      ? `โต๊ะที่ ${order.tableNumber}`
+      ? `คุณ${cleanName}`
+      : tableNum
+      ? `โต๊ะที่ ${tableNum}`
       : 'ลูกค้า';
   }
 
