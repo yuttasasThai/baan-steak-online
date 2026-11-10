@@ -1,17 +1,25 @@
 import React, { useState } from 'react';
 import {
+  Bell,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileArchive,
   Globe,
+  HelpCircle,
   Link2,
+  Loader2,
   Lock,
   MapPin,
   MessageCircle,
   PhoneCall,
   Save,
+  Send,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -22,6 +30,7 @@ import {
 } from 'lucide-react';
 import { ShopSettings } from '../types';
 import { updateShopSettings } from '../services/menuService';
+import { sendTestNotification } from '../services/notificationService';
 import { AdminHeroImageManager } from './AdminHeroImageManager';
 import { AdminLinkManagerModal } from './AdminLinkManagerModal';
 import { CURRENT_REVISION, getRevisionFileName } from '../revisionInfo';
@@ -65,6 +74,23 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
   );
   const [lineId, setLineId] = useState(settings.lineId || '@baansteak');
 
+  // LINE Notify & Webhook Notification Settings
+  const [lineNotifyEnabled, setLineNotifyEnabled] = useState<boolean>(
+    Boolean(settings.lineNotifyEnabled)
+  );
+  const [lineNotifyToken, setLineNotifyToken] = useState<string>(
+    settings.lineNotifyToken || ''
+  );
+  const [webhookUrl, setWebhookUrl] = useState<string>(
+    settings.webhookUrl || ''
+  );
+  const [lineNotifySendOnCreate, setLineNotifySendOnCreate] = useState<boolean>(
+    settings.lineNotifySendOnCreate !== false
+  );
+  const [showTokenGuide, setShowTokenGuide] = useState(false);
+  const [showTokenText, setShowTokenText] = useState(false);
+  const [isTestingNotification, setIsTestingNotification] = useState(false);
+
   // GPS Coordinates
   const [shopLatitude, setShopLatitude] = useState<string>(
     settings.shopLatitude?.toString() || '16.5447'
@@ -87,6 +113,33 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
       }
     } catch (err) {
       onNotify('ไม่สามารถเปลี่ยนสถานะร้านได้', 'error');
+    }
+  };
+
+  // Test sending notification via LINE Notify or Webhook
+  const handleTestNotification = async () => {
+    if (!lineNotifyToken.trim() && !webhookUrl.trim()) {
+      onNotify('กรุณาระบุ LINE Notify Token หรือ Webhook URL ก่อนกดทดสอบ', 'error');
+      return;
+    }
+    try {
+      setIsTestingNotification(true);
+      onNotify('กำลังส่งข้อความทดสอบไปยัง LINE Notify / Webhook...', 'info');
+      const res = await sendTestNotification(
+        lineNotifyToken.trim(),
+        webhookUrl.trim(),
+        settings.name || 'บ้าน สเต็กออนไลน์'
+      );
+      if (res.success) {
+        onNotify(res.message || '✅ เชื่อมต่อและส่งข้อความทดสอบสำเร็จเรียบร้อย!', 'success');
+      } else {
+        onNotify(`❌ ${res.error || 'ส่งข้อความทดสอบไม่สำเร็จ'}`, 'error');
+      }
+    } catch (err: unknown) {
+      const errText = err instanceof Error ? err.message : String(err);
+      onNotify(`เกิดข้อผิดพลาดในการทดสอบ: ${errText}`, 'error');
+    } finally {
+      setIsTestingNotification(false);
     }
   };
 
@@ -113,9 +166,13 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
         shopLatitude: lat,
         shopLongitude: lng,
         hideAdminButtonInCustomerView: hideAdminButton,
+        lineNotifyEnabled,
+        lineNotifyToken: lineNotifyToken.trim(),
+        webhookUrl: webhookUrl.trim(),
+        lineNotifySendOnCreate,
       });
 
-      onNotify('บันทึกการตั้งค่าร้านและข้อมูลเรียบร้อยแล้ว', 'success');
+      onNotify('บันทึกการตั้งค่าร้าน, LINE OA และบริการแจ้งเตือนเรียบร้อยแล้ว', 'success');
     } catch (err) {
       console.error('Save error:', err);
       onNotify('เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง', 'error');
@@ -564,6 +621,160 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
                 placeholder="@baansteak หรือ 0850451606"
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm font-medium focus:outline-none focus:border-[#06C755] focus:bg-white"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* 2.5 LINE Notify & Webhook Notification Service Card */}
+        <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-stone-100">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-[#06C755] text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Bell className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
+                  <span>🔔 แจ้งเตือนออเดอร์เข้าผ่าน LINE Notify & Webhook</span>
+                  {lineNotifyEnabled && (
+                    <span className="flex h-2 w-2 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-stone-500">
+                  ส่งข้อความเตือนเข้ากลุ่ม LINE ของร้านทันทีเมื่อมีลูกค้าสั่งอาหารใหม่
+                </p>
+              </div>
+            </div>
+
+            {/* Toggle Enable/Disable Switch */}
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <span className={`text-xs font-bold ${lineNotifyEnabled ? 'text-[#06C755]' : 'text-stone-400'}`}>
+                {lineNotifyEnabled ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}
+              </span>
+              <input
+                type="checkbox"
+                checked={lineNotifyEnabled}
+                onChange={(e) => setLineNotifyEnabled(e.target.checked)}
+                className="w-4 h-4 accent-[#06C755] cursor-pointer"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-3.5">
+            {/* LINE Notify Token */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-stone-800">
+                  LINE Notify Access Token
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowTokenGuide(!showTokenGuide)}
+                  className="text-[11px] text-[#06C755] hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <HelpCircle className="w-3.5 h-3.5" />
+                  <span>วิธีขอ Token ฟรีใน 1 นาที</span>
+                  {showTokenGuide ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  type={showTokenText ? 'text' : 'password'}
+                  value={lineNotifyToken}
+                  onChange={(e) => setLineNotifyToken(e.target.value)}
+                  placeholder="วาง LINE Notify Token ที่นี่ (เช่น 7vKh...)"
+                  className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowTokenText(!showTokenText)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600 cursor-pointer"
+                  title={showTokenText ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+                >
+                  {showTokenText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {/* Instructions on how to get token */}
+              {showTokenGuide && (
+                <div className="mt-2.5 p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2 leading-relaxed">
+                  <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                    <span>📝 ขั้นตอนการขอ LINE Notify Token (ฟรี 100%):</span>
+                  </div>
+                  <ol className="list-decimal pl-4 space-y-1 text-stone-700">
+                    <li>
+                      เปิดเว็บ <a href="https://notify-bot.line.me" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-bold underline inline-flex items-center gap-0.5">notify-bot.line.me <ExternalLink className="w-3 h-3 inline" /></a> แล้วกด <strong>"เข้าสู่ระบบ"</strong> ด้วยบัญชี LINE
+                    </li>
+                    <li>กดที่ชื่อโปรไฟล์มุมขวาบน เลือก <strong>"หน้าของฉัน (My page)"</strong></li>
+                    <li>เลื่อนลงมาด้านล่างสุด กดปุ่มสีเขียว <strong>"ออก Token (Generate token)"</strong></li>
+                    <li>ตั้งชื่อการแจ้งเตือน เช่น <code>บ้านสเต็ก ออเดอร์เข้า</code></li>
+                    <li>เลือกแชทส่วนตัว หรือเลือกกลุ่ม LINE ร้านอาหารที่ต้องการให้บอทแจ้งเตือน</li>
+                    <li>กด <strong>"ออก Token"</strong> แล้วกด <strong>"คัดลอก (Copy)"</strong> นำมาวางในช่องด้านบนนี้</li>
+                    <li><em>สำคัญ: หากเลือกแจ้งเตือนในกลุ่ม LINE อย่าลืมเชิญบัญชี <strong>LINE Notify</strong> เข้ากลุ่มด้วยนะครับ</em></li>
+                  </ol>
+                </div>
+              )}
+            </div>
+
+            {/* Webhook URL (Optional alternative) */}
+            <div>
+              <label className="block text-xs font-semibold text-stone-800 mb-1">
+                Webhook URL ทางเลือกเสริม (ไม่บังคับใส่)
+              </label>
+              <input
+                type="url"
+                value={webhookUrl}
+                onChange={(e) => setWebhookUrl(e.target.value)}
+                placeholder="https://discord.com/api/webhooks/... หรือ Make / Zapier Webhook URL"
+                className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
+              />
+              <p className="text-[11px] text-stone-500 mt-1">
+                * รองรับ Webhook ส่งต่อไปยัง Discord, Telegram bot, Make, Zapier, n8n, หรือ Google Sheet อัตโนมัติ
+              </p>
+            </div>
+
+            {/* Checkbox: send on new order */}
+            <div className="pt-1">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={lineNotifySendOnCreate}
+                  onChange={(e) => setLineNotifySendOnCreate(e.target.checked)}
+                  className="w-4 h-4 accent-[#06C755] rounded-md cursor-pointer"
+                />
+                <span className="text-xs font-semibold text-stone-700">
+                  ส่งข้อความแจ้งเตือนทันทีเมื่อมีออเดอร์ใหม่เข้ามา (New Order Received)
+                </span>
+              </label>
+            </div>
+
+            {/* Test Notification Button */}
+            <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <button
+                type="button"
+                disabled={isTestingNotification || (!lineNotifyToken.trim() && !webhookUrl.trim())}
+                onClick={handleTestNotification}
+                className="px-4 py-2.5 bg-[#06C755] hover:bg-[#05b34c] active:scale-95 disabled:bg-stone-300 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              >
+                {isTestingNotification ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังทดสอบส่งข้อความ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5" />
+                    <span>🧪 ทดสอบส่งแจ้งเตือนเข้า LINE</span>
+                  </>
+                )}
+              </button>
+
+              <span className="text-[11px] text-stone-500 text-center sm:text-left">
+                (กดเพื่อทดสอบว่า Token หรือ Webhook เชื่อมต่อและส่งข้อความเข้าแชทได้จริง)
+              </span>
             </div>
           </div>
         </div>

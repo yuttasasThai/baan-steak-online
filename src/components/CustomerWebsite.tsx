@@ -32,6 +32,8 @@ import {
   getCustomerRewardsByPhone,
   normalizeMenuImageUrl,
   SHOP_INFO,
+  sortCategories,
+  sortMenus,
   updateTableStatus,
 } from '../services/menuService';
 import heroImage from '../assets/IMG_20261007_161813.jpg';
@@ -237,8 +239,11 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
   }, [customerPhone]);
 
-  // Filter published menus only
-  const visibleMenus = menus.filter((m) => m.isPublished);
+  // Sort categories (สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม)
+  // and menus by category then price ascending (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
+  const sortedCategories = sortCategories(categories);
+  const sortedMenus = sortMenus(menus, sortedCategories);
+  const visibleMenus = sortedMenus.filter((m) => m.isPublished);
   const filteredMenus =
     selectedCategory === 'ทั้งหมด'
       ? visibleMenus
@@ -926,7 +931,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       </div>
 
       {/* Category Filter Pills (if any new categories added) */}
-      {categories.length > 1 && (
+      {sortedCategories.length > 1 && (
         <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none">
           <button
             onClick={() => setSelectedCategory('ทั้งหมด')}
@@ -938,7 +943,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           >
             ทั้งหมด ({visibleMenus.length})
           </button>
-          {categories.map((c) => (
+          {sortedCategories.map((c) => (
             <button
               key={c.id}
               onClick={() => setSelectedCategory(c.name)}

@@ -28,7 +28,10 @@ import {
   initializeBaanSteakMenu,
   normalizeMenuImageUrl,
   reorderMenuItem,
+  reorderMenusByCategoryAndPrice,
   SHOP_INFO,
+  sortCategories,
+  sortMenus,
   toggleMenuItemAvailability,
   toggleMenuItemPublish,
   updateMenuItem,
@@ -113,13 +116,33 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     }
   };
 
-  const filteredMenus = menus.filter((m) => {
+  const [isReordering, setIsReordering] = useState(false);
+
+  // Sort categories (สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม)
+  // and menus by category then price ascending (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
+  const sortedCategories = sortCategories(categories);
+  const sortedMenus = sortMenus(menus, sortedCategories);
+
+  const filteredMenus = sortedMenus.filter((m) => {
     const matchSearch =
       m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (m.description && m.description.toLowerCase().includes(searchQuery.toLowerCase()));
     const matchCat = selectedCategory === 'ทั้งหมด' || m.category === selectedCategory;
     return matchSearch && matchCat;
   });
+
+  const handleAutoReorder = async () => {
+    try {
+      setIsReordering(true);
+      await reorderMenusByCategoryAndPrice(sortedCategories);
+      onNotify('⚡ จัดเรียงลำดับเมนู (สเต็ก/สลัด/ทานเล่น/เครื่องดื่ม & ถูก->แพง) ใน Firestore เรียบร้อยแล้ว', 'success');
+    } catch (err) {
+      console.error('Auto reorder error:', err);
+      onNotify('เกิดข้อผิดพลาดในการจัดเรียงเมนู', 'error');
+    } finally {
+      setIsReordering(false);
+    }
+  };
 
   const handleToggleAvail = async (item: MenuItem) => {
     try {
@@ -231,6 +254,16 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={handleAutoReorder}
+            disabled={isReordering}
+            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
+            title="จัดเรียงเมนูอัตโนมัติ: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม และเรียงจากราคาน้อยไปหามาก"
+          >
+            <Zap className={`w-3.5 h-3.5 text-amber-600 ${isReordering ? 'animate-spin' : ''}`} />
+            <span>⚡ จัดเรียงลำดับเมนู (ถูก-&gt;แพง)</span>
+          </button>
+
+          <button
             onClick={() => setIsCategoryModalOpen(true)}
             className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
           >
@@ -241,11 +274,11 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           <button
             onClick={handleResetToBaanSteakExact}
             disabled={isResetting}
-            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+            className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
             title="รีเซ็ตให้เป็น 5 เมนูหลักของร้านตามที่กำหนด"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
-            <span>รีเซ็ต 5 เมนูหลัก</span>
+            <span>รีเซ็ตเมนูเริ่มต้น</span>
           </button>
 
           <button
@@ -334,7 +367,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           >
             ทั้งหมด ({menus.length})
           </button>
-          {categories.map((c) => (
+          {sortedCategories.map((c) => (
             <button
               key={c.id}
               onClick={() => setSelectedCategory(c.name)}
