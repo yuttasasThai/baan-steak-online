@@ -78,10 +78,13 @@ export interface ShopSettings {
   shopLongitude: number;
   heroBannerUrl?: string;
   hideAdminButtonInCustomerView?: boolean; // ซ่อนปุ่ม Admin บนหน้าลูกค้า (ให้เข้าผ่านลิงก์ /admin เท่านั้น)
-  // LINE Notify & Webhook Notifications
+  // LINE Official Account & Webhook Notifications (Replacing deprecated LINE Notify)
   lineNotifyEnabled?: boolean; // เปิด/ปิด การแจ้งเตือนเมื่อมีออเดอร์ใหม่เข้า
-  lineNotifyToken?: string; // LINE Notify Access Token
-  webhookUrl?: string; // Webhook URL ทางเลือกเสริม (เช่น Discord, Make, Zapier, n8n)
+  notificationProvider?: 'line_oa' | 'webhook' | 'line_notify' | 'all'; // รูปแบบการแจ้งเตือน
+  lineChannelAccessToken?: string; // LINE OA Messaging API Channel Access Token (Long-Lived)
+  lineDestinationId?: string; // Destination User ID (U...) หรือ Group ID ของร้าน
+  webhookUrl?: string; // Webhook URL สากล เช่น Discord, Telegram, Make, Zapier, Google Apps Script
+  lineNotifyToken?: string; // LINE Notify Token (สำหรับ Token เดิมที่ยังใช้งานได้ ก่อนปิดตัว 31 มี.ค. 2568)
   lineNotifySendOnCreate?: boolean; // ส่งการแจ้งเตือนทันทีเมื่อมีออเดอร์ใหม่เข้า (ค่าเริ่มต้น true)
 }
 
