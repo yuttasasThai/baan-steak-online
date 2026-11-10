@@ -488,7 +488,7 @@ export const AdminLinkManagerModal: React.FC<AdminLinkManagerModalProps> = ({
                 <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-extrabold">ลิงก์นี้สำหรับแอดมิน / เจ้าของร้านเท่านั้น:</span>{' '}
-                  ต้องใส่รหัส PIN แอดมิน (0850451606 หรือ PIN ที่ตั้งไว้) เพื่อเข้าสู่ระบบจัดการรายการอาหารและรับออเดอร์
+                  ต้องใส่รหัส PIN แอดมินเพื่อเข้าสู่ระบบจัดการรายการอาหารและรับออเดอร์
                 </div>
               </div>
 

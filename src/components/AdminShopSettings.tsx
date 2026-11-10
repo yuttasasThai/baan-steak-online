@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  AlertTriangle,
   Bell,
   Check,
   ChevronDown,
@@ -74,21 +75,45 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
   );
   const [lineId, setLineId] = useState(settings.lineId || '@baansteak');
 
-  // LINE Notify & Webhook Notification Settings
+  // LINE Official Account & Webhook Notification Settings (Replacing deprecated LINE Notify)
   const [lineNotifyEnabled, setLineNotifyEnabled] = useState<boolean>(
     Boolean(settings.lineNotifyEnabled)
   );
-  const [lineNotifyToken, setLineNotifyToken] = useState<string>(
-    settings.lineNotifyToken || ''
+  const [activeNotifyTab, setActiveNotifyTab] = useState<'line_oa' | 'webhook' | 'legacy_notify'>(
+    settings.lineChannelAccessToken
+      ? 'line_oa'
+      : settings.webhookUrl
+      ? 'webhook'
+      : settings.lineNotifyToken
+      ? 'legacy_notify'
+      : 'line_oa'
   );
+  // LINE Official Account (Messaging API)
+  const [lineChannelAccessToken, setLineChannelAccessToken] = useState<string>(
+    settings.lineChannelAccessToken || ''
+  );
+  const [lineDestinationId, setLineDestinationId] = useState<string>(
+    settings.lineDestinationId || ''
+  );
+  const [showChannelTokenText, setShowChannelTokenText] = useState(false);
+  const [showOaGuide, setShowOaGuide] = useState(false);
+
+  // Webhook URL (Discord, Telegram, Google Apps Script, Make)
   const [webhookUrl, setWebhookUrl] = useState<string>(
     settings.webhookUrl || ''
   );
-  const [lineNotifySendOnCreate, setLineNotifySendOnCreate] = useState<boolean>(
-    settings.lineNotifySendOnCreate !== false
+  const [showWebhookGuide, setShowWebhookGuide] = useState(false);
+
+  // Legacy LINE Notify Token (Sunsetting March 31, 2025)
+  const [lineNotifyToken, setLineNotifyToken] = useState<string>(
+    settings.lineNotifyToken || ''
   );
   const [showTokenGuide, setShowTokenGuide] = useState(false);
   const [showTokenText, setShowTokenText] = useState(false);
+
+  const [lineNotifySendOnCreate, setLineNotifySendOnCreate] = useState<boolean>(
+    settings.lineNotifySendOnCreate !== false
+  );
   const [isTestingNotification, setIsTestingNotification] = useState(false);
 
   // GPS Coordinates
@@ -116,20 +141,26 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
     }
   };
 
-  // Test sending notification via LINE Notify or Webhook
+  // Test sending notification via LINE OA, Webhook, or LINE Notify
   const handleTestNotification = async () => {
-    if (!lineNotifyToken.trim() && !webhookUrl.trim()) {
-      onNotify('กรุณาระบุ LINE Notify Token หรือ Webhook URL ก่อนกดทดสอบ', 'error');
+    const hasOa = Boolean(lineChannelAccessToken.trim() && lineDestinationId.trim());
+    const hasWebhook = Boolean(webhookUrl.trim());
+    const hasNotify = Boolean(lineNotifyToken.trim());
+
+    if (!hasOa && !hasWebhook && !hasNotify) {
+      onNotify('กรุณาระบุ Channel Access Token + Destination ID ของ LINE OA หรือ Webhook URL ก่อนกดทดสอบ', 'error');
       return;
     }
     try {
       setIsTestingNotification(true);
-      onNotify('กำลังส่งข้อความทดสอบไปยัง LINE Notify / Webhook...', 'info');
-      const res = await sendTestNotification(
-        lineNotifyToken.trim(),
-        webhookUrl.trim(),
-        settings.name || 'บ้าน สเต็กออนไลน์'
-      );
+      onNotify('กำลังส่งข้อความทดสอบแจ้งเตือน...', 'info');
+      const res = await sendTestNotification({
+        channelAccessToken: lineChannelAccessToken.trim(),
+        destinationId: lineDestinationId.trim(),
+        webhookUrl: webhookUrl.trim(),
+        lineNotifyToken: lineNotifyToken.trim(),
+        shopName: settings.name || 'บ้าน สเต็กออนไลน์',
+      });
       if (res.success) {
         onNotify(res.message || '✅ เชื่อมต่อและส่งข้อความทดสอบสำเร็จเรียบร้อย!', 'success');
       } else {
@@ -167,12 +198,15 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
         shopLongitude: lng,
         hideAdminButtonInCustomerView: hideAdminButton,
         lineNotifyEnabled,
-        lineNotifyToken: lineNotifyToken.trim(),
+        notificationProvider: activeNotifyTab === 'legacy_notify' ? 'line_notify' : activeNotifyTab,
+        lineChannelAccessToken: lineChannelAccessToken.trim(),
+        lineDestinationId: lineDestinationId.trim(),
         webhookUrl: webhookUrl.trim(),
+        lineNotifyToken: lineNotifyToken.trim(),
         lineNotifySendOnCreate,
       });
 
-      onNotify('บันทึกการตั้งค่าร้าน, LINE OA และบริการแจ้งเตือนเรียบร้อยแล้ว', 'success');
+      onNotify('บันทึกการตั้งค่าร้าน, LINE Official Account และระบบแจ้งเตือนเรียบร้อยแล้ว', 'success');
     } catch (err) {
       console.error('Save error:', err);
       onNotify('เกิดข้อผิดพลาดในการบันทึกข้อมูล กรุณาลองใหม่อีกครั้ง', 'error');
@@ -625,7 +659,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
           </div>
         </div>
 
-        {/* 2.5 LINE Notify & Webhook Notification Service Card */}
+        {/* 2.5 LINE Official Account & Webhook Notification Service Card (Updated for LINE Notify Sunset) */}
         <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-stone-100">
             <div className="flex items-center gap-2">
@@ -634,7 +668,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
               </div>
               <div>
                 <div className="text-sm font-bold text-stone-900 flex items-center gap-1.5">
-                  <span>🔔 แจ้งเตือนออเดอร์เข้าผ่าน LINE Notify & Webhook</span>
+                  <span>🔔 แจ้งเตือนออเดอร์เข้าผ่าน LINE OA & Webhook</span>
                   {lineNotifyEnabled && (
                     <span className="flex h-2 w-2 relative">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
@@ -643,7 +677,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
                   )}
                 </div>
                 <p className="text-[11px] text-stone-500">
-                  ส่งข้อความเตือนเข้ากลุ่ม LINE ของร้านทันทีเมื่อมีลูกค้าสั่งอาหารใหม่
+                  ส่งข้อความเตือนเข้ามือถือเจ้าของร้านทันทีเมื่อมีลูกค้าสั่งอาหารใหม่
                 </p>
               </div>
             </div>
@@ -662,79 +696,247 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
             </label>
           </div>
 
-          <div className="space-y-3.5">
-            {/* LINE Notify Token */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-xs font-semibold text-stone-800">
-                  LINE Notify Access Token
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowTokenGuide(!showTokenGuide)}
-                  className="text-[11px] text-[#06C755] hover:underline font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  <HelpCircle className="w-3.5 h-3.5" />
-                  <span>วิธีขอ Token ฟรีใน 1 นาที</span>
-                  {showTokenGuide ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                </button>
-              </div>
+          {/* LINE Notify Deprecation Official Announcement Banner */}
+          <div className="p-3.5 bg-amber-50/90 border border-amber-200 rounded-xl text-xs text-amber-950 space-y-1.5 leading-relaxed">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>ประกาศสำคัญ: บริการ LINE Notify สิ้นสุดการให้บริการ (31 มี.ค. 2568)</span>
+            </div>
+            <p className="text-[11px] text-amber-900/90">
+              ทาง LINE Corporation ประกาศยุติการให้บริการ <strong>LINE Notify</strong> อย่างเป็นทางการ และแนะนำให้เปลี่ยนไปใช้ <strong>LINE Official Account (Messaging API)</strong> หรือช่องทาง <strong>Webhook สากล (Discord / Telegram / Google Apps Script)</strong> ซึ่งระบบบ้านสเต็กได้อัปเกรดรองรับครบถ้วนแล้วครับ
+            </p>
+          </div>
 
-              <div className="relative">
-                <input
-                  type={showTokenText ? 'text' : 'password'}
-                  value={lineNotifyToken}
-                  onChange={(e) => setLineNotifyToken(e.target.value)}
-                  placeholder="วาง LINE Notify Token ที่นี่ (เช่น 7vKh...)"
-                  className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowTokenText(!showTokenText)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600 cursor-pointer"
-                  title={showTokenText ? 'ซ่อนรหัส' : 'แสดงรหัส'}
-                >
-                  {showTokenText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
+          {/* Provider Tabs */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-stone-100 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setActiveNotifyTab('line_oa')}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
+                  activeNotifyTab === 'line_oa'
+                    ? 'bg-white text-stone-900 shadow-xs border border-stone-200/60'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <span>🟢 LINE OA</span>
+                <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded font-normal">
+                  แนะนำ
+                </span>
+              </button>
 
-              {/* Instructions on how to get token */}
-              {showTokenGuide && (
-                <div className="mt-2.5 p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2 leading-relaxed">
-                  <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                    <span>📝 ขั้นตอนการขอ LINE Notify Token (ฟรี 100%):</span>
+              <button
+                type="button"
+                onClick={() => setActiveNotifyTab('webhook')}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
+                  activeNotifyTab === 'webhook'
+                    ? 'bg-white text-stone-900 shadow-xs border border-stone-200/60'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <span>🟣 Discord / Webhook</span>
+                <span className="text-[10px] text-indigo-600 bg-indigo-50 px-1 py-0.2 rounded font-normal">
+                  ฟรี 100%
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveNotifyTab('legacy_notify')}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex flex-col sm:flex-row items-center justify-center gap-1 cursor-pointer ${
+                  activeNotifyTab === 'legacy_notify'
+                    ? 'bg-white text-stone-900 shadow-xs border border-stone-200/60'
+                    : 'text-stone-600 hover:text-stone-900'
+                }`}
+              >
+                <span>🟡 LINE Notify</span>
+                <span className="text-[10px] text-stone-500 bg-stone-200 px-1 py-0.2 rounded font-normal">
+                  เดิม
+                </span>
+              </button>
+            </div>
+
+            {/* TAB 1: LINE Official Account Messaging API */}
+            {activeNotifyTab === 'line_oa' && (
+              <div className="space-y-3 pt-1">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-stone-800">
+                      LINE OA Channel Access Token (Long-Lived)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowOaGuide(!showOaGuide)}
+                      className="text-[11px] text-[#06C755] hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5" />
+                      <span>วิธีตั้งค่า LINE OA ใน 3 นาที</span>
+                      {showOaGuide ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
                   </div>
-                  <ol className="list-decimal pl-4 space-y-1 text-stone-700">
-                    <li>
-                      เปิดเว็บ <a href="https://notify-bot.line.me" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-bold underline inline-flex items-center gap-0.5">notify-bot.line.me <ExternalLink className="w-3 h-3 inline" /></a> แล้วกด <strong>"เข้าสู่ระบบ"</strong> ด้วยบัญชี LINE
-                    </li>
-                    <li>กดที่ชื่อโปรไฟล์มุมขวาบน เลือก <strong>"หน้าของฉัน (My page)"</strong></li>
-                    <li>เลื่อนลงมาด้านล่างสุด กดปุ่มสีเขียว <strong>"ออก Token (Generate token)"</strong></li>
-                    <li>ตั้งชื่อการแจ้งเตือน เช่น <code>บ้านสเต็ก ออเดอร์เข้า</code></li>
-                    <li>เลือกแชทส่วนตัว หรือเลือกกลุ่ม LINE ร้านอาหารที่ต้องการให้บอทแจ้งเตือน</li>
-                    <li>กด <strong>"ออก Token"</strong> แล้วกด <strong>"คัดลอก (Copy)"</strong> นำมาวางในช่องด้านบนนี้</li>
-                    <li><em>สำคัญ: หากเลือกแจ้งเตือนในกลุ่ม LINE อย่าลืมเชิญบัญชี <strong>LINE Notify</strong> เข้ากลุ่มด้วยนะครับ</em></li>
-                  </ol>
-                </div>
-              )}
-            </div>
 
-            {/* Webhook URL (Optional alternative) */}
-            <div>
-              <label className="block text-xs font-semibold text-stone-800 mb-1">
-                Webhook URL ทางเลือกเสริม (ไม่บังคับใส่)
-              </label>
-              <input
-                type="url"
-                value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder="https://discord.com/api/webhooks/... หรือ Make / Zapier Webhook URL"
-                className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
-              />
-              <p className="text-[11px] text-stone-500 mt-1">
-                * รองรับ Webhook ส่งต่อไปยัง Discord, Telegram bot, Make, Zapier, n8n, หรือ Google Sheet อัตโนมัติ
-              </p>
-            </div>
+                  <div className="relative">
+                    <input
+                      type={showChannelTokenText ? 'text' : 'password'}
+                      value={lineChannelAccessToken}
+                      onChange={(e) => setLineChannelAccessToken(e.target.value)}
+                      placeholder="วาง Channel Access Token ที่นี่ (เช่น eyJhbGci...)"
+                      className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowChannelTokenText(!showChannelTokenText)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600 cursor-pointer"
+                      title={showChannelTokenText ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+                    >
+                      {showChannelTokenText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-stone-800 mb-1">
+                    Destination ID (User ID ส่วนตัว หรือ Group ID ของร้าน)
+                  </label>
+                  <input
+                    type="text"
+                    value={lineDestinationId}
+                    onChange={(e) => setLineDestinationId(e.target.value)}
+                    placeholder="เช่น U1a2b3c4d5e6f... (Your user ID ในหน้า LINE Developers)"
+                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
+                  />
+                  <p className="text-[11px] text-stone-500 mt-1">
+                    * เป็น ID ผู้รับข้อความ (ดูได้ในแท็บ Basic settings หัวข้อ <code>Your user ID</code>)
+                  </p>
+                </div>
+
+                {/* Step by step guide for LINE OA Messaging API */}
+                {showOaGuide && (
+                  <div className="mt-2.5 p-3.5 bg-emerald-50/80 border border-emerald-200 rounded-xl text-xs text-emerald-950 space-y-2 leading-relaxed">
+                    <div className="font-bold text-emerald-900 flex items-center gap-1.5">
+                      <span>📌 ขั้นตอนการเปิดใช้งาน LINE Messaging API (ฟรี 100%):</span>
+                    </div>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-stone-700">
+                      <li>
+                        เปิดเว็บ <a href="https://developers.line.biz" target="_blank" rel="noopener noreferrer" className="text-emerald-700 font-bold underline inline-flex items-center gap-0.5">developers.line.biz <ExternalLink className="w-3 h-3 inline" /></a> แล้วกด <strong>"Log in"</strong> ด้วยบัญชี LINE ที่เป็นแอดมิน LINE OA ของร้าน
+                      </li>
+                      <li>กดสร้าง <strong>Provider</strong> (เช่น <code>บ้านสเต็กออนไลน์</code>)</li>
+                      <li>กดสร้าง <strong>Channel</strong> เลือกประเภท <strong>"Messaging API"</strong> (หรือเชื่อมกับบัญชี LINE OA เดิมของร้านได้ทันที)</li>
+                      <li>
+                        <strong>เอา Token:</strong> ไปที่แท็บ <strong>Messaging API</strong> เลื่อนลงล่างสุดในหัวข้อ <em>Channel access token</em> กดปุ่ม <strong>Issue</strong> เพื่อออก Token แล้วคัดลอกมาวางในช่อง <code>Channel Access Token</code> ด้านบน
+                      </li>
+                      <li>
+                        <strong>เอา User ID:</strong> ไปที่แท็บ <strong>Basic settings</strong> เลื่อนลงมาดูหัวข้อ <em>Your user ID</em> (จะขึ้นต้นด้วย U...) คัดลอกมาวางในช่อง <code>Destination ID</code>
+                      </li>
+                      <li>
+                        <strong>เปิดรับข้อความ:</strong> สแกน QR Code เพื่อเป็นเพื่อนกับ LINE OA ของคุณ และพิมพ์ข้อความทักทายไปในแชท 1 คำ เพื่อเปิดให้บอทส่งข้อความหาคุณได้ เป็นอันเสร็จสิ้น!
+                      </li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: Discord / Universal Webhook */}
+            {activeNotifyTab === 'webhook' && (
+              <div className="space-y-3 pt-1">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-stone-800">
+                      Webhook URL (Discord, Telegram, Make, Zapier, Google Apps Script)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowWebhookGuide(!showWebhookGuide)}
+                      className="text-[11px] text-indigo-600 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5" />
+                      <span>วิธีสร้าง Discord Webhook ใน 10 วินาที</span>
+                      {showWebhookGuide ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  </div>
+
+                  <input
+                    type="url"
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://discord.com/api/webhooks/... หรือ Webhook URL"
+                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-indigo-500 focus:bg-white"
+                  />
+                  <p className="text-[11px] text-stone-500 mt-1">
+                    * แนะนำ <strong>Discord Webhook</strong>: ใช้งานฟรี 100% ไม่มีหมดอายุ และส่งเสียงเตือนเข้าแอป Discord บนมือถือได้ตลอด 24 ชั่วโมง
+                  </p>
+                </div>
+
+                {/* Discord Guide */}
+                {showWebhookGuide && (
+                  <div className="mt-2.5 p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl text-xs text-indigo-950 space-y-2 leading-relaxed">
+                    <div className="font-bold text-indigo-900 flex items-center gap-1.5">
+                      <span>🟣 วิธีสร้าง Discord Webhook ส่งแจ้งเตือนฟรีไม่จำกัด:</span>
+                    </div>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-stone-700">
+                      <li>เปิดแอป <strong>Discord</strong> บนคอมพิวเตอร์หรือมือถือ แล้วสร้าง Server ส่วนตัวสำหรับร้าน</li>
+                      <li>คลิกรูปเฟืองข้างห้องแชท (Edit Channel) → เลือกเมนู <strong>Integrations</strong></li>
+                      <li>กดปุ่ม <strong>Create Webhook</strong> (หรือ Webhooks) ตั้งชื่อว่า <code>บ้านสเต็ก ออเดอร์</code></li>
+                      <li>กดปุ่ม <strong>Copy Webhook URL</strong> แล้วนำมาวางในช่องด้านบนนี้</li>
+                      <li>ติดตั้งแอป Discord ในมือถือเพื่อรับเสียงเตือนเมื่อมีออเดอร์ใหม่เข้าได้ทันที!</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: Legacy LINE Notify */}
+            {activeNotifyTab === 'legacy_notify' && (
+              <div className="space-y-3 pt-1">
+                <div className="p-2.5 bg-stone-100 rounded-xl text-[11px] text-stone-600 border border-stone-200">
+                  ⚠️ สำหรับท่านที่ยังมี <strong>LINE Notify Token</strong> เดิมที่เคยออกไว้ก่อนการปิดรับสมัคร Token ใหม่ ยังสามารถใช้ส่งข้อความต่อได้จนถึงวันที่ <strong>31 มีนาคม 2568</strong> ครับ
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-stone-800">
+                      LINE Notify Access Token เดิม
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenGuide(!showTokenGuide)}
+                      className="text-[11px] text-stone-600 hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5" />
+                      <span>ข้อมูล LINE Notify</span>
+                      {showTokenGuide ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type={showTokenText ? 'text' : 'password'}
+                      value={lineNotifyToken}
+                      onChange={(e) => setLineNotifyToken(e.target.value)}
+                      placeholder="วาง LINE Notify Token เดิมที่นี่..."
+                      className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono text-stone-800 focus:outline-none focus:border-[#06C755] focus:bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenText(!showTokenText)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-stone-400 hover:text-stone-600 cursor-pointer"
+                      title={showTokenText ? 'ซ่อนรหัส' : 'แสดงรหัส'}
+                    >
+                      {showTokenText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {showTokenGuide && (
+                    <div className="mt-2.5 p-3.5 bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-700 space-y-1.5 leading-relaxed">
+                      <p>
+                        LINE Corporation ประกาศปิดให้บริการ LINE Notify วันที่ 31 มีนาคม 2568 และปิดการออก Token ใหม่แล้ว แนะนำให้เลือกแท็บ <strong>"LINE OA"</strong> หรือ <strong>"Discord / Webhook"</strong> เพื่อความเสถียรในระยะยาวครับ
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Checkbox: send on new order */}
             <div className="pt-1">
@@ -755,7 +957,10 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
             <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <button
                 type="button"
-                disabled={isTestingNotification || (!lineNotifyToken.trim() && !webhookUrl.trim())}
+                disabled={
+                  isTestingNotification ||
+                  (!lineChannelAccessToken.trim() && !webhookUrl.trim() && !lineNotifyToken.trim())
+                }
                 onClick={handleTestNotification}
                 className="px-4 py-2.5 bg-[#06C755] hover:bg-[#05b34c] active:scale-95 disabled:bg-stone-300 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:cursor-not-allowed"
               >
@@ -767,13 +972,13 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
                 ) : (
                   <>
                     <Send className="w-3.5 h-3.5" />
-                    <span>🧪 ทดสอบส่งแจ้งเตือนเข้า LINE</span>
+                    <span>🧪 ทดสอบส่งแจ้งเตือนเข้า LINE OA / Webhook</span>
                   </>
                 )}
               </button>
 
               <span className="text-[11px] text-stone-500 text-center sm:text-left">
-                (กดเพื่อทดสอบว่า Token หรือ Webhook เชื่อมต่อและส่งข้อความเข้าแชทได้จริง)
+                (กดเพื่อทดสอบว่า LINE OA หรือ Webhook เชื่อมต่อและส่งข้อความเข้าแชทได้จริง)
               </span>
             </div>
           </div>

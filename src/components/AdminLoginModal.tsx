@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Delete, Eye, EyeOff, KeyRound, Lock, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Delete, Eye, EyeOff, Lock, ShieldCheck, X } from 'lucide-react';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -81,7 +81,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
       // Backend not running (e.g. Vercel static SPA)
     }
 
-    setErrorMessage(`รหัส PIN ไม่ถูกต้อง (รหัสเริ่มต้นคือ ${MASTER_PIN})`);
+    setErrorMessage('รหัส PIN ไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง');
     setIsLoading(false);
   };
 
@@ -109,13 +109,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   const handleClear = () => {
     setPin('');
     setErrorMessage(null);
-  };
-
-  // 1-Tap Quick Fill Master PIN
-  const handleQuickFillMaster = () => {
-    setPin(MASTER_PIN);
-    setErrorMessage(null);
-    verifyPin(MASTER_PIN);
   };
 
   return (
@@ -146,27 +139,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </button>
         </div>
 
-        {/* Informative Note & Quick 1-Tap Button */}
-        <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/80 space-y-2 text-xs">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <span className="font-bold text-amber-900 block">
-                🔑 รหัส PIN แอดมิน: <span className="font-mono text-red-700 text-sm tracking-wider font-black">0850451606</span>
-              </span>
-              <p className="text-[11px] text-amber-800 mt-0.5">
-                (เบอร์โทรศัพท์ของร้านค้า 10 หลัก)
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleQuickFillMaster}
-            className="w-full py-2 px-3 bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-600 hover:to-rose-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-            <span>⚡ กดใส่รหัส 0850451606 และเข้าทันที</span>
-          </button>
+        {/* Security Prompt */}
+        <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200/80 text-xs text-stone-600 flex items-center gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>กรุณากรอกรหัส PIN ผู้ดูแลระบบ (10 หลัก) เพื่อเข้าสู่ระบบ</span>
         </div>
 
         {/* PIN Input Form (Visible & Editable on all mobile/desktop devices) */}
