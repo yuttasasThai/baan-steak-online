@@ -1,5 +1,5 @@
 ==========================================================
-คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.21.0)
+คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.23.0)
 ร้าน บ้าน สเต็กออนไลน์ (Baan Steak Online)
 Repository: https://github.com/yuttasasThai/baan-steak-online
 ==========================================================
@@ -7,21 +7,21 @@ Repository: https://github.com/yuttasasThai/baan-steak-online
 ✨ ไฟล์นี้สร้างขึ้นจากเบราว์เซอร์โดยตรง (Client-Side In-Memory ZIP)
 รับประกันว่าเป็นไฟล์ .zip แท้ 100% ไม่ใช่ .html
 
-ไฟล์ที่ได้รับการแก้ไขใน rev-2.21.0:
-1. [src/components] AdminLoginModal.tsx - 🔒 ปรับปรุงความปลอดภัย: ซ่อนรหัส PIN แอดมิน ไม่แสดงรหัสบนหน้าต่างเข้าสู่ระบบ และนำปุ่มทางลัดออก
-2. [src/components] AdminShopSettings.tsx - ⚙️ อัปเกรดหน้าตั้งค่ารองรับ LINE Official Account (Messaging API) และ Discord Webhook พร้อมป้ายแจ้งเตือนการยุติบริการ LINE Notify และคู่มือสอนตั้งค่าอย่างละเอียด
-3. [src/services] notificationService.ts - 🔔 ฟังก์ชัน sendLineOaPush และ sendWebhook สำหรับส่งออเดอร์ใหม่เข้าแชท LINE OA ของร้าน หรือ Discord Webhook ทันทีที่มีออเดอร์
-4. [.] server.ts - 🚀 เพิ่ม API endpoint /api/notify/line-oa เชื่อมต่อ LINE Messaging API Push message โดยตรง ป้องกันปัญหา CORS ในเบราว์เซอร์
-5. [src] types.ts - 🛍️ เพิ่มฟิลด์ lineChannelAccessToken, lineDestinationId, notificationProvider ใน ShopSettings
-6. [src/services] menuService.ts - 🥩 ทริกเกอร์ส่งการแจ้งเตือน LINE OA / Webhook ทันทีในฟังก์ชัน createOrder เมื่อมีลูกค้าสั่งอาหารใหม่เข้ามา
-7. [src] revisionInfo.ts - 🏷️ บันทึกเวอร์ชัน 2.20.0 อัปเกรดระบบแจ้งเตือนออเดอร์ใหม่เป็น LINE Official Account (Messaging API)
-8. [src/components] OrderReceiptModal.tsx - 🇹🇭 พิมพ์บลูทูธ ESC/POS Raster Bitmap (GS v 0 ที่ 384 จุด/48mm) ภาษาไทยคมชัด วรรณยุกต์ครบ ไม่กลายเป็นภาษาจีน
-9. [src] types.ts - 🛍️ รูปแบบการจัดส่ง "สั่งกลับบ้าน" (Takeaway) ใน DiningType
-10. [src/components] AdminCreateOrderModal.tsx - 🛍️ เพิ่มปุ่ม "สั่งกลับบ้าน" พร้อมปรับช่องพิมพ์ชื่อและเบอร์โทรศัพท์เป็นแบบ "ไม่บังคับใส่ (ไม่ใส่ก็ได้)" ทั้งสั่งกลับบ้านและทานที่ร้าน
-11. [src/components] AdminOrdersManager.tsx - 🛍️ แสดงป้าย "สั่งกลับบ้าน" สีม่วงในรายการออเดอร์ + ปุ่ม "พิมพ์ใบเสร็จ" ครบทุกจุด + ปุ่มคีย์ออเดอร์ใหม่ POS
-12. [src] index.css - 📜 CSS @media print สำหรับเครื่องพิมพ์ความร้อน 58mm/80mm จัดกึ่งกลาง ประหยัดกระดาษ
-13. [src] App.tsx - ⭐ ซิงก์เสียงเตือน + ส่ง props menus & tables + ป้องกันหน้าต่างเด้งบนหน้าลูกค้า
-14. [src/components] AdminSourceCodeExporter.tsx - หน้าจอตัวช่วยดาวน์โหลดโค้ด และปุ่มคัดลอกโค้ดไปวางบน GitHub สำหรับ Android
+ไฟล์ที่ได้รับการแก้ไขใน rev-2.23.0:
+1. [src/components] CustomerWebsite.tsx - 🕒 เพิ่มข้อความ "ร้านเปิด 17.00-21.00 (สั่งล่วงหน้าก่อนได้)" และ "ร้านหยุดทุกวันอังคาร และ วันเสาร์" ใต้หน้าปก + เลขเวอร์ชัน + ปุ่มสั่งอาหารเพิ่ม
+2. [src/components] AdminSalesAnalytics.tsx - 📊 ปรับ Pop up สรุปยอดขายรายวันเป็นตาราง Excel + ส่งออก CSV + กราฟวิเคราะห์ยอดขายและเมนูขายดี
+3. [src] revisionInfo.ts - 🏷️ อัปเดตเลขเวอร์ชันเป็น 2.23.0 (rev-2.23.0)
+4. [src/components] AdminMenuCostManager.tsx - 🧮 หน้าใหม่: บันทึกต้นทุนของแต่ละเมนู พร้อมคำนวณกำไรต่อจานและ % กำไรแบบเรียลไทม์
+5. [src/components] AdminDailyExpensesManager.tsx - 📊 หน้าใหม่: ตารางสรุปรายจ่ายประจำวันแบบ Excel พร้อม Popup กรอกรายจ่ายและส่งออกไฟล์ .CSV
+6. [src/components] AdminOrdersManager.tsx - 💰 เพิ่มสถานะ "เช็คบิล" + ปุ่มเช็คบิล + ปุ่ม "สั่งอาหารเพิ่ม" ในรายการออเดอร์ทั้งหมด
+7. [src/components] IncomingOrderModal.tsx - 🔔 เพิ่มปุ่ม "สั่งอาหารเพิ่ม" และปุ่ม "💰 เช็คบิล" บนหน้าต่างรับออเดอร์เด้งอัตโนมัติ
+8. [src/components] MenuFormModal.tsx - 💵 เพิ่มช่องกรอกต้นทุน/จาน (บาท) ในหน้าต่างเพิ่ม/แก้ไขเมนูอาหาร
+9. [src/utils] audioAlert.ts - 🔊 เสียงแจ้งเตือน "โต๊ะ....เช็คบิลแล้ว / คุณ....เช็คบิลแล้ว" ต่อด้วย "โต๊ะ....ว่างแล้ว"
+10. [src/services] menuService.ts - 🔥 อัปเดตสถานะโต๊ะว่างเรียลไทม์เมื่อเช็คบิล + บันทึกต้นทุนเมนู + ระบบบันทึกรายจ่ายประจำวัน Firestore
+11. [src] types.ts - 📦 เพิ่มสถานะ เช็คบิล, ฟิลด์ cost ใน MenuItem, และโครงสร้าง DailyExpenseRecord
+12. [src] App.tsx - ⚡ เพิ่มแท็บ "ต้นทุนเมนู" และ "รายจ่ายประจำวัน (Excel)" พร้อมซิงก์ข้อมูลเรียลไทม์
+13. [.] firestore.rules - 🛡️ เพิ่มสิทธิ์เข้าถึงคอลเลกชัน daily_expenses ใน Firestore Rules
+14. [src/components] AdminSourceCodeExporter.tsx - 📱 ตัวช่วยดาวน์โหลดโค้ดและคัดลอกวางบน GitHub อัปเดตรายการไฟล์ v2.22.0
 
 วิธีอัปเดตผ่านโทรศัพท์ Android:
 1. แตกไฟล์ ZIP นี้ในแอป "ไฟล์ (Files)" ของเครื่องมือถือ
