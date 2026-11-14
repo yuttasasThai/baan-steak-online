@@ -2,6 +2,7 @@ export interface MenuItem {
   id: string;
   name: string;
   price: number;
+  cost?: number; // ต้นทุนต่อหน่วย (บาท) สำหรับคำนวณกำไร
   imageUrl?: string;
   description?: string;
   category: string;
@@ -24,6 +25,7 @@ export type OrderStatus =
   | 'ส่งออเดอร์'
   | 'กำลังส่ง'
   | 'ส่งแล้ว'
+  | 'เช็คบิล'
   | 'ยกเลิก';
 
 export type DiningType = 'มาทานที่ร้าน' | 'สั่งกลับบ้าน' | 'ส่งอาหารที่บ้าน' | 'นัดรับอาหาร';
@@ -55,13 +57,32 @@ export interface Order {
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
-  isArchived?: boolean; // true เมื่อสถานะเป็น "ส่งแล้ว" หรือ "ยกเลิก" เพื่อซ่อนจาก Active Orders
+  isArchived?: boolean; // true เมื่อสถานะเป็น "ส่งแล้ว", "เช็คบิล" หรือ "ยกเลิก"
+  checkedOutAt?: string;
   isCancelled?: boolean;
   cancelledAt?: string;
   cancelReason?: string;
   isOutOfDeliveryZone?: boolean;
   earnedRewardsNotice?: string[];
   tableNumber?: number | string;
+}
+
+export interface DailyExpenseItem {
+  id: string;
+  category: string;
+  title: string;
+  amount: number;
+  note?: string;
+  createdAt: string;
+}
+
+export interface DailyExpenseRecord {
+  id: string; // YYYY-MM-DD
+  dateKey: string; // YYYY-MM-DD
+  thaiDate: string; // e.g. "13 / 11 / 2569"
+  items: DailyExpenseItem[];
+  totalExpense: number;
+  updatedAt: string;
 }
 
 export interface ShopSettings {

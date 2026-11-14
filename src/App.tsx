@@ -3,8 +3,10 @@ import {
   AlertCircle,
   BarChart3,
   Bell,
+  Calculator,
   CheckCircle2,
   Download,
+  FileSpreadsheet,
   Link2,
   Lock,
   LogOut,
@@ -21,8 +23,10 @@ import {
   X,
 } from 'lucide-react';
 import { AdminCustomerHistory } from './components/AdminCustomerHistory';
+import { AdminDailyExpensesManager } from './components/AdminDailyExpensesManager';
 import { AdminLinkManagerModal } from './components/AdminLinkManagerModal';
 import { AdminLoginModal } from './components/AdminLoginModal';
+import { AdminMenuCostManager } from './components/AdminMenuCostManager';
 import { AdminMenuManager } from './components/AdminMenuManager';
 import { AdminOrdersManager } from './components/AdminOrdersManager';
 import { AdminSalesAnalytics } from './components/AdminSalesAnalytics';
@@ -51,6 +55,7 @@ import {
   SHOP_INFO,
   subscribeCategories,
   subscribeCustomers,
+  subscribeDailyExpenses,
   subscribeMenus,
   subscribeOrders,
   subscribeShopSettings,
@@ -58,7 +63,16 @@ import {
   updateOrderStatus,
   updateShopSettings,
 } from './services/menuService';
-import { CategoryItem, CustomerRecord, MenuItem, Order, OrderStatus, RestaurantTable, ShopSettings } from './types';
+import {
+  CategoryItem,
+  CustomerRecord,
+  DailyExpenseRecord,
+  MenuItem,
+  Order,
+  OrderStatus,
+  RestaurantTable,
+  ShopSettings,
+} from './types';
 
 interface Toast {
   id: string;
@@ -86,7 +100,7 @@ export function App() {
     checkIsAdminPath() ? 'admin' : 'customer'
   );
   const [adminTab, setAdminTab] = useState<
-    'orders' | 'menus' | 'tables' | 'customers' | 'analytics' | 'settings' | 'export'
+    'orders' | 'menus' | 'menu-costs' | 'expenses' | 'tables' | 'customers' | 'analytics' | 'settings' | 'export'
   >('orders');
 
   // Admin authentication state (checked synchronously from sessionStorage)
@@ -106,6 +120,7 @@ export function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
+  const [dailyExpenses, setDailyExpenses] = useState<DailyExpenseRecord[]>([]);
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -187,6 +202,17 @@ export function App() {
       setTables(tblList);
     });
 
+    // 8. Subscribe to Daily Expenses (ตารางรายจ่ายประจำวัน)
+    const unsubExpenses = subscribeDailyExpenses(
+      (records) => {
+        if (!isMounted) return;
+        setDailyExpenses(records);
+      },
+      (err) => {
+        console.warn('Daily expenses error:', err);
+      }
+    );
+
     return () => {
       isMounted = false;
       unsubMenus();
@@ -195,6 +221,7 @@ export function App() {
       unsubCustomers();
       unsubSettings();
       unsubTables();
+      unsubExpenses();
     };
   }, []);
 
@@ -211,7 +238,12 @@ export function App() {
   const allActiveOrders = useMemo(() => {
     return orders
       .filter(
-        (o) => !o.isCancelled && !o.isArchived && o.status !== 'ส่งแล้ว' && o.status !== 'ยกเลิก'
+        (o) =>
+          !o.isCancelled &&
+          !o.isArchived &&
+          o.status !== 'ส่งแล้ว' &&
+          o.status !== 'เช็คบิล' &&
+          o.status !== 'ยกเลิก'
       )
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders]);
@@ -701,6 +733,32 @@ export function App() {
               </button>
 
               <button
+                onClick={() => setAdminTab('menu-costs')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'menu-costs'
+                    ? 'bg-red-600 text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+                title="บันทึกต้นทุนต่อจานของแต่ละเมนูเพื่อคำนวณกำไร"
+              >
+                <Calculator className="w-3.5 h-3.5" />
+                <span>ต้นทุนเมนู</span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('expenses')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  adminTab === 'expenses'
+                    ? 'bg-[#107C41] text-white shadow-xs'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-100'
+                }`}
+                title="ตาราง Excel สรุปรายจ่ายประจำวันและกำไรสุทธิ"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>รายจ่ายประจำวัน (Excel)</span>
+              </button>
+
+              <button
                 onClick={() => setAdminTab('settings')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
                   adminTab === 'settings'
@@ -825,7 +883,22 @@ export function App() {
               />
             )}
             {adminTab === 'analytics' && (
-              <AdminSalesAnalytics orders={orders} />
+              <AdminSalesAnalytics
+                orders={orders}
+                menus={menus}
+                dailyExpenses={dailyExpenses}
+              />
+            )}
+            {adminTab === 'menu-costs' && (
+              <AdminMenuCostManager menus={menus} onNotify={notify} />
+            )}
+            {adminTab === 'expenses' && (
+              <AdminDailyExpensesManager
+                orders={orders}
+                menus={menus}
+                dailyExpenses={dailyExpenses}
+                onNotify={notify}
+              />
             )}
             {adminTab === 'settings' && (
               <AdminShopSettings
@@ -873,10 +946,12 @@ export function App() {
         isOpen={isIncomingModalOpen && currentView === 'admin'}
         orders={allActiveOrders}
         pendingOrders={pendingIncomingOrders}
+        menus={menus}
         onAcceptOrder={handleAcceptOrder}
         onUpdateStatus={handleUpdateOrderStatus}
         onAcceptAllOrders={handleAcceptAllOrders}
         onCancelOrder={handleCancelOrder}
+        onNotify={notify}
         onClose={() => setIsIncomingModalOpen(false)}
         isSoundEnabled={isSoundEnabled}
         onToggleSound={handleToggleSound}
