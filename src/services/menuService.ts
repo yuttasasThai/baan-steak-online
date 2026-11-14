@@ -11,7 +11,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { CategoryItem, CustomerRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
+import { CategoryItem, CustomerRecord, DailyExpenseItem, DailyExpenseRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 import { sendOrderNotification } from './notificationService';
 
@@ -506,17 +506,19 @@ export function normalizeOrderStatus(rawStatus?: string): OrderStatus {
   if (rawStatus === 'กำลังทำ') return 'กำลังทำ';
   if (rawStatus === 'ส่งออเดอร์' || rawStatus === 'กำลังส่ง' || rawStatus === 'ออกไปส่ง') return 'ส่งออเดอร์';
   if (rawStatus === 'ส่งแล้ว' || rawStatus === 'สำเร็จ') return 'ส่งแล้ว';
+  if (rawStatus === 'เช็คบิล') return 'เช็คบิล';
   if (rawStatus === 'ยกเลิก') return 'ยกเลิก';
   return 'รับออเดอร์';
 }
 
-// Strictly 1-way order status forward transitions: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว
+// Strictly 1-way order status forward transitions: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว -> เช็คบิล
 export const NEXT_ORDER_STATUS_MAP: Record<OrderStatus, OrderStatus | null> = {
   'รับออเดอร์': 'กำลังทำ',
   'กำลังทำ': 'ส่งออเดอร์',
   'ส่งออเดอร์': 'ส่งแล้ว',
   'กำลังส่ง': 'ส่งแล้ว',
-  'ส่งแล้ว': null,
+  'ส่งแล้ว': 'เช็คบิล',
+  'เช็คบิล': null,
   'ยกเลิก': null,
 };
 
@@ -538,6 +540,7 @@ export function subscribeMenus(
           id: docSnap.id,
           name: data.name || '',
           price: Number(data.price) || 0,
+          cost: Number(data.cost) || 0,
           category: data.category || 'สเต็ก',
           imageUrl: normalizeMenuImageUrl(data.imageUrl),
           description: data.description || '',
@@ -604,7 +607,9 @@ export function subscribeOrders(
         const data = docSnap.data();
         const normStatus = normalizeOrderStatus(data.status);
         const isCancelled = Boolean(data.isCancelled || normStatus === 'ยกเลิก');
-        const isArchived = Boolean(data.isArchived || normStatus === 'ส่งแล้ว' || isCancelled);
+        const isArchived = Boolean(
+          data.isArchived || normStatus === 'ส่งแล้ว' || normStatus === 'เช็คบิล' || isCancelled
+        );
 
         // Infer or read deliveryType from Firestore document
         const rawDeliveryType = data.deliveryType as DiningType | undefined;
@@ -624,6 +629,7 @@ export function subscribeOrders(
           customerPhone: data.customerPhone || '',
           address: data.address || '',
           deliveryType: inferredDeliveryType,
+          tableNumber: data.tableNumber !== null && data.tableNumber !== undefined ? data.tableNumber : undefined,
           gps: data.gps || null,
           distanceKm: typeof data.distanceKm === 'number' ? data.distanceKm : undefined,
           items: data.items || [],
@@ -635,6 +641,7 @@ export function subscribeOrders(
           createdAt: data.createdAt || '',
           updatedAt: data.updatedAt || '',
           isArchived,
+          checkedOutAt: data.checkedOutAt,
           isCancelled,
           cancelledAt: data.cancelledAt,
           cancelReason: data.cancelReason,
@@ -982,7 +989,7 @@ export async function clearOrdersHistory(options: {
     ordersSnap.forEach((docSnap) => {
       const data = docSnap.data();
       const status = normalizeOrderStatus(data.status);
-      const isArchived = Boolean(data.isArchived || status === 'ส่งแล้ว');
+      const isArchived = Boolean(data.isArchived || status === 'ส่งแล้ว' || status === 'เช็คบิล');
       const isCancelled = Boolean(data.isCancelled || status === 'ยกเลิก');
 
       if (options.scope === 'all') {
@@ -1087,41 +1094,97 @@ export async function getCustomerRewardsByPhone(rawPhone: string): Promise<{
   }
 }
 
-// Update order status & record customer summary when status is "ส่งแล้ว"
-// Strictly 1-way: รับออเดอร์ -> กำลังทำ -> กำลังส่ง -> ส่งแล้ว
+// Helper: Extract table number from order & set table status to available (false) in real-time
+async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
+  let rawNum = '';
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
+    rawNum = String(order.tableNumber).replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+  }
+  if (!rawNum && order.customerName) {
+    const m = order.customerName.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
+    if (m) rawNum = m[1];
+  }
+  if (!rawNum && order.address) {
+    const m = order.address.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
+    if (m) rawNum = m[1];
+  }
+
+  if (!rawNum) return;
+
+  try {
+    const parsedNum = parseInt(rawNum, 10);
+    const tableDocRef = doc(db, 'settings', 'tables');
+    const snap = await getDoc(tableDocRef);
+    let currentTables: RestaurantTable[] = INITIAL_TABLES;
+    if (snap.exists() && Array.isArray(snap.data().tables)) {
+      currentTables = snap.data().tables;
+    }
+
+    const updated = currentTables.map((t) => {
+      if (
+        (!isNaN(parsedNum) && t.number === parsedNum) ||
+        t.name === `โต๊ะ ${rawNum}` ||
+        t.name === rawNum ||
+        t.id === `table_${rawNum}` ||
+        t.id === `table_${parsedNum}`
+      ) {
+        return { ...t, isOccupied: false, updatedAt: new Date().toISOString() };
+      }
+      return t;
+    });
+
+    await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    console.warn('Auto free table on checkout error:', err);
+  }
+}
+
+// Update order status & record customer summary when status is "ส่งแล้ว" or "เช็คบิล"
+// Strictly 1-way: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว -> เช็คบิล (หรือกดเช็คบิลได้ทันที)
 export async function updateOrderStatus(order: Order, newStatus: OrderStatus): Promise<void> {
   const currentStatus = normalizeOrderStatus(order.status);
   const targetStatus = normalizeOrderStatus(newStatus);
 
-  // Status transitions can ONLY go forward:
-  if (currentStatus === 'ส่งแล้ว') {
-    throw new Error('ออเดอร์นี้จัดส่งแล้ว ไม่สามารถเปลี่ยนสถานะได้');
+  if (currentStatus === 'ยกเลิก') {
+    throw new Error('ออเดอร์นี้ถูกยกเลิกแล้ว ไม่สามารถเปลี่ยนสถานะได้');
+  }
+  if (currentStatus === 'เช็คบิล') {
+    throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
   }
 
+  // Allow direct checkout ('เช็คบิล') from any active/delivered order; otherwise enforce 1-way forward step
   const allowedNext = NEXT_ORDER_STATUS_MAP[currentStatus];
-  if (allowedNext !== targetStatus) {
+  if (targetStatus !== 'เช็คบิล' && allowedNext !== targetStatus) {
     throw new Error(`ไม่อนุญาตให้ย้อนสถานะหรือข้ามสถานะ (จาก "${currentStatus}" ไป "${targetStatus}")`);
   }
 
   const orderRef = doc(db, 'orders', order.id);
 
   try {
-    const isArchived = targetStatus === 'ส่งแล้ว';
-    await updateDoc(orderRef, {
+    const nowIso = new Date().toISOString();
+    const isArchived = targetStatus === 'ส่งแล้ว' || targetStatus === 'เช็คบิล';
+    const updatePayload: Record<string, any> = {
       status: targetStatus,
-      isArchived: isArchived,
-      updatedAt: new Date().toISOString(),
-    });
+      isArchived,
+      updatedAt: nowIso,
+    };
+    if (targetStatus === 'เช็คบิล') {
+      updatePayload.checkedOutAt = nowIso;
+    }
 
-    // When status changes to "ส่งแล้ว":
-    // 1. บันทึก/อัปเดตข้อมูลลูกค้าในฐานข้อมูลลูกค้า
-    // 2. ใช้เบอร์โทรศัพท์ลูกค้าเป็นตัวระบุลูกค้า
-    // 3. ถ้ามีเบอร์นี้อยู่แล้ว ให้เพิ่มจำนวนครั้งที่สั่งซื้อ +1
-    // 4. ถ้าเป็นลูกค้าใหม่ ให้สร้างข้อมูลลูกค้าใหม่
-    // 5. ฐานข้อมูลลูกค้าเก็บ: ชื่อลูกค้า, เบอร์โทร, ที่อยู่, เดือน/ปี, จำนวนครั้งที่สั่งซื้อ
-    // 6. ไม่ต้องเก็บรายการอาหารเก่าไว้ในฐานข้อมูลลูกค้า
-    // 7. ไม่ต้องเก็บ GPS เก่าไว้ในฐานข้อมูลลูกค้า
-    if (targetStatus === 'ส่งแล้ว' && order.customerPhone) {
+    await updateDoc(orderRef, updatePayload);
+
+    // Free table in real-time when checking out dine-in or takeaway orders with a table
+    if (targetStatus === 'เช็คบิล') {
+      await freeTableForCheckedOutOrder(order);
+    }
+
+    // Record/update customer loyalty summary when completing ("ส่งแล้ว") or direct checkout ("เช็คบิล" from earlier step)
+    const shouldRecordCustomer =
+      (targetStatus === 'ส่งแล้ว' && currentStatus !== 'ส่งแล้ว') ||
+      (targetStatus === 'เช็คบิล' && currentStatus !== 'ส่งแล้ว');
+
+    if (shouldRecordCustomer && order.customerPhone) {
       const rawPhone = order.customerPhone.trim();
       const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
       if (cleanPhone) {
@@ -1133,7 +1196,6 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
           ? Number(existingData.orderCount || 0) + 1
           : 1;
 
-        // บันทึก/สะสมจำนวนจานของแต่ละเมนู: สั่งครบทุก 10 ออเดอร์ของแต่ละอย่าง ฟรี 1 ออเดอร์
         const currentItemCounts: Record<string, number> = { ...(existingData.itemCounts || {}) };
         if (Array.isArray(order.items)) {
           for (const itm of order.items) {
@@ -1154,8 +1216,8 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
             lastOrderMonthYear: getThaiMonthYear(),
             orderCount: currentCount,
             itemCounts: currentItemCounts,
-            lastOrderAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            lastOrderAt: nowIso,
+            updatedAt: nowIso,
           },
           { merge: true }
         );
@@ -1207,7 +1269,8 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
 
   const payload = {
     name: data.name.trim().slice(0, 120),
-    price: Number(data.price),
+    price: Math.max(0, Number(data.price) || 0),
+    cost: Math.max(0, Number(data.cost) || 0),
     category: data.category.trim().slice(0, 60),
     imageUrl: data.imageUrl ? data.imageUrl.trim() : '',
     description: (data.description || '').slice(0, 800),
@@ -1233,7 +1296,8 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
   };
 
   if (data.name !== undefined) payload.name = data.name.trim().slice(0, 120);
-  if (data.price !== undefined) payload.price = Math.max(0, Number(data.price));
+  if (data.price !== undefined) payload.price = Math.max(0, Number(data.price) || 0);
+  if (data.cost !== undefined) payload.cost = Math.max(0, Number(data.cost) || 0);
   if (data.category !== undefined) payload.category = data.category.trim().slice(0, 60);
   if (data.imageUrl !== undefined) payload.imageUrl = data.imageUrl ? data.imageUrl.trim() : '';
   if (data.description !== undefined) payload.description = data.description.slice(0, 800);
@@ -1515,4 +1579,93 @@ export async function resetShopHeroBanner(): Promise<void> {
     console.warn('Failed to delete settings doc:', err);
   }
 }
+
+// Subscribe Daily Expenses Real-time from Firestore
+export function subscribeDailyExpenses(
+  onUpdate: (records: DailyExpenseRecord[]) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  const expRef = collection(db, 'daily_expenses');
+  return onSnapshot(
+    expRef,
+    (snapshot) => {
+      const list: DailyExpenseRecord[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const items: DailyExpenseItem[] = Array.isArray(data.items)
+          ? data.items.map((it: any) => ({
+              id: String(it.id || `${Date.now()}_${Math.random()}`),
+              category: String(it.category || 'อื่นๆ'),
+              title: String(it.title || ''),
+              amount: Math.max(0, Number(it.amount) || 0),
+              note: it.note ? String(it.note) : '',
+              createdAt: String(it.createdAt || new Date().toISOString()),
+            }))
+          : [];
+        const totalExpense = items.reduce((s, it) => s + it.amount, 0);
+        list.push({
+          id: docSnap.id,
+          dateKey: String(data.dateKey || docSnap.id),
+          thaiDate: String(data.thaiDate || docSnap.id),
+          items,
+          totalExpense: Number(data.totalExpense) >= 0 ? Number(data.totalExpense) : totalExpense,
+          updatedAt: String(data.updatedAt || ''),
+        });
+      });
+      list.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+      onUpdate(list);
+    },
+    (error) => {
+      if (onError) onError(error);
+      handleFirestoreError(error, OperationType.LIST, 'daily_expenses');
+    }
+  );
+}
+
+// Format YYYY-MM-DD key to Thai readable date "13 / 11 / 2569"
+export function formatDateKeyToThai(dateKey: string): string {
+  const parts = dateKey.split('-');
+  if (parts.length !== 3) return dateKey;
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const day = parseInt(parts[2], 10);
+  if (isNaN(year) || isNaN(month) || isNaN(day)) return dateKey;
+  return `${day} / ${month} / ${year + 543}`;
+}
+
+// Save or update itemized daily expenses for a given YYYY-MM-DD dateKey
+export async function saveDailyExpenseRecord(
+  dateKey: string,
+  items: DailyExpenseItem[]
+): Promise<void> {
+  const cleanKey = dateKey.trim().slice(0, 20);
+  if (!cleanKey) throw new Error('กรุณาระบุวันที่');
+
+  const sanitizedItems: DailyExpenseItem[] = items
+    .filter((it) => it.title.trim() !== '' || Number(it.amount) > 0)
+    .map((it) => ({
+      id: it.id || `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      category: (it.category || 'อื่นๆ').trim().slice(0, 80),
+      title: (it.title || 'รายจ่าย').trim().slice(0, 160),
+      amount: Math.max(0, Number(it.amount) || 0),
+      note: (it.note || '').trim().slice(0, 250),
+      createdAt: it.createdAt || new Date().toISOString(),
+    }));
+
+  const totalExpense = sanitizedItems.reduce((sum, it) => sum + it.amount, 0);
+  const expRef = doc(db, 'daily_expenses', cleanKey);
+
+  try {
+    await setDoc(expRef, {
+      dateKey: cleanKey,
+      thaiDate: formatDateKeyToThai(cleanKey),
+      items: sanitizedItems,
+      totalExpense,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `daily_expenses/${cleanKey}`);
+  }
+}
+
 
