@@ -40,6 +40,7 @@ import heroImage from '../assets/IMG_20261007_161813.jpg';
 import { audioAlert } from '../utils/audioAlert';
 import { DeliveryMapPicker } from './DeliveryMapPicker';
 import { CustomerAppendOrderModal } from './CustomerAppendOrderModal';
+import { CURRENT_REVISION } from '../revisionInfo';
 
 interface CustomerWebsiteProps {
   menus: MenuItem[];
@@ -470,6 +471,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       });
 
       setCompletedOrderRewards([...customerRewardsNotice]);
+      setCompletedOrderDiningType(diningType);
       setCompletedOrderIsOutOfZone(
         Boolean(diningType === 'ส่งอาหารที่บ้าน' && distanceKm !== null && distanceKm > 12)
       );
@@ -500,7 +502,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   return (
     <div className="max-w-xl mx-auto space-y-4 pb-24 text-stone-900">
       {/* 1. Hero Image of the shop (Uploaded banner) */}
-      <div className="w-full overflow-hidden rounded-2xl bg-stone-950 border border-stone-200 shadow-sm">
+      <div className="relative w-full overflow-hidden rounded-2xl bg-stone-950 border border-stone-200 shadow-sm">
         <img
           src={activeHeroImage}
           onError={(e) => {
@@ -510,6 +512,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           className="w-full h-auto block rounded-2xl"
           loading="eager"
         />
+        <span
+          className="absolute bottom-2 right-2.5 text-[10px] font-medium tabular-nums text-white/85 bg-black/40 px-1.5 py-0.5 rounded select-none pointer-events-none"
+          aria-label={`Version ${CURRENT_REVISION.version}`}
+        >
+          {CURRENT_REVISION.version}
+        </span>
       </div>
 
       {/* 2. ปุ่มแจ้งและสลับสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (คลิกเพื่อสลับเปิด/ปิดได้ทันที) */}
@@ -522,23 +530,30 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
             onOpenAdminLogin();
           }
         }}
-        className={`w-full py-2.5 sm:py-3 px-3.5 sm:px-4 rounded-2xl text-white font-black text-xs sm:text-base border-2 shadow-md flex items-center justify-between tracking-wide transition cursor-pointer active:scale-98 ${
+        className={`w-full py-2.5 sm:py-3 px-3.5 sm:px-4 rounded-2xl text-white font-black text-xs sm:text-base border-2 shadow-md flex items-center justify-between gap-2 tracking-wide transition cursor-pointer active:scale-98 ${
           settings?.isOpen === false
             ? 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 border-rose-400 hover:brightness-110'
             : 'bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 border-emerald-400 hover:brightness-110'
         }`}
         title="แตะเพื่อสลับเปิด/ปิดร้าน (สำหรับร้านค้า)"
       >
-        <div className="flex items-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping"></span>
-          <span className="text-base sm:text-lg">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0"></span>
+          <span className="text-base sm:text-lg shrink-0">
             {settings?.isOpen === false ? '🔴' : '🟢'}
           </span>
-          <span className="drop-shadow-xs font-black tracking-wide text-left">
-            {settings?.isOpen === false
-              ? 'วันนี้ร้านปิด (งดรับออเดอร์ชั่วคราว)'
-              : 'วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)'}
-          </span>
+          <div className="text-left min-w-0">
+            <div className="drop-shadow-xs font-black tracking-wide leading-tight">
+              {settings?.isOpen === false
+                ? 'วันนี้ร้านปิด (งดรับออเดอร์ชั่วคราว)'
+                : 'วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)'}
+            </div>
+            <div className="text-[11px] sm:text-xs font-bold text-amber-100 mt-0.5 leading-snug">
+              {settings?.isOpen === false
+                ? 'ร้านหยุดทุกวันอังคาร และ วันเสาร์'
+                : 'ร้านเปิด 17.00-21.00 (สั่งล่วงหน้าก่อนได้)'}
+            </div>
+          </div>
         </div>
         <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-lg bg-black/25 text-white/95 border border-white/20 whitespace-nowrap shrink-0">
           {isAdmin ? '👆 แตะเพื่อสลับสถานะ' : '⚙️ จัดการร้าน'}
@@ -744,35 +759,47 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       <div>3. ส่งออเดอร์</div>
                     </div>
 
-                    {/* Step 4: ส่งแล้ว */}
+                    {/* Step 4: ส่งแล้ว / เช็คบิล */}
                     <div
                       className={`p-2 rounded-xl transition ${
-                        currentStatus === 'ส่งแล้ว'
+                        currentStatus === 'ส่งแล้ว' || currentStatus === 'เช็คบิล'
                           ? 'bg-emerald-600 text-white font-black shadow-xs'
                           : 'bg-stone-200/70 text-stone-400'
                       }`}
                     >
-                      <div className="text-xs mb-0.5">✅</div>
-                      <div>4. ส่งแล้ว</div>
+                      <div className="text-xs mb-0.5">{currentStatus === 'เช็คบิล' ? '💰' : '✅'}</div>
+                      <div>{currentStatus === 'เช็คบิล' ? '4. เช็คบิลแล้ว' : '4. ส่งแล้ว'}</div>
                     </div>
                   </div>
 
                   {/* รายการอาหารในออเดอร์นี้ */}
                   {ord.items && ord.items.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-[11px] text-stone-600 space-y-1">
-                      <div className="font-bold text-stone-800 flex items-center justify-between">
+                    <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-[11px] text-stone-600 space-y-1.5">
+                      <div className="font-bold text-stone-800 flex items-center justify-between gap-2">
                         <span>รายการอาหาร ({ord.items.length} รายการ):</span>
-                        {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
-                          <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                            🎉 มีของแถม
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5">
+                          {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
+                            <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              🎉 มีของแถม
+                            </span>
+                          )}
+                          {currentStatus !== 'เช็คบิล' && currentStatus !== 'ยกเลิก' && (
+                            <button
+                              type="button"
+                              onClick={() => setAppendOrderTarget(ord)}
+                              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-lg shadow-2xs flex items-center gap-1 active:scale-95 transition cursor-pointer shrink-0"
+                            >
+                              <Plus className="w-3 h-3 stroke-[3]" />
+                              <span>สั่งอาหารเพิ่ม</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="space-y-0.5">
                         {ord.items.map((it, idx) => (
                           <div key={idx} className="flex justify-between items-center">
                             <span className="truncate">• {it.name} x {it.quantity}</span>
-                            <span className="font-bold shrink-0 ml-2">฿{(it.price * it.quantity).toLocaleString()}</span>
+                            <span className="font-bold shrink-0 ml-2 tabular-nums">฿{(it.price * it.quantity).toLocaleString()}</span>
                           </div>
                         ))}
                       </div>
@@ -783,23 +810,24 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-xs text-stone-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
                       <span className="font-bold text-stone-900 shrink-0">สถานะ:</span>
-                      <span className="font-black text-red-600">
+                      <span className={`font-black ${currentStatus === 'เช็คบิล' ? 'text-emerald-700' : 'text-red-600'}`}>
                         {currentStatus === 'รับออเดอร์' && 'ร้านได้รับออเดอร์แล้ว กำลังรอเริ่มปรุงอาหาร'}
                         {currentStatus === 'กำลังทำ' && 'เชฟกำลังปรุงอาหารสดใหม่ในครัว'}
                         {(currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง') && (isTable ? 'อาหารเสร็จเรียบร้อย กำลังยกเสิร์ฟที่โต๊ะ' : 'อาหารเสร็จเรียบร้อย ไรเดอร์กำลังนำส่ง')}
                         {currentStatus === 'ส่งแล้ว' && 'จัดส่งเรียบร้อยแล้ว ทานให้อร่อยครับ'}
+                        {currentStatus === 'เช็คบิล' && 'เช็คบิลเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ'}
                       </span>
                     </div>
 
-                    {/* ปุ่มสำหรับสั่งอาหารหรือเครื่องดื่มเพิ่มในออเดอร์เดิม */}
-                    {(currentStatus === 'รับออเดอร์' || currentStatus === 'กำลังทำ') && (
+                    {/* ปุ่มสำหรับสั่งอาหารเพิ่มในออเดอร์เดิม */}
+                    {currentStatus !== 'เช็คบิล' && currentStatus !== 'ยกเลิก' && (
                       <button
                         type="button"
                         onClick={() => setAppendOrderTarget(ord)}
                         className="px-3 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer shrink-0"
                       >
                         <Plus className="w-3.5 h-3.5 stroke-[3]" />
-                        <span>➕ สั่งอาหาร/เครื่องดื่มเพิ่ม</span>
+                        <span>สั่งอาหารเพิ่ม</span>
                       </button>
                     )}
                   </div>
@@ -1701,16 +1729,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                         <Loader2 className="w-5 h-5 animate-spin" />
                         <span>กำลังส่งคำสั่งซื้อ...</span>
                       </span>
-                    ) : diningType === 'มาทานที่ร้าน' ? (
-                      <span>ยืนยันสั่งอาหาร (มาทานที่ร้าน) ({foodSubtotal} บาท)</span>
-                    ) : diningType === 'นัดรับอาหาร' ? (
-                      <span>ยืนยันสั่งอาหาร (นัดรับอาหาร) ({foodSubtotal} บาท)</span>
-                    ) : !gpsLocation ? (
-                      <span>ปักหมุด GPS แล้วสั่งอาหาร ({totalAmount} บาท)</span>
-                    ) : isOutOfDeliveryZone && isOutOfZoneProceed !== 'yes' ? (
+                    ) : diningType === 'ส่งอาหารที่บ้าน' && !gpsLocation ? (
+                      <span>ปักหมุด GPS แล้ว ยืนยัน สั่งอาหาร ({diningType})</span>
+                    ) : diningType === 'ส่งอาหารที่บ้าน' && isOutOfDeliveryZone && isOutOfZoneProceed !== 'yes' ? (
                       <span>นอกเขตบริการ (เลือกเปลี่ยนรูปแบบการรับ)</span>
                     ) : (
-                      <span>ยืนยันสั่งอาหาร ({totalAmount} บาท)</span>
+                      <span>ยืนยัน สั่งอาหาร ({diningType})</span>
                     )}
                   </button>
                 )}

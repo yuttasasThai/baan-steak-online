@@ -20,6 +20,7 @@ import {
   Trash2,
   Volume2,
   VolumeX,
+  Wallet,
   X,
 } from 'lucide-react';
 import { DiningType, MenuItem, Order, OrderStatus, RestaurantTable } from '../types';
@@ -85,6 +86,12 @@ const STATUS_BADGE_STYLES: Record<
     text: 'text-emerald-800',
     border: 'border-emerald-300',
     label: '🟢 ส่งแล้ว',
+  },
+  เช็คบิล: {
+    bg: 'bg-teal-100',
+    text: 'text-teal-900',
+    border: 'border-teal-400',
+    label: '💰 เช็คบิลแล้ว',
   },
   ยกเลิก: {
     bg: 'bg-rose-100',
@@ -186,7 +193,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   const [selectedFilter, setSelectedFilter] = useState<
     'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'ส่งออเดอร์' | 'กำลังส่ง'
   >('ทั้งหมด');
-  const [viewTab, setViewTab] = useState<'active' | 'archived' | 'cancelled'>('active');
+  const [viewTab, setViewTab] = useState<'active' | 'archived' | 'checkedout' | 'cancelled'>('active');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
@@ -297,17 +304,29 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders]);
 
-  // 1. Active Orders: NOT 'ส่งแล้ว' AND NOT 'ยกเลิก' AND NOT isArchived
+  // 1. Active Orders: NOT 'ส่งแล้ว', NOT 'เช็คบิล', NOT 'ยกเลิก' AND NOT isArchived
   const activeOrders = useMemo(() => {
     return normalizedOrders.filter(
-      (o) => o.status !== 'ส่งแล้ว' && o.status !== 'ยกเลิก' && !o.isArchived && !o.isCancelled
+      (o) =>
+        o.status !== 'ส่งแล้ว' &&
+        o.status !== 'เช็คบิล' &&
+        o.status !== 'ยกเลิก' &&
+        !o.isArchived &&
+        !o.isCancelled
     );
   }, [normalizedOrders]);
 
-  // 2. Archived / Completed Orders: status is 'ส่งแล้ว'
+  // 2. Archived / Delivered Orders awaiting checkout: status is 'ส่งแล้ว'
   const archivedOrders = useMemo(() => {
     return normalizedOrders.filter(
       (o) => o.status === 'ส่งแล้ว' && !o.isCancelled
+    );
+  }, [normalizedOrders]);
+
+  // 2.5 Checked-out Orders: status is 'เช็คบิล'
+  const checkedOutOrders = useMemo(() => {
+    return normalizedOrders.filter(
+      (o) => o.status === 'เช็คบิล' && !o.isCancelled
     );
   }, [normalizedOrders]);
 
@@ -333,9 +352,10 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       ส่งออเดอร์: activeOrders.filter((o) => o.status === 'ส่งออเดอร์' || o.status === 'กำลังส่ง').length,
       กำลังส่ง: activeOrders.filter((o) => o.status === 'กำลังส่ง').length,
       ส่งแล้ว: archivedOrders.length,
+      เช็คบิล: checkedOutOrders.length,
       ยกเลิก: cancelledOrders.length,
     };
-  }, [activeOrders, archivedOrders, cancelledOrders]);
+  }, [activeOrders, archivedOrders, checkedOutOrders, cancelledOrders]);
 
   // Handle strictly 1-way status change with voice alert
   const handleNextStatus = async (order: Order, nextStatus: OrderStatus) => {
@@ -344,7 +364,6 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       await updateOrderStatus(order, nextStatus);
 
       // 🔊 เล่นเสียงเตือนพูดระบุสถานะออเดอร์ตามขั้นตอน:
-      // "ออเดอร์ของ (โต๊ะที่.../คุณ... ทานที่ร้าน/กลับบ้าน/ส่งที่บ้าน) + สถานะออเดอร์"
       audioAlert.playOrderStatusAlert(
         {
           customerName: order.customerName,
@@ -356,9 +375,20 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         nextStatus
       );
 
-      if (nextStatus === 'ส่งแล้ว') {
+      if (nextStatus === 'เช็คบิล') {
+        const hasTable = Boolean(order.tableNumber || /โต๊ะ\s*\d+/.test(order.customerName || ''));
         onNotify(
-          `ออเดอร์ #${order.orderNumber} ส่งแล้ว และบันทึกประวัติลูกค้าเรียบร้อย (ย้ายออกจาก Active Orders)`,
+          hasTable
+            ? `💰 เช็คบิลออเดอร์ #${order.orderNumber} เรียบร้อย (อัปเดตโต๊ะเป็น "โต๊ะว่าง" แล้ว)`
+            : `💰 เช็คบิลออเดอร์ #${order.orderNumber} เรียบร้อยแล้ว`,
+          'success'
+        );
+        if (detailOrder?.id === order.id) {
+          setDetailOrder(null);
+        }
+      } else if (nextStatus === 'ส่งแล้ว') {
+        onNotify(
+          `ออเดอร์ #${order.orderNumber} ส่งแล้ว และบันทึกประวัติลูกค้าเรียบร้อย (กด "เช็คบิล" ได้เมื่อชำระเงิน)`,
           'success'
         );
         if (detailOrder?.id === order.id) {
@@ -463,10 +493,23 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                   ? 'bg-emerald-700 text-white shadow-xs'
                   : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
               }`}
-              title="ออเดอร์ที่จัดส่งเสร็จแล้ว เพื่อบันทึกประวัติและนับยอดขาย"
+              title="ออเดอร์ที่จัดส่งแล้ว รอเช็คบิล"
             >
               <Archive className="w-3.5 h-3.5" />
               <span>ส่งแล้ว ({archivedOrders.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewTab('checkedout')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                viewTab === 'checkedout'
+                  ? 'bg-teal-700 text-white shadow-xs'
+                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+              }`}
+              title="ออเดอร์ที่เช็คบิลและคืนสถานะโต๊ะว่างเรียบร้อยแล้ว"
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              <span>เช็คบิลแล้ว ({checkedOutOrders.length})</span>
             </button>
             <button
               type="button"
@@ -774,6 +817,18 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               </button>
                             )}
 
+                            {/* ปุ่ม เช็คบิล (มีเสียงเตือน & คืนสถานะโต๊ะว่างเรียลไทม์) */}
+                            <button
+                              type="button"
+                              onClick={() => handleNextStatus(order, 'เช็คบิล')}
+                              disabled={updatingId === order.id}
+                              className="w-full py-1.5 px-2.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 active:scale-98 disabled:bg-stone-300 text-white text-[11px] font-black rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer"
+                              title="เช็คบิลออเดอร์นี้ แจ้งเตือนด้วยเสียง และอัปเดตสถานะโต๊ะว่างอัตโนมัติ"
+                            >
+                              <Wallet className="w-3.5 h-3.5" />
+                              <span>💰 เช็คบิล</span>
+                            </button>
+
                             {/* ปุ่มคืนสถานะโต๊ะว่าง (สำหรับออเดอร์ทานที่ร้าน) */}
                             {order.deliveryType === 'มาทานที่ร้าน' && order.tableNumber && (
                               <button
@@ -797,18 +852,16 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               <span>พิมพ์ใบเสร็จ</span>
                             </button>
 
-                            {/* ปุ่มเพิ่มรายการอาหารในออเดอร์เดิม (Admin append items) */}
-                            {(order.status === 'รับออเดอร์' || order.status === 'กำลังทำ') && (
-                              <button
-                                type="button"
-                                onClick={() => setOrderToAppend(order)}
-                                className="w-full py-1.5 px-2 bg-gradient-to-r from-stone-800 to-stone-900 hover:bg-black text-amber-300 border border-stone-700 active:scale-98 rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
-                                title="เพิ่มเมนูอาหารหรือเครื่องดื่มลงในออเดอร์นี้"
-                              >
-                                <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
-                                <span>➕ เพิ่มรายการอาหาร</span>
-                              </button>
-                            )}
+                            {/* ปุ่มสั่งอาหารเพิ่มในออเดอร์เดิม (Admin append items) */}
+                            <button
+                              type="button"
+                              onClick={() => setOrderToAppend(order)}
+                              className="w-full py-1.5 px-2 bg-gradient-to-r from-stone-800 to-stone-900 hover:bg-black text-amber-300 border border-stone-700 active:scale-98 rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                              title="เพิ่มเมนูอาหารหรือเครื่องดื่มลงในออเดอร์นี้"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
+                              <span>สั่งอาหารเพิ่ม</span>
+                            </button>
 
                             {/* Link ดูรายละเอียด และ ลบออเดอร์ */}
                             <div className="flex items-center justify-between pt-1 border-t border-stone-200/60">
@@ -913,6 +966,138 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         <td className="py-3 px-3 text-center">
                           <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
                             🟢 ส่งแล้ว
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleNextStatus(order, 'เช็คบิล')}
+                              disabled={updatingId === order.id}
+                              className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[11px] font-black flex items-center gap-1 cursor-pointer transition shadow-2xs"
+                              title="เช็คบิลและคืนสถานะโต๊ะว่างอัตโนมัติ"
+                            >
+                              <Wallet className="w-3 h-3" />
+                              <span>เช็คบิล</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOrderToAppend(order)}
+                              className="px-2 py-1 bg-stone-900 hover:bg-black text-amber-300 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                              title="สั่งอาหารเพิ่มในออเดอร์นี้"
+                            >
+                              <Plus className="w-3 h-3 text-amber-400" />
+                              <span>สั่งอาหารเพิ่ม</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptOrder(order)}
+                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition"
+                              title="พิมพ์ใบเสร็จออเดอร์นี้"
+                            >
+                              <Printer className="w-3 h-3 text-amber-700" />
+                              <span>พิมพ์ใบเสร็จ</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDetailOrder(order)}
+                              className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
+                            >
+                              ดูข้อมูล
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOrderToDelete(order)}
+                              className="p-1 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                              title="ลบออเดอร์นี้ออกจากระบบถาวร"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )
+      )}
+
+      {/* 5.5 CHECKED-OUT ORDERS VIEW (ตารางเช็คบิลแล้ว) */}
+      {viewTab === 'checkedout' && (
+        checkedOutOrders.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2">
+            <Wallet className="w-10 h-10 mx-auto text-stone-300" />
+            <div className="text-sm font-bold text-stone-700">ยังไม่มีออเดอร์ที่เช็คบิลแล้ว</div>
+            <p className="text-xs text-stone-400">
+              เมื่อกดปุ่ม "💰 เช็คบิล" ออเดอร์จะย้ายมาอยู่ที่นี่ พร้อมคืนสถานะโต๊ะเป็นโต๊ะว่างอัตโนมัติ
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="bg-teal-50 border border-teal-200 p-3 rounded-xl text-xs text-teal-900 flex items-center gap-2 font-medium">
+              <Wallet className="w-4 h-4 text-teal-700 shrink-0" />
+              <span>
+                ออเดอร์ที่เช็คบิลแล้วทั้งหมด <strong>{checkedOutOrders.length}</strong> รายการ (นับยอดขายรวมในระบบวิเคราะห์ยอดขายเรียบร้อย)
+              </span>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse min-w-[880px]">
+                  <thead>
+                    <tr className="bg-stone-50 border-b border-stone-200 text-stone-700 font-extrabold text-[11px] uppercase">
+                      <th className="py-3 px-3 w-10 text-center">#</th>
+                      <th className="py-3 px-3 min-w-[110px]">เลขออเดอร์</th>
+                      <th className="py-3 px-3 min-w-[95px]">วันที่</th>
+                      <th className="py-3 px-3 min-w-[80px]">เวลา</th>
+                      <th className="py-3 px-3 min-w-[120px]">ลูกค้า</th>
+                      <th className="py-3 px-3 min-w-[120px]">เบอร์โทร</th>
+                      <th className="py-3 px-3 min-w-[200px]">รายการออเดอร์</th>
+                      <th className="py-3 px-3 min-w-[145px] text-center bg-amber-50/70 border-x border-amber-200 text-amber-950 font-black">
+                        มาเอง,นำส่ง,นัดรับ
+                      </th>
+                      <th className="py-3 px-3 min-w-[100px] text-right">ยอดรวม</th>
+                      <th className="py-3 px-3 min-w-[110px] text-center">สถานะ</th>
+                      <th className="py-3 px-3 w-28 text-center">รายละเอียด</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {checkedOutOrders.map((order, idx) => {
+                      const isPickup = order.deliveryType === 'นัดรับอาหาร';
+                      return (
+                      <tr key={order.id} className={`hover:bg-stone-50/80 transition ${isPickup ? 'bg-amber-50/50' : ''}`}>
+                        <td className="py-3 px-3 text-center text-stone-400 font-bold">{idx + 1}</td>
+                        <td className="py-3 px-3 font-black text-stone-800">#{order.orderNumber}</td>
+                        <td className="py-3 px-3 text-stone-700 font-bold">{formatOrderDate(order.createdAt)}</td>
+                        <td className="py-3 px-3 text-stone-600">{formatOrderTime(order.createdAt)}</td>
+                        <td className="py-3 px-3 font-extrabold text-stone-900">{order.customerName}</td>
+                        <td className="py-3 px-3">
+                          <a href={`tel:${order.customerPhone}`} className="text-stone-800 font-bold hover:underline">
+                            {order.customerPhone}
+                          </a>
+                        </td>
+                        <td className="py-3 px-3 text-stone-700 max-w-[220px]">
+                          <div className="space-y-0.5">
+                            {order.items.map((it, i) => (
+                              <div key={i} className="text-xs text-stone-800 truncate" title={`${it.name} ×${it.quantity}`}>
+                                • {it.name} <strong className="text-red-600">×{it.quantity}</strong>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                        <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
+                          {renderDeliveryTypeBadge(order.deliveryType, order.tableNumber)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-black text-teal-700 tabular-nums">
+                          {order.totalAmount.toLocaleString()} บ.
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-teal-900 border border-teal-400">
+                            💰 เช็คบิลแล้ว
                           </span>
                         </td>
                         <td className="py-3 px-3 text-center">
@@ -1321,46 +1506,76 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
 
             {/* Action buttons inside detail modal */}
             <div className="space-y-2 pt-1">
-              {detailOrder.status !== 'ส่งแล้ว' && detailOrder.status !== 'ยกเลิก' && !detailOrder.isCancelled && (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOrderToCancel(detailOrder);
-                      setCancelReasonInput('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
-                    }}
-                    className="py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Ban className="w-3.5 h-3.5" />
-                    <span>ยกเลิกออเดอร์</span>
-                  </button>
-
-                  {NEXT_ORDER_STATUS_MAP[detailOrder.status] && (
+              {detailOrder.status !== 'เช็คบิล' && detailOrder.status !== 'ยกเลิก' && !detailOrder.isCancelled && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => handleNextStatus(detailOrder, NEXT_ORDER_STATUS_MAP[detailOrder.status]!)}
-                      disabled={updatingId === detailOrder.id}
-                      className={`py-2.5 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
-                        detailOrder.status === 'รับออเดอร์'
-                          ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 font-extrabold ring-2 ring-emerald-300'
-                          : 'bg-red-600 hover:bg-red-700'
-                      }`}
+                      onClick={() => {
+                        setOrderToCancel(detailOrder);
+                        setCancelReasonInput('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
+                      }}
+                      className="py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      {updatingId === detailOrder.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : detailOrder.status === 'รับออเดอร์' ? (
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      )}
-                      <span>
-                        {detailOrder.status === 'รับออเดอร์'
-                          ? '✅ กดรับออเดอร์ (เริ่มทำ)'
-                          : `เป็น ${NEXT_ORDER_STATUS_MAP[detailOrder.status]}`}
-                      </span>
+                      <Ban className="w-3.5 h-3.5" />
+                      <span>ยกเลิกออเดอร์</span>
                     </button>
-                  )}
-                </div>
+
+                    {NEXT_ORDER_STATUS_MAP[detailOrder.status] && (
+                      <button
+                        type="button"
+                        onClick={() => handleNextStatus(detailOrder, NEXT_ORDER_STATUS_MAP[detailOrder.status]!)}
+                        disabled={updatingId === detailOrder.id}
+                        className={`py-2.5 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                          detailOrder.status === 'รับออเดอร์'
+                            ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 font-extrabold ring-2 ring-emerald-300'
+                            : detailOrder.status === 'ส่งแล้ว'
+                            ? 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 font-extrabold'
+                            : 'bg-red-600 hover:bg-red-700'
+                        }`}
+                      >
+                        {updatingId === detailOrder.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : detailOrder.status === 'รับออเดอร์' ? (
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        ) : detailOrder.status === 'ส่งแล้ว' ? (
+                          <Wallet className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {detailOrder.status === 'รับออเดอร์'
+                            ? '✅ กดรับออเดอร์ (เริ่มทำ)'
+                            : detailOrder.status === 'ส่งแล้ว'
+                            ? '💰 เช็คบิล'
+                            : `เป็น ${NEXT_ORDER_STATUS_MAP[detailOrder.status]}`}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* ปุ่มสั่งอาหารเพิ่ม & เช็คบิลทันที */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOrderToAppend(detailOrder)}
+                      className="py-2.5 bg-stone-900 hover:bg-black text-amber-300 font-black rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
+                      <span>สั่งอาหารเพิ่ม</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleNextStatus(detailOrder, 'เช็คบิล')}
+                      disabled={updatingId === detailOrder.id}
+                      className="py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-black rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Wallet className="w-3.5 h-3.5" />
+                      <span>💰 เช็คบิล (ปิดโต๊ะ)</span>
+                    </button>
+                  </div>
+                </>
               )}
 
               {/* ปุ่มพิมพ์ใบเสร็จ */}

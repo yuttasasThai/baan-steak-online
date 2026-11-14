@@ -35,6 +35,7 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
 
   const [name, setName] = useState(initialData?.name || '');
   const [price, setPrice] = useState(initialData ? String(initialData.price) : '');
+  const [cost, setCost] = useState(initialData && initialData.cost !== undefined ? String(initialData.cost) : '0');
   const [category, setCategory] = useState(initialData?.category || (categories[0]?.name || 'สเต็ก'));
   const [imageUrl, setImageUrl] = useState(initialData?.imageUrl || '');
   const [description, setDescription] = useState(initialData?.description || '');
@@ -57,6 +58,7 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
     if (isOpen) {
       setName(initialData?.name || '');
       setPrice(initialData ? String(initialData.price) : '');
+      setCost(initialData && initialData.cost !== undefined ? String(initialData.cost) : '0');
       setCategory(initialData?.category || (categories[0]?.name || 'สเต็ก'));
       setImageUrl(initialData?.imageUrl || '');
       setDescription(initialData?.description || '');
@@ -138,9 +140,11 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
       }
 
       setSubmitStatus('กำลังบันทึกข้อมูลลง Firestore...');
+      const numCost = Math.max(0, Number(cost) || 0);
       await onSubmit({
         name: name.trim(),
         price: numPrice,
+        cost: numCost,
         category: category.trim(),
         imageUrl: finalImageUrl,
         description: description.trim(),
@@ -319,11 +323,11 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
               />
             </div>
 
-            {/* Price and Category */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Price, Cost and Category */}
+            <div className="grid grid-cols-3 gap-2.5">
               <div>
                 <label className="block font-bold text-stone-700 mb-1">
-                  ราคา (บาท) <span className="text-red-500">*</span>
+                  ราคาขาย (บาท) <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="number"
@@ -332,7 +336,22 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   placeholder="69"
-                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-red-600 focus:outline-none focus:border-red-500"
+                  className="w-full px-3 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-red-600 focus:outline-none focus:border-red-500 tabular-nums"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-stone-700 mb-1">
+                  ต้นทุน/จาน (บาท)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={cost}
+                  onChange={(e) => setCost(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-stone-800 focus:outline-none focus:border-red-500 tabular-nums"
                 />
               </div>
 
@@ -341,7 +360,7 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-medium focus:outline-none focus:border-red-500"
+                  className="w-full px-2.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-medium focus:outline-none focus:border-red-500"
                 >
                   {categories.map((c) => (
                     <option key={c.id} value={c.name}>

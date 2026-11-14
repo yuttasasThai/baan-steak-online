@@ -18,19 +18,22 @@ import {
   MapPin,
   Minimize2,
   Phone,
+  Plus,
   Printer,
   Store,
   Truck,
   Utensils,
   Volume2,
   VolumeX,
+  Wallet,
   X,
 } from 'lucide-react';
-import { DiningType, Order, OrderStatus } from '../types';
+import { DiningType, MenuItem, Order, OrderStatus } from '../types';
 import { formatOrderTime, renderDeliveryTypeBadge } from './AdminOrdersManager';
 import { NEXT_ORDER_STATUS_MAP, normalizeOrderStatus } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
 import { OrderReceiptModal } from './OrderReceiptModal';
+import { AdminAppendItemModal } from './AdminAppendItemModal';
 
 export interface IncomingOrderModalProps {
   isOpen: boolean;
@@ -38,10 +41,12 @@ export interface IncomingOrderModalProps {
   orders?: Order[];
   /** สำหรับรองรับโค้ดเดิมที่ส่งมาเฉพาะ pendingOrders */
   pendingOrders?: Order[];
+  menus?: MenuItem[];
   onAcceptOrder?: (order: Order) => Promise<void>;
   onUpdateStatus?: (order: Order, newStatus: OrderStatus) => Promise<void>;
   onAcceptAllOrders?: () => Promise<void>;
   onCancelOrder: (order: Order, reason?: string) => Promise<void>;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info') => void;
   onClose: () => void;
   isSoundEnabled: boolean;
   onToggleSound: () => void;
@@ -53,10 +58,12 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   isOpen,
   orders,
   pendingOrders,
+  menus = [],
   onAcceptOrder,
   onUpdateStatus,
   onAcceptAllOrders,
   onCancelOrder,
+  onNotify,
   onClose,
   isSoundEnabled,
   onToggleSound,
@@ -65,7 +72,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   const allOrdersList = useMemo(() => {
     const raw = (orders && orders.length > 0) ? orders : (pendingOrders || []);
     return raw
-      .filter((o) => !o.isCancelled && !o.isArchived && o.status !== 'ยกเลิก' && o.status !== 'ส่งแล้ว')
+      .filter((o) => !o.isCancelled && !o.isArchived && o.status !== 'ยกเลิก' && o.status !== 'ส่งแล้ว' && o.status !== 'เช็คบิล')
       .map((o) => ({
         ...o,
         status: normalizeOrderStatus(o.status),
@@ -81,6 +88,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
   const [cancelReason, setCancelReason] = useState('วัตถุดิบหมด / ร้านไม่สะดวกรับ');
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
+  const [orderToAppend, setOrderToAppend] = useState<Order | null>(null);
 
   // รายการที่กรองตามแท็บ
   const filteredOrders = useMemo(() => {
@@ -494,13 +502,25 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                       </div>
 
                       {/* Card Bottom Actions: 1-Click Status Advancement */}
-                      <div className="flex items-center justify-between gap-2 pt-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div className="text-xs">
                           <span className="text-stone-500">ยอดรวม: </span>
-                          <span className="text-base font-black text-red-600">฿{ord.totalAmount.toLocaleString()}</span>
+                          <span className="text-base font-black text-red-600 tabular-nums">฿{ord.totalAmount.toLocaleString()}</span>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {menus.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setOrderToAppend(ord)}
+                              className="px-2.5 py-2 bg-stone-900 hover:bg-black text-amber-300 rounded-xl text-xs font-black transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                              title="สั่งอาหารเพิ่มในออเดอร์นี้"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
+                              <span>สั่งอาหารเพิ่ม</span>
+                            </button>
+                          )}
+
                           {/* ปุ่มพิมพ์บิล */}
                           <button
                             type="button"
@@ -527,10 +547,10 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                               type="button"
                               onClick={() => handleAdvanceStatus(ord, 'กำลังทำ')}
                               disabled={isBusy}
-                              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-emerald-200"
+                              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-emerald-200"
                             >
                               {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                              <span>👉 รับออเดอร์ (เริ่มทำอาหาร)</span>
+                              <span>👉 รับออเดอร์</span>
                             </button>
                           )}
 
@@ -539,10 +559,10 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                               type="button"
                               onClick={() => handleAdvanceStatus(ord, 'ส่งออเดอร์')}
                               disabled={isBusy}
-                              className="px-4 py-2 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-orange-200"
+                              className="px-3.5 py-2 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-orange-200"
                             >
                               {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Truck className="w-3.5 h-3.5" />}
-                              <span>🚚 ส่งออเดอร์ (พร้อมเสิร์ฟ/ออกส่ง)</span>
+                              <span>🚚 ส่งออเดอร์</span>
                             </button>
                           )}
 
@@ -551,12 +571,23 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                               type="button"
                               onClick={() => handleAdvanceStatus(ord, 'ส่งแล้ว')}
                               disabled={isBusy}
-                              className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-emerald-200"
+                              className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1.5 cursor-pointer ring-2 ring-emerald-200"
                             >
                               {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                              <span>✅ ส่งแล้ว (เสร็จสิ้น)</span>
+                              <span>✅ ส่งแล้ว</span>
                             </button>
                           )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleAdvanceStatus(ord, 'เช็คบิล')}
+                            disabled={isBusy}
+                            className="px-3 py-2 bg-teal-600 hover:bg-teal-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1 cursor-pointer"
+                            title="เช็คบิลออเดอร์นี้และคืนสถานะโต๊ะว่าง"
+                          >
+                            <Wallet className="w-3.5 h-3.5" />
+                            <span>💰 เช็คบิล</span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -796,6 +827,27 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
 
             <button
               type="button"
+              onClick={() => handleAdvanceStatus(activeOrder, 'เช็คบิล')}
+              disabled={processingOrderId === activeOrder.id}
+              className="py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-2xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>💰 เช็คบิล</span>
+            </button>
+
+            {menus.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setOrderToAppend(activeOrder)}
+                className="py-3 px-4 bg-stone-900 hover:bg-black text-amber-300 rounded-2xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Plus className="w-4 h-4 text-amber-400 stroke-[3]" />
+                <span>สั่งอาหารเพิ่ม</span>
+              </button>
+            )}
+
+            <button
+              type="button"
               onClick={() => setReceiptOrder(activeOrder)}
               className="py-3 px-4 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
               title="พิมพ์ใบเสร็จออเดอร์นี้"
@@ -822,6 +874,15 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
         order={receiptOrder}
         isOpen={Boolean(receiptOrder)}
         onClose={() => setReceiptOrder(null)}
+      />
+
+      {/* Append Extra Items Modal */}
+      <AdminAppendItemModal
+        isOpen={Boolean(orderToAppend)}
+        onClose={() => setOrderToAppend(null)}
+        order={orderToAppend}
+        menus={menus}
+        onNotify={(msg, type) => onNotify?.(msg, type)}
       />
     </div>
   );
