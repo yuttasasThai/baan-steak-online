@@ -98,7 +98,21 @@ export function formatOrderStatusSpeech(
   else if (statusText === 'กำลังทำ') statusPhrase = 'กำลังทำ';
   else if (statusText === 'ส่งออเดอร์' || statusText === 'กำลังส่ง') statusPhrase = 'ส่งออเดอร์';
   else if (statusText === 'ส่งแล้ว' || statusText === 'สำเร็จ') statusPhrase = 'ส่งเรียบร้อยแล้ว';
+  else if (statusText === 'เช็คบิล') statusPhrase = 'เช็คบิลแล้ว';
   else if (statusText === 'ยกเลิก') statusPhrase = 'ยกเลิกแล้ว';
+
+  if (statusText === 'เช็คบิล') {
+    if (tableNum && hasName) {
+      return `โต๊ะที่ ${tableNum} คุณ${cleanName} เช็คบิลแล้ว`;
+    } else if (tableNum) {
+      return `โต๊ะที่ ${tableNum} เช็คบิลแล้ว`;
+    } else if (hasName) {
+      return `คุณ${cleanName} เช็คบิลแล้ว`;
+    } else if (isTakeaway) {
+      return 'ลูกค้าสั่งกลับบ้าน เช็คบิลแล้ว';
+    }
+    return 'เช็คบิลแล้ว';
+  }
 
   let result = `ออเดอร์ของ ${targetDesc} ${statusPhrase}`;
 
@@ -116,6 +130,34 @@ export function formatOrderStatusSpeech(
   }
 
   return result;
+}
+
+export function getTableAvailableSpeechOnCheckout(order?: OrderSpeechTarget): string | null {
+  if (!order) return null;
+
+  let tableNum = '';
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
+    tableNum = String(order.tableNumber).replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+  }
+  if (!tableNum && order.customerName) {
+    const match = order.customerName.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
+    if (match) tableNum = match[1];
+  }
+
+  const isDineInOrTakeaway =
+    order.deliveryType === 'มาทานที่ร้าน' ||
+    order.deliveryType === 'สั่งกลับบ้าน' ||
+    Boolean(tableNum);
+
+  if (!isDineInOrTakeaway) return null;
+
+  if (tableNum) {
+    return `โต๊ะที่ ${tableNum} ว่างแล้ว`;
+  }
+  if (order.deliveryType === 'มาทานที่ร้าน') {
+    return 'โต๊ะว่างแล้ว';
+  }
+  return null;
 }
 
 class AudioAlertService {
@@ -470,10 +512,15 @@ class AudioAlertService {
     this.playChime();
 
     const speechText = formatOrderStatusSpeech(order, status);
-    this.sendBackgroundNotification(speechText);
+    const tableFreeSpeech = status === 'เช็คบิล' ? getTableAvailableSpeechOnCheckout(order) : null;
+    const notifBody = tableFreeSpeech ? `${speechText} (${tableFreeSpeech})` : speechText;
+    this.sendBackgroundNotification(notifBody);
 
     setTimeout(() => {
       this.speakText(speechText);
+      if (tableFreeSpeech) {
+        this.speakText(tableFreeSpeech);
+      }
     }, 280);
   }
 
