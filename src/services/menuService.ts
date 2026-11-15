@@ -37,6 +37,8 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   webhookUrl: '',
   lineNotifyToken: '',
   lineNotifySendOnCreate: true,
+  recommendedMenuMode: 'auto',
+  recommendedMenuIds: [],
 };
 
 export const SHOP_INFO = {
@@ -129,9 +131,16 @@ export function subscribeShopSettings(
               : '/IMG_20261007_161813.jpg',
           hideAdminButtonInCustomerView: Boolean(data.hideAdminButtonInCustomerView),
           lineNotifyEnabled: Boolean(data.lineNotifyEnabled),
+          notificationProvider: data.notificationProvider || DEFAULT_SHOP_SETTINGS.notificationProvider,
+          lineChannelAccessToken: typeof data.lineChannelAccessToken === 'string' ? data.lineChannelAccessToken : '',
+          lineDestinationId: typeof data.lineDestinationId === 'string' ? data.lineDestinationId : '',
           lineNotifyToken: typeof data.lineNotifyToken === 'string' ? data.lineNotifyToken : '',
           webhookUrl: typeof data.webhookUrl === 'string' ? data.webhookUrl : '',
           lineNotifySendOnCreate: data.lineNotifySendOnCreate !== false,
+          recommendedMenuMode: data.recommendedMenuMode === 'manual' ? 'manual' : 'auto',
+          recommendedMenuIds: Array.isArray(data.recommendedMenuIds)
+            ? data.recommendedMenuIds.filter((id: unknown): id is string => typeof id === 'string')
+            : [],
         });
       } else {
         onUpdate(DEFAULT_SHOP_SETTINGS);
