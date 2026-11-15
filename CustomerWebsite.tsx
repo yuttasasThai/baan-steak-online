@@ -1,0 +1,2319 @@
+import React, { useState } from 'react';
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Compass,
+  ExternalLink,
+  Flame,
+  Gift,
+  Loader2,
+  Lock,
+  MapPin,
+  MessageCircle,
+  Minus,
+  Navigation,
+  PhoneCall,
+  Plus,
+  RefreshCw,
+  ShoppingBag,
+  Sparkles,
+  Store,
+  Truck,
+  Utensils,
+  X,
+} from 'lucide-react';
+import { CartItem, CategoryItem, DiningType, MenuItem, Order, RestaurantTable, ShopSettings } from '../types';
+import {
+  calculateDeliveryFeeByDistance,
+  calculateDistanceKm,
+  createOrder,
+  getCustomerRewardsByPhone,
+  isDrinkCategory,
+  normalizeMenuImageUrl,
+  SHOP_INFO,
+  sortCategories,
+  sortMenus,
+} from '../services/menuService';
+import heroImage from '../assets/IMG_20261007_161813.jpg';
+import { audioAlert } from '../utils/audioAlert';
+import { DeliveryMapPicker } from './DeliveryMapPicker';
+import { CustomerAppendOrderModal } from './CustomerAppendOrderModal';
+import { CURRENT_REVISION } from '../revisionInfo';
+
+interface CustomerWebsiteProps {
+  menus: MenuItem[];
+  categories: CategoryItem[];
+  settings?: ShopSettings;
+  tables?: RestaurantTable[];
+  orders?: Order[];
+  onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
+  onOpenAdminLogin: () => void;
+  isAdmin?: boolean;
+  onToggleShopOpen?: () => Promise<void> | void;
+}
+
+export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
+  menus,
+  categories,
+  settings,
+  tables = [],
+  orders = [],
+  onNotify,
+  onOpenAdminLogin,
+  isAdmin = false,
+  onToggleShopOpen,
+}) => {
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('ทั้งหมด');
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+
+  // Customer order form state
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [diningType, setDiningType] = useState<DiningType>('ส่งอาหารที่บ้าน');
+  const [address, setAddress] = useState('');
+  const [gpsLocation, setGpsLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [isOutOfZoneProceed, setIsOutOfZoneProceed] = useState<'yes' | 'no' | null>(null);
+  const [manualGpsInput, setManualGpsInput] = useState('');
+  const [showManualGps, setShowManualGps] = useState(false);
+
+  // Order submission states
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [completedOrderNumber, setCompletedOrderNumber] = useState<string | null>(null);
+  const [completedOrderRewards, setCompletedOrderRewards] = useState<string[]>([]);
+  const [completedOrderIsOutOfZone, setCompletedOrderIsOutOfZone] = useState<boolean>(false);
+  const [completedOrderDiningType, setCompletedOrderDiningType] = useState<DiningType>('ส่งอาหารที่บ้าน');
+
+  // Customer Live Real-time Order Tracking state
+  const [trackingSearchQuery, setTrackingSearchQuery] = useState('');
+  const [showManualTracker, setShowManualTracker] = useState(false);
+  const [appendOrderTarget, setAppendOrderTarget] = useState<Order | null>(null);
+
+  // Active tracked orders for customer: เฉพาะออเดอร์ของเครื่องนี้เท่านั้น ไม่แสดงของคนอื่น
+  const customerTrackedOrders = React.useMemo(() => {
+    if (!orders || orders.length === 0) return [];
+
+    let storedNumbers: string[] = [];
+    if (completedOrderNumber) {
+      storedNumbers.push(completedOrderNumber);
+    }
+    try {
+      const saved = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+      if (Array.isArray(saved)) {
+        storedNumbers = Array.from(new Set([...storedNumbers, ...saved]));
+      }
+    } catch {
+      // ignore
+    }
+
+    const trimmedQuery = trackingSearchQuery.trim().toLowerCase();
+
+    return orders
+      .filter((o) => {
+        // หากลูกค้ากรอกค้นหาเองด้วยเลขออเดอร์หรือเบอร์โทร
+        if (trimmedQuery) {
+          const matchNum = o.orderNumber.toLowerCase().includes(trimmedQuery);
+          const matchPhone = o.customerPhone && o.customerPhone.replace(/[^0-9]/g, '').includes(trimmedQuery);
+          return matchNum || matchPhone;
+        }
+
+        // แสดงเฉพาะออเดอร์ที่สั่งจากเครื่องนี้เท่านั้น (บันทึกใน localStorage ของเครื่องนี้)
+        if (storedNumbers.includes(o.orderNumber)) {
+          return true;
+        }
+
+        return false;
+      })
+      .filter((o) => !o.isCancelled && o.status !== 'ยกเลิก')
+      .slice(0, 3);
+  }, [orders, completedOrderNumber, trackingSearchQuery]);
+
+  const handleClearMyTrackedOrders = () => {
+    try {
+      localStorage.removeItem('baan_steak_my_order_numbers');
+    } catch {
+      // ignore
+    }
+    setCompletedOrderNumber(null);
+    setTrackingSearchQuery('');
+    onNotify('ลบประวัติการติดตามออเดอร์บนอุปกรณ์นี้เรียบร้อย', 'info');
+  };
+
+  // Cover Image: Uses real-time settings from Firestore if updated, otherwise defaults to latest sent heroImage
+  const activeHeroImage =
+    settings?.heroBannerUrl &&
+    !settings.heroBannerUrl.includes('file_00000000322c8230a99655a0452e2494')
+      ? settings.heroBannerUrl
+      : heroImage;
+
+  React.useEffect(() => {
+    try {
+      localStorage.removeItem('baan_steak_custom_hero');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Table number from URL query (e.g. ?table=1)
+  const [urlTableNumber, setUrlTableNumber] = useState<string | null>(null);
+  const [selectedTableNumber, setSelectedTableNumber] = useState<number | null>(null);
+
+  // Parse URL query parameters (?table=, ?type=, ?category=)
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tableParam = params.get('table');
+      const typeParam = params.get('type') || params.get('deliveryType');
+      const catParam = params.get('category') || params.get('cat');
+
+      if (tableParam) {
+        setUrlTableNumber(tableParam);
+        setSelectedTableNumber(Number(tableParam));
+        setDiningType('มาทานที่ร้าน');
+        setCustomerName(`โต๊ะ ${tableParam}`);
+        setAddress(`ทานที่ร้าน โต๊ะ ${tableParam}`);
+        // หมายเหตุ: ไม่ล็อคสถานะโต๊ะเป็น "เต็ม" ทันทีตอนเปิดลิงก์ เพื่อป้องกันโต๊ะค้างเต็มเมื่อลูกค้ายังไม่ส่งออเดอร์
+        // ระบบจะเปลี่ยนโต๊ะเป็น "ไม่ว่าง" อัตโนมัติเมื่อลูกค้ากดส่งออเดอร์สำเร็จจริงใน createOrder()
+      } else if (typeParam) {
+        if (typeParam === 'pickup' || typeParam === 'takeaway') {
+          setDiningType('นัดรับอาหาร');
+        } else if (typeParam === 'delivery') {
+          setDiningType('ส่งอาหารที่บ้าน');
+        } else if (typeParam === 'dinein' || typeParam === 'table') {
+          setDiningType('มาทานที่ร้าน');
+        }
+      }
+
+      if (catParam) {
+        setSelectedCategory(decodeURIComponent(catParam));
+      }
+    } catch {
+      // ignore non-fatal parameter error
+    }
+  }, []);
+
+  // Real-time synchronization of items in cart with Firestore menus
+  React.useEffect(() => {
+    if (cart.length === 0 || menus.length === 0) return;
+    setCart((prevCart) => {
+      let hasChanged = false;
+      const updated = prevCart.map((cartItem) => {
+        const latestMenu = menus.find((m) => m.id === cartItem.menuItem.id);
+        if (latestMenu) {
+          if (
+            latestMenu.price !== cartItem.menuItem.price ||
+            latestMenu.name !== cartItem.menuItem.name ||
+            latestMenu.isAvailable !== cartItem.menuItem.isAvailable
+          ) {
+            hasChanged = true;
+            return {
+              ...cartItem,
+              menuItem: latestMenu,
+            };
+          }
+        }
+        return cartItem;
+      });
+      return hasChanged ? updated : prevCart;
+    });
+  }, [menus]);
+
+  // Customer loyalty rewards earned (e.g. Free Coke or Free Dish)
+  const [customerRewardsNotice, setCustomerRewardsNotice] = useState<string[]>([]);
+
+  React.useEffect(() => {
+    const rawClean = customerPhone.replace(/[^0-9]/g, '');
+    if (rawClean.length >= 9) {
+      getCustomerRewardsByPhone(rawClean).then((res) => {
+        setCustomerRewardsNotice(res.allRewardsSummary);
+      });
+    } else {
+      setCustomerRewardsNotice([]);
+    }
+  }, [customerPhone]);
+
+  // Sort menus: food items strictly cheapest -> most expensive, drinks always at bottom
+  const sortedCategories = sortCategories(categories);
+  const sortedMenus = sortMenus(menus, sortedCategories);
+  const visibleMenus = sortedMenus.filter((m) => m.isPublished);
+  const filteredMenus =
+    selectedCategory === 'ทั้งหมด'
+      ? visibleMenus
+      : visibleMenus.filter((m) => m.category === selectedCategory);
+
+  // Weekly Recommendation Mini Slider: สลับป้าย "เมนูขายดี" และ "เมนูใหม่ล่าสุด" จากข้อมูลออเดอร์และเมนูจริง
+  const sliderTrackRef = React.useRef<HTMLDivElement | null>(null);
+  const [sliderActiveIdx, setSliderActiveIdx] = useState(0);
+  const [isSliderPaused, setIsSliderPaused] = useState(false);
+
+  const weeklyRecommendations = React.useMemo(() => {
+    if (visibleMenus.length === 0) return [];
+
+    const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const validOrders = orders.filter((o) => !o.isCancelled && o.status !== 'ยกเลิก');
+    const recentOrders = validOrders.filter((o) => {
+      const t = o.createdAt ? new Date(o.createdAt).getTime() : 0;
+      return !isNaN(t) && t >= sevenDaysAgoMs;
+    });
+    const sourceOrders = recentOrders.length > 0 ? recentOrders : validOrders;
+
+    const qtyByMenuId: Record<string, number> = {};
+    const qtyByName: Record<string, number> = {};
+    for (const ord of sourceOrders) {
+      if (!Array.isArray(ord.items)) continue;
+      for (const it of ord.items) {
+        const q = Number(it.quantity) || 1;
+        if (it.menuId) qtyByMenuId[it.menuId] = (qtyByMenuId[it.menuId] || 0) + q;
+        if (it.name) qtyByName[it.name] = (qtyByName[it.name] || 0) + q;
+      }
+    }
+
+    const getSoldCount = (m: MenuItem) => (qtyByMenuId[m.id] || 0) + (qtyByName[m.name] || 0);
+
+    // Shop-managed manual recommendations (ร้านค้าเลือกเพิ่ม/ลบเอง)
+    if (settings?.recommendedMenuMode === 'manual') {
+      const byId = new Map(visibleMenus.map((m) => [m.id, m]));
+      const manualIds = Array.isArray(settings.recommendedMenuIds) ? settings.recommendedMenuIds : [];
+      const seen = new Set<string>();
+      const manualList: Array<{
+        item: MenuItem;
+        badgeType: 'bestseller' | 'new';
+        badgeLabel: string;
+        soldCount: number;
+      }> = [];
+
+      manualIds.forEach((id) => {
+        if (seen.has(id)) return;
+        const found = byId.get(id);
+        if (!found) return;
+        seen.add(id);
+        const soldCount = getSoldCount(found);
+        const useBestBadge = soldCount > 0 && manualList.length % 2 === 0;
+        manualList.push({
+          item: found,
+          badgeType: useBestBadge ? 'bestseller' : 'new',
+          badgeLabel: useBestBadge ? 'เมนูขายดี' : 'เมนูแนะนำร้าน',
+          soldCount,
+        });
+      });
+
+      return manualList;
+    }
+
+    const published = visibleMenus.filter((m) => m.isAvailable);
+    if (published.length === 0) return [];
+
+    const bestSellers = [...published]
+      .filter((m) => getSoldCount(m) > 0)
+      .sort((a, b) => getSoldCount(b) - getSoldCount(a));
+
+    const newestMenus = [...published].sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tB !== tA) return tB - tA;
+      return b.id.localeCompare(a.id);
+    });
+
+    const result: Array<{
+      item: MenuItem;
+      badgeType: 'bestseller' | 'new';
+      badgeLabel: string;
+      soldCount: number;
+    }> = [];
+    const seenIds = new Set<string>();
+
+    const maxSlots = Math.min(6, published.length);
+    let bIdx = 0;
+    let nIdx = 0;
+    let turn: 'bestseller' | 'new' = bestSellers.length > 0 ? 'bestseller' : 'new';
+
+    for (let safety = 0; safety < published.length * 3 && result.length < maxSlots; safety++) {
+      if (turn === 'bestseller') {
+        while (bIdx < bestSellers.length && seenIds.has(bestSellers[bIdx].id)) bIdx++;
+        if (bIdx < bestSellers.length) {
+          const item = bestSellers[bIdx++];
+          seenIds.add(item.id);
+          result.push({
+            item,
+            badgeType: 'bestseller',
+            badgeLabel: 'เมนูขายดี',
+            soldCount: getSoldCount(item),
+          });
+        }
+        turn = 'new';
+      } else {
+        while (nIdx < newestMenus.length && seenIds.has(newestMenus[nIdx].id)) nIdx++;
+        if (nIdx < newestMenus.length) {
+          const item = newestMenus[nIdx++];
+          seenIds.add(item.id);
+          result.push({
+            item,
+            badgeType: 'new',
+            badgeLabel: 'เมนูใหม่ล่าสุด',
+            soldCount: getSoldCount(item),
+          });
+        }
+        turn = bestSellers.length > 0 ? 'bestseller' : 'new';
+      }
+    }
+
+    return result;
+  }, [visibleMenus, orders, settings?.recommendedMenuMode, settings?.recommendedMenuIds]);
+
+  React.useEffect(() => {
+    if (sliderActiveIdx >= weeklyRecommendations.length && weeklyRecommendations.length > 0) {
+      setSliderActiveIdx(0);
+    }
+  }, [sliderActiveIdx, weeklyRecommendations.length]);
+
+  const scrollSliderToIndex = React.useCallback(
+    (nextIdx: number) => {
+      if (!sliderTrackRef.current || weeklyRecommendations.length === 0) return;
+      const wrapped = (nextIdx + weeklyRecommendations.length) % weeklyRecommendations.length;
+      const container = sliderTrackRef.current;
+      const cardEl = container.children[wrapped] as HTMLElement | undefined;
+      if (cardEl) {
+        container.scrollTo({
+          left: cardEl.offsetLeft - container.offsetLeft,
+          behavior: 'smooth',
+        });
+      }
+      setSliderActiveIdx(wrapped);
+    },
+    [weeklyRecommendations.length]
+  );
+
+  React.useEffect(() => {
+    if (weeklyRecommendations.length <= 1 || isSliderPaused) return;
+    const timer = window.setInterval(() => {
+      setSliderActiveIdx((prev) => {
+        const next = (prev + 1) % weeklyRecommendations.length;
+        if (sliderTrackRef.current) {
+          const cardEl = sliderTrackRef.current.children[next] as HTMLElement | undefined;
+          if (cardEl) {
+            sliderTrackRef.current.scrollTo({
+              left: cardEl.offsetLeft - sliderTrackRef.current.offsetLeft,
+              behavior: 'smooth',
+            });
+          }
+        }
+        return next;
+      });
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [weeklyRecommendations.length, isSliderPaused]);
+
+  // GPS Distance & Delivery Fee Calculation (พิกัด บ้านสเต็กออนไลน์ ประยูรพืชผล อ.ชุมแพ จ.ขอนแก่น 40130)
+  const shopLat = settings?.shopLatitude ?? 16.5373606;
+  const shopLng = settings?.shopLongitude ?? 102.102266;
+
+  const distanceKm = gpsLocation
+    ? calculateDistanceKm(shopLat, shopLng, gpsLocation.lat, gpsLocation.lng)
+    : null;
+
+  const isOutOfDeliveryZone = Boolean(distanceKm !== null && distanceKm > 12);
+
+  const deliveryCalculation =
+    distanceKm !== null ? calculateDeliveryFeeByDistance(distanceKm) : null;
+
+  // Active delivery fee based on dining type:
+  // มาทานที่ร้าน: 0 บาท
+  // นัดรับอาหาร: 0 บาท (แจ้งว่ายังไม่รวมค่าส่ง)
+  // ส่งอาหารที่บ้าน: คำนวณตามระยะทาง GPS
+  const deliveryFee =
+    diningType === 'ส่งอาหารที่บ้าน'
+      ? (deliveryCalculation ? deliveryCalculation.fee : 0)
+      : 0;
+
+  const foodSubtotal = cart.reduce((sum, i) => sum + i.menuItem.price * i.quantity, 0);
+  const totalAmount =
+    diningType === 'ส่งอาหารที่บ้าน'
+      ? (foodSubtotal > 0 ? foodSubtotal + deliveryFee : 0)
+      : foodSubtotal;
+  const cartItemCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+
+  // Add / reduce item in cart
+  const handleAddToCart = (item: MenuItem) => {
+    if (settings?.isOpen === false) {
+      onNotify('ขณะนี้ร้านปิด ยังไม่สามารถสั่งอาหารได้', 'error');
+      return;
+    }
+
+    if (!item.isAvailable) {
+      onNotify('เมนูนี้สินค้าหมด ไม่สามารถสั่งได้', 'error');
+      return;
+    }
+
+    setCart((prev) => {
+      const idx = prev.findIndex((c) => c.menuItem.id === item.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx].quantity += 1;
+        return next;
+      }
+      return [...prev, { menuItem: item, quantity: 1 }];
+    });
+    onNotify(`เพิ่ม "${item.name}" แล้ว`, 'success');
+  };
+
+  const handleUpdateQuantity = (itemId: string, delta: number) => {
+    setCart((prev) =>
+      prev
+        .map((c) => {
+          if (c.menuItem.id === itemId) {
+            const newQ = c.quantity + delta;
+            return newQ > 0 ? { ...c, quantity: newQ } : null;
+          }
+          return c;
+        })
+        .filter(Boolean) as CartItem[]
+    );
+  };
+
+  // GPS Pinning for Customer Home Delivery
+  const handleLocateCustomer = () => {
+    if (!navigator.geolocation) {
+      onNotify('อุปกรณ์ของท่านไม่รองรับการค้นหาพิกัด GPS', 'error');
+      setShowManualGps(true);
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = {
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        };
+        setGpsLocation(coords);
+        setIsLocating(false);
+        setIsOutOfZoneProceed(null);
+        onNotify('📍 ปักหมุดตำแหน่ง GPS บ้านลูกค้าเรียบร้อย', 'success');
+      },
+      (err) => {
+        setIsLocating(false);
+        console.warn('Geolocation error:', err);
+        onNotify('ไม่สามารถดึงพิกัดอัตโนมัติได้ กรุณากดอนุญาตสิทธิ์ หรือระบุพิกัด', 'info');
+        setShowManualGps(true);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  };
+
+  const handleApplyManualGps = () => {
+    const trimmed = manualGpsInput.trim();
+    if (!trimmed) {
+      onNotify('กรุณาระบุพิกัดหรือลิงก์ Google Maps', 'error');
+      return;
+    }
+    const match = trimmed.match(/@?(-?\d+\.\d+)[\s,]+(-?\d+\.\d+)/);
+    if (match) {
+      const lat = parseFloat(match[1]);
+      const lng = parseFloat(match[2]);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setGpsLocation({ lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) });
+        setIsOutOfZoneProceed(null);
+        setShowManualGps(false);
+        onNotify('📍 ปักหมุดพิกัดเรียบร้อย', 'success');
+        return;
+      }
+    }
+    onNotify('รูปแบบพิกัดไม่ถูกต้อง (เช่น 16.5447, 102.1005)', 'error');
+  };
+
+  // Submit Order
+  const handleOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (settings?.isOpen === false) {
+      onNotify('ขณะนี้ร้านปิด ยังไม่สามารถสั่งอาหารได้', 'error');
+      return;
+    }
+    if (cart.length === 0) {
+      onNotify('กรุณาเลือกรายการอาหารก่อนกดสั่งซื้อ', 'error');
+      return;
+    }
+
+    const isTableOrder = Boolean(urlTableNumber || diningType === 'มาทานที่ร้าน');
+    const isTakeawayOrder = diningType === 'สั่งกลับบ้าน';
+    const effectiveName = isTableOrder
+      ? (customerName.trim() || (selectedTableNumber ? `โต๊ะ ${selectedTableNumber}` : 'ลูกค้าทานที่ร้าน'))
+      : isTakeawayOrder
+      ? (customerName.trim() || 'ลูกค้าสั่งกลับบ้าน')
+      : customerName.trim();
+
+    // สำหรับทานที่ร้าน และ สั่งกลับบ้าน ช่องชื่อลูกค้าและเบอร์โทร ไม่บังคับใส่
+    if (!isTableOrder && !isTakeawayOrder && !effectiveName) {
+      onNotify('กรุณากรอกชื่อสำหรับเรียกรับอาหาร', 'error');
+      return;
+    }
+
+    // เบอร์โทรศัพท์ บังคับเฉพาะกรณี ส่งที่บ้าน และ นัดรับอาหาร เท่านั้น
+    if (!isTableOrder && !isTakeawayOrder) {
+      const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
+      if (cleanPhone.length < 9) {
+        onNotify('กรุณากรอกเบอร์โทรศัพท์ที่ติดต่อได้ (อย่างน้อย 9 หลัก)', 'error');
+        return;
+      }
+    }
+
+    // Validation according to dining type
+    if (diningType === 'มาทานที่ร้าน' || diningType === 'สั่งกลับบ้าน') {
+      // สำหรับทานที่ร้าน หรือ สั่งกลับบ้าน ไม่บล็อก สั่งได้ทันที
+    } else if (diningType === 'ส่งอาหารที่บ้าน') {
+      if (!address.trim()) {
+        onNotify('กรุณากรอกที่อยู่ หรือจุดสังเกตการส่งอาหาร', 'error');
+        return;
+      }
+      if (!gpsLocation) {
+        onNotify('กรุณากดปุ่ม "ปักหมุด GPS บ้านลูกค้า" เพื่อคำนวณระยะทาง', 'error');
+        return;
+      }
+      if (distanceKm !== null && distanceKm > 12) {
+        if (isOutOfZoneProceed !== 'yes') {
+          onNotify('ตำแหน่งอยู่นอกเขตบริการ (เกิน 12 กม.) กรุณาเลือกนัดรับอาหารที่ร้าน', 'error');
+          return;
+        }
+      }
+    } else if (diningType === 'นัดรับอาหาร') {
+      // นัดรับอาหาร: ลูกค้าสามารถโทรนัดหมายกับทางร้าน หรือระบุจุดนัดรับได้
+    }
+
+    try {
+      setIsSubmittingOrder(true);
+      const effectiveAddress =
+        diningType === 'มาทานที่ร้าน'
+          ? (address.trim() || (selectedTableNumber ? `ทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)'))
+          : diningType === 'สั่งกลับบ้าน'
+          ? (address.trim() || 'สั่งกลับบ้าน (ไม่มีค่าจัดส่ง)')
+          : diningType === 'นัดรับอาหาร'
+          ? (address.trim() || 'นัดรับอาหาร (โทรนัดหมายกับทางร้าน)')
+          : address.trim();
+
+      const effectiveDeliveryArea =
+        diningType === 'มาทานที่ร้าน'
+          ? (selectedTableNumber ? `มาทานที่ร้าน โต๊ะ ${selectedTableNumber}` : 'มาทานที่ร้าน (ไม่มีค่าจัดส่ง)')
+          : diningType === 'สั่งกลับบ้าน'
+          ? 'สั่งกลับบ้าน (ไม่มีค่าจัดส่ง)'
+          : diningType === 'นัดรับอาหาร'
+          ? 'นัดรับอาหาร (ยังไม่รวมค่าส่ง)'
+          : deliveryCalculation
+          ? `${deliveryCalculation.rateDescription} (ระยะทาง ${distanceKm} กม.)`
+          : 'ส่งอาหารที่บ้าน';
+
+      const effectiveDeliveryFee = diningType === 'ส่งอาหารที่บ้าน' ? deliveryFee : 0;
+      const effectiveTotalAmount = diningType === 'ส่งอาหารที่บ้าน' ? totalAmount : foodSubtotal;
+
+      const orderNum = await createOrder({
+        customerName: effectiveName,
+        customerPhone: (isTableOrder || isTakeawayOrder) ? (customerPhone.trim() || '-') : customerPhone.trim(),
+        address: effectiveAddress,
+        deliveryType: diningType,
+        tableNumber: selectedTableNumber !== null ? selectedTableNumber : (urlTableNumber ? Number(urlTableNumber) : undefined),
+        gps: diningType === 'ส่งอาหารที่บ้าน' ? gpsLocation : null,
+        distanceKm: diningType === 'ส่งอาหารที่บ้าน' ? (distanceKm ?? 0) : 0,
+        items: cart.map((c) => ({
+          menuId: c.menuItem.id,
+          name: c.menuItem.name,
+          price: c.menuItem.price,
+          quantity: c.quantity,
+        })),
+        subtotal: foodSubtotal,
+        deliveryArea: effectiveDeliveryArea,
+        deliveryFee: effectiveDeliveryFee,
+        totalAmount: effectiveTotalAmount,
+        earnedRewardsNotice: customerRewardsNotice,
+      });
+
+      setCompletedOrderRewards([...customerRewardsNotice]);
+      setCompletedOrderDiningType(diningType);
+      setCompletedOrderIsOutOfZone(
+        Boolean(diningType === 'ส่งอาหารที่บ้าน' && distanceKm !== null && distanceKm > 12)
+      );
+      setCompletedOrderNumber(orderNum);
+      try {
+        const savedList = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+        const updated = Array.from(new Set([orderNum, ...(Array.isArray(savedList) ? savedList : [])])).slice(0, 5);
+        localStorage.setItem('baan_steak_my_order_numbers', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      setCart([]);
+      setIsCartOpen(false);
+      // Clear customer name, phone, and address so names won't be repeated
+      setCustomerName('');
+      setCustomerPhone('');
+      setAddress('');
+      setGpsLocation(null);
+      setIsOutOfZoneProceed(null);
+      onNotify('สั่งอาหารสำเร็จเรียบร้อย', 'success');
+    } catch (err) {
+      onNotify('เกิดข้อผิดพลาดในการสั่งอาหาร กรุณาลองใหม่อีกครั้ง', 'error');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  return (
+    <div className="max-w-xl mx-auto space-y-4 pb-24 text-stone-900">
+      {/* 1. Hero Image of the shop (Uploaded banner) */}
+      <div className="relative w-full overflow-hidden rounded-2xl bg-stone-950 border border-stone-200 shadow-sm">
+        <img
+          src={activeHeroImage}
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = heroImage;
+          }}
+          alt="บ้าน สเต็กออนไลน์"
+          className="w-full h-auto block rounded-2xl"
+          loading="eager"
+        />
+        <span
+          className="absolute bottom-2 right-2.5 text-[10px] font-medium tabular-nums text-white/85 bg-black/40 px-1.5 py-0.5 rounded select-none pointer-events-none"
+          aria-label={`Version ${CURRENT_REVISION.version}`}
+        >
+          {CURRENT_REVISION.version}
+        </span>
+      </div>
+
+      {/* 2. ปุ่มแจ้งและสลับสถานะ "วันนี้ร้านเปิด" / "วันนี้ร้านปิด" ใต้รูปภาพหน้าปก (คลิกเพื่อสลับเปิด/ปิดได้ทันที) */}
+      <button
+        type="button"
+        onClick={() => {
+          if (onToggleShopOpen) {
+            onToggleShopOpen();
+          } else {
+            onOpenAdminLogin();
+          }
+        }}
+        className={`w-full py-2.5 sm:py-3 px-3.5 sm:px-4 rounded-2xl text-white font-black text-xs sm:text-base border-2 shadow-md flex items-center justify-between gap-2 tracking-wide transition cursor-pointer active:scale-98 ${
+          settings?.isOpen === false
+            ? 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 border-rose-400 hover:brightness-110'
+            : 'bg-gradient-to-r from-emerald-600 via-green-600 to-emerald-700 border-emerald-400 hover:brightness-110'
+        }`}
+        title="แตะเพื่อสลับเปิด/ปิดร้าน (สำหรับร้านค้า)"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0"></span>
+          <span className="text-base sm:text-lg shrink-0">
+            {settings?.isOpen === false ? '🔴' : '🟢'}
+          </span>
+          <div className="text-left min-w-0">
+            <div className="drop-shadow-xs font-black tracking-wide leading-tight">
+              {settings?.isOpen === false
+                ? 'วันนี้ร้านปิด (งดรับออเดอร์ชั่วคราว)'
+                : 'วันนี้ร้านเปิด (สั่งอาหารได้เลยครับ)'}
+            </div>
+            <div className="text-[11px] sm:text-xs font-bold text-amber-100 mt-0.5 leading-snug">
+              {settings?.isOpen === false
+                ? 'ร้านหยุดทุกวันอังคาร และ วันเสาร์'
+                : 'ร้านเปิด 17.00-21.00 (สั่งล่วงหน้าก่อนได้)'}
+            </div>
+          </div>
+        </div>
+        <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-lg bg-black/25 text-white/95 border border-white/20 whitespace-nowrap shrink-0">
+          {isAdmin ? '👆 แตะเพื่อสลับสถานะ' : '⚙️ จัดการร้าน'}
+        </span>
+      </button>
+
+      {/* 2.0 Real-time Table Status Indicator (ใต้ปุ่ม ร้านเปิด/ร้านปิด ตามที่กำหนดในลิงก์ Admin) */}
+      {tables && tables.length > 0 && (
+        <div className="w-full bg-white rounded-2xl p-3 sm:p-3.5 border border-stone-200 shadow-2xs space-y-2.5 animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-xs font-black text-stone-900">
+              <span className="text-sm">🍽️</span>
+              <span>สถานะโต๊ะอาหารในร้าน (เรียลไทม์)</span>
+            </div>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                tables.every((t) => t.isOccupied)
+                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+              }`}
+            >
+              {tables.every((t) => t.isOccupied)
+                ? '🔴 โต๊ะเต็มทุกโต๊ะ'
+                : `🟢 ว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length} โต๊ะ`}
+            </span>
+          </div>
+
+          {/* Grid of Individual Tables showing ว่าง / เต็ม */}
+          <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-6 gap-2">
+            {tables.map((tbl) => {
+              const isOccupied = tbl.isOccupied;
+              const isMyScannedTable =
+                urlTableNumber &&
+                (String(tbl.number) === urlTableNumber || tbl.name === `โต๊ะ ${urlTableNumber}`);
+
+              return (
+                <div
+                  key={tbl.id}
+                  className={`py-2 px-1.5 rounded-xl text-center border transition flex flex-col items-center justify-center gap-0.5 ${
+                    isMyScannedTable
+                      ? 'bg-amber-50 border-2 border-amber-500 ring-2 ring-amber-300 text-amber-950 font-black shadow-xs'
+                      : isOccupied
+                      ? 'bg-rose-50/70 border-rose-200 text-rose-800'
+                      : 'bg-emerald-50/70 border-emerald-200 text-emerald-900 font-extrabold'
+                  }`}
+                >
+                  <span className="text-xs font-black truncate max-w-full">
+                    {tbl.name}
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
+                      isOccupied
+                        ? 'bg-rose-200/70 text-rose-800'
+                        : 'bg-emerald-200/80 text-emerald-900'
+                    }`}
+                  >
+                    {isOccupied ? '🔴 เต็ม' : '🟢 ว่าง'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-[10px] text-stone-400 text-center">
+            * ข้อมูลสถานะโต๊ะซิงก์ตรงจากร้านแบบเรียลไทม์ (ลูกค้าที่ร้านสามารถสแกน QR Code ประจำโต๊ะเพื่อสั่งได้ทันที)
+          </p>
+        </div>
+      )}
+
+      {/* 2.1 Table Dine-in Welcome Banner (if opened from table QR/link) */}
+      {urlTableNumber && (
+        <div className="w-full py-2.5 px-3.5 rounded-2xl bg-amber-50 text-amber-950 border border-amber-300 font-bold text-xs flex items-center justify-between shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🍽️</span>
+            <div>
+              <span>สั่งอาหารสำหรับ: </span>
+              <span className="text-red-700 font-black text-sm underline">
+                โต๊ะ {urlTableNumber}
+              </span>
+              <span className="text-stone-500 font-medium ml-1">
+                (ทานที่ร้าน ฟรีค่าจัดส่ง)
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-full font-extrabold text-amber-900 shrink-0">
+            สแกนจากโต๊ะ
+          </span>
+        </div>
+      )}
+
+      {/* 2.2 Pickup Welcome Banner */}
+      {!urlTableNumber && diningType === 'นัดรับอาหาร' && (
+        <div className="w-full py-2.5 px-3.5 rounded-2xl bg-amber-50 text-amber-950 border border-amber-300 font-bold text-xs flex items-center justify-between shadow-xs animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🛍️</span>
+            <div>
+              <span>โหมดสั่งอาหาร: </span>
+              <span className="text-amber-800 font-black text-sm underline">
+                นัดรับกลับบ้านที่ร้าน (Pickup)
+              </span>
+              <span className="text-stone-500 font-medium ml-1">
+                (ฟรีค่าจัดส่ง 0 บาท)
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-full font-extrabold text-amber-900 shrink-0">
+            รับกลับบ้าน
+          </span>
+        </div>
+      )}
+
+      {/* 2.3 Live Real-time Order Tracking for Customer (ติดตามสถานะออเดอร์แบบเรียลไทม์) */}
+      {customerTrackedOrders.length > 0 && (
+        <div className="w-full bg-white rounded-3xl p-4 sm:p-5 border-2 border-amber-400 shadow-lg space-y-3.5 animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
+            <div className="flex items-center gap-2">
+              <span className="flex h-3.5 w-3.5 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500"></span>
+              </span>
+              <h3 className="font-black text-stone-900 text-sm sm:text-base flex items-center gap-1.5">
+                <span>⚡ ติดตามสถานะออเดอร์ของท่าน (เรียลไทม์)</span>
+              </h3>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                สถานะสดจากร้าน
+              </span>
+              <button
+                type="button"
+                onClick={handleClearMyTrackedOrders}
+                className="text-[10px] font-bold text-stone-400 hover:text-stone-700 hover:underline cursor-pointer"
+                title="ลบ/ซ่อนประวัติการติดตามบนเครื่องนี้"
+              >
+                ✕ ซ่อน
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {customerTrackedOrders.map((ord) => {
+              const currentStatus = ord.status;
+              const isTable = Boolean(ord.deliveryType === 'มาทานที่ร้าน' || ord.tableNumber);
+
+              return (
+                <div
+                  key={ord.id}
+                  className="bg-stone-50 rounded-2xl p-3.5 border border-stone-200 space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div>
+                      <span className="font-extrabold text-stone-900 text-sm">
+                        ออเดอร์ #{ord.orderNumber}
+                      </span>
+                      <span className="text-stone-500 ml-2">
+                        ({isTable ? `โต๊ะ ${ord.tableNumber || 1}` : ord.deliveryType})
+                      </span>
+                    </div>
+                    <div className="font-black text-red-600 text-sm sm:text-base">
+                      ฿{ord.totalAmount.toLocaleString()}
+                    </div>
+                  </div>
+
+                  {/* 4-Step Animated Progress Stepper */}
+                  <div className="grid grid-cols-4 gap-1.5 text-center text-[10px] sm:text-xs font-bold">
+                    {/* Step 1: รับออเดอร์ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'รับออเดอร์'
+                          ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300 animate-pulse'
+                          : 'bg-emerald-100 text-emerald-900'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🟡</div>
+                      <div>1. รับออเดอร์</div>
+                    </div>
+
+                    {/* Step 2: กำลังทำ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'กำลังทำ'
+                          ? 'bg-blue-600 text-white font-black shadow-xs ring-2 ring-blue-300 animate-pulse'
+                          : (currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง' || currentStatus === 'ส่งแล้ว')
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🍳</div>
+                      <div>2. กำลังทำ</div>
+                    </div>
+
+                    {/* Step 3: ส่งออเดอร์ */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง'
+                          ? 'bg-orange-500 text-white font-black shadow-xs ring-2 ring-orange-300 animate-pulse'
+                          : currentStatus === 'ส่งแล้ว'
+                          ? 'bg-emerald-100 text-emerald-900'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">🚚</div>
+                      <div>3. ส่งออเดอร์</div>
+                    </div>
+
+                    {/* Step 4: ส่งแล้ว / เช็คบิล */}
+                    <div
+                      className={`p-2 rounded-xl transition ${
+                        currentStatus === 'ส่งแล้ว' || currentStatus === 'เช็คบิล'
+                          ? 'bg-emerald-600 text-white font-black shadow-xs'
+                          : 'bg-stone-200/70 text-stone-400'
+                      }`}
+                    >
+                      <div className="text-xs mb-0.5">{currentStatus === 'เช็คบิล' ? '💰' : '✅'}</div>
+                      <div>{currentStatus === 'เช็คบิล' ? '4. เช็คบิลแล้ว' : '4. ส่งแล้ว'}</div>
+                    </div>
+                  </div>
+
+                  {/* รายการอาหารในออเดอร์นี้ */}
+                  {ord.items && ord.items.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-[11px] text-stone-600 space-y-1.5">
+                      <div className="font-bold text-stone-800 flex items-center justify-between gap-2">
+                        <span>รายการอาหาร ({ord.items.length} รายการ):</span>
+                        <div className="flex items-center gap-1.5">
+                          {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
+                            <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              🎉 มีของแถม
+                            </span>
+                          )}
+                          {currentStatus !== 'เช็คบิล' && currentStatus !== 'ยกเลิก' && (
+                            <button
+                              type="button"
+                              onClick={() => setAppendOrderTarget(ord)}
+                              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-lg shadow-2xs flex items-center gap-1 active:scale-95 transition cursor-pointer shrink-0"
+                            >
+                              <Plus className="w-3 h-3 stroke-[3]" />
+                              <span>สั่งอาหารเพิ่ม</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-0.5">
+                        {ord.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between items-center">
+                            <span className="truncate">• {it.name} x {it.quantity}</span>
+                            <span className="font-bold shrink-0 ml-2 tabular-nums">฿{(it.price * it.quantity).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Status explanation & Action to append items */}
+                  <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-xs text-stone-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-stone-900 shrink-0">สถานะ:</span>
+                      <span className={`font-black ${currentStatus === 'เช็คบิล' ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {currentStatus === 'รับออเดอร์' && 'ร้านได้รับออเดอร์แล้ว กำลังรอเริ่มปรุงอาหาร'}
+                        {currentStatus === 'กำลังทำ' && 'เชฟกำลังปรุงอาหารสดใหม่ในครัว'}
+                        {(currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง') && (isTable ? 'อาหารเสร็จเรียบร้อย กำลังยกเสิร์ฟที่โต๊ะ' : 'อาหารเสร็จเรียบร้อย ไรเดอร์กำลังนำส่ง')}
+                        {currentStatus === 'ส่งแล้ว' && 'จัดส่งเรียบร้อยแล้ว ทานให้อร่อยครับ'}
+                        {currentStatus === 'เช็คบิล' && 'เช็คบิลเรียบร้อยแล้ว ขอบคุณที่ใช้บริการครับ'}
+                      </span>
+                    </div>
+
+                    {/* ปุ่มสำหรับสั่งอาหารเพิ่มในออเดอร์เดิม */}
+                    {currentStatus !== 'เช็คบิล' && currentStatus !== 'ยกเลิก' && (
+                      <button
+                        type="button"
+                        onClick={() => setAppendOrderTarget(ord)}
+                        className="px-3 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>สั่งอาหารเพิ่ม</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Discrete Tracker Search Toggle */}
+      <div className="text-right">
+        <button
+          type="button"
+          onClick={() => setShowManualTracker(!showManualTracker)}
+          className="text-xs text-stone-500 hover:text-red-600 font-bold underline cursor-pointer"
+        >
+          {showManualTracker ? 'ปิดช่องค้นหาสถานะ' : '🔍 เช็คสถานะออเดอร์ด้วยเบอร์โทร/เลขออเดอร์'}
+        </button>
+      </div>
+
+      {showManualTracker && (
+        <div className="bg-stone-100 p-3 rounded-2xl border border-stone-200 space-y-2 animate-fadeIn text-xs">
+          <label className="font-bold text-stone-700 block">
+            กรอกเบอร์โทร หรือ เลขออเดอร์ เพื่อติดตามสถานะสด:
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={trackingSearchQuery}
+              onChange={(e) => setTrackingSearchQuery(e.target.value)}
+              placeholder="เช่น 0850451606 หรือ 1001"
+              className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-semibold"
+            />
+            {trackingSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setTrackingSearchQuery('')}
+                className="px-3 py-2 bg-stone-200 hover:bg-stone-300 rounded-xl font-bold text-stone-700 cursor-pointer"
+              >
+                ล้าง
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 3. Shop Title & Compact Contact Line */}
+      <div className="bg-white rounded-2xl p-3 sm:p-4 border border-stone-200 shadow-xs space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          {/* Shop Name & Slogan */}
+          <div>
+            <h1 className="text-xl sm:text-2xl font-black text-red-600 tracking-tight leading-none">
+              {SHOP_INFO.name}
+            </h1>
+            <p className="text-[11px] font-medium text-stone-500 mt-0.5">
+              {SHOP_INFO.slogan} • อ.ชุมแพ
+            </p>
+          </div>
+        </div>
+
+        {/* 3. Compact Contact Bar: 📞 เบอร์โทรศัพท์, [LINE], และ 📍 พิกัดร้าน อยู่ในแนวเดียวกัน */}
+        <div className="flex items-center gap-1.5 pt-2 border-t border-stone-100 w-full overflow-x-auto no-scrollbar">
+          {/* Phone Link (Clickable directly to tel:0850451606) */}
+          <a
+            href={`tel:${(settings?.phone || '085-045-1606').replace(/[^0-9]/g, '')}`}
+            className="inline-flex items-center gap-1 font-bold text-stone-800 hover:text-red-600 active:scale-95 transition bg-stone-50 hover:bg-stone-100 px-2 py-1 rounded-lg border border-stone-200 text-xs shrink-0 whitespace-nowrap shadow-2xs"
+            title="กดเพื่อโทรสั่งอาหาร"
+          >
+            <span className="text-xs">📞</span>
+            <span className="font-extrabold tracking-tight">
+              {settings?.phone || '085-045-1606'}
+            </span>
+          </a>
+
+          {/* QR Code LINE OA Thumbnail (On same line as phone) */}
+          {settings?.lineEnabled !== false && (
+            <button
+              type="button"
+              onClick={() => setIsQrModalOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg transition font-bold text-xs active:scale-95 cursor-pointer shrink-0 whitespace-nowrap shadow-2xs"
+              title="สแกนหรือเปิด LINE OA"
+            >
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(
+                  settings?.lineUrl || 'https://line.me/ti/p/~0850451606'
+                )}`}
+                alt="QR LINE"
+                className="w-3.5 h-3.5 rounded-xs object-contain bg-white"
+                loading="lazy"
+              />
+              <span>[LINE]</span>
+            </button>
+          )}
+
+          {/* ปุ่มพิกัดร้าน ต่อจาก "เบอร์โทร" "QR Line" พร้อม icon ปักหมุด "มาทานที่ร้าน" อยู่ในแนวเดียวกัน */}
+          <a
+            href={
+              Math.abs(shopLat - 16.5373606) < 0.0001 && Math.abs(shopLng - 102.102266) < 0.0001
+                ? 'https://maps.app.goo.gl/mWeWfq28mnEAXro17'
+                : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${shopLat},${shopLng}`)}`
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-800 border border-red-200 rounded-lg transition font-bold text-xs active:scale-95 shadow-2xs cursor-pointer shrink-0 whitespace-nowrap"
+            title="ดูพิกัดร้านค้าบน Google Maps เพื่อเดินทางมาทานที่ร้าน"
+          >
+            <MapPin className="w-3.5 h-3.5 text-red-600 shrink-0" />
+            <span>พิกัด "มาทานที่ร้าน"</span>
+          </a>
+
+          {/* ป้ายแสดงสถานะโต๊ะในร้านแบบเรียลไทม์ (ว่าง/เต็ม) */}
+          {tables && tables.length > 0 && (
+            <div
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-black shrink-0 whitespace-nowrap shadow-2xs transition ${
+                tables.every((t) => t.isOccupied)
+                  ? 'bg-rose-50 text-rose-800 border-rose-300'
+                  : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+              }`}
+              title="สถานะโต๊ะอาหารสำหรับทานที่ร้านในปัจจุบัน"
+            >
+              <Utensils className="w-3.5 h-3.5 shrink-0" />
+              <span>
+                {tables.every((t) => t.isOccupied)
+                  ? 'โต๊ะเต็มทุกโต๊ะ'
+                  : `โต๊ะว่าง ${tables.filter((t) => !t.isOccupied).length}/${tables.length}`}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 6.5 แนะนำเมนูประจำสัปดาห์ (Compact Mini Slider ด้านบนรายการอาหาร) */}
+      {weeklyRecommendations.length > 0 && (
+        <section
+          className="bg-gradient-to-br from-amber-50/90 via-white to-rose-50/70 rounded-2xl p-3 border border-amber-200/80 shadow-xs space-y-2.5"
+          onMouseEnter={() => setIsSliderPaused(true)}
+          onMouseLeave={() => setIsSliderPaused(false)}
+          onTouchStart={() => setIsSliderPaused(true)}
+          onTouchEnd={() => setIsSliderPaused(false)}
+          aria-label="แนะนำเมนูประจำสัปดาห์"
+        >
+          {/* Slider Header */}
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="w-6 h-6 rounded-lg bg-red-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5" />
+              </div>
+              <h2 className="text-sm font-black text-stone-900 tracking-tight truncate">
+                แนะนำเมนูประจำสัปดาห์
+              </h2>
+              {weeklyRecommendations[sliderActiveIdx] && (
+                <span
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border shrink-0 transition-all ${
+                    weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
+                      ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                  }`}
+                >
+                  {weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
+                    ? '🔥 เมนูขายดี'
+                    : `✨ ${weeklyRecommendations[sliderActiveIdx].badgeLabel}`}
+                </span>
+              )}
+            </div>
+
+            {weeklyRecommendations.length > 1 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => scrollSliderToIndex(sliderActiveIdx - 1)}
+                  className="w-6 h-6 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-stone-700 flex items-center justify-center transition active:scale-90 cursor-pointer"
+                  aria-label="เมนูก่อนหน้า"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollSliderToIndex(sliderActiveIdx + 1)}
+                  className="w-6 h-6 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-stone-700 flex items-center justify-center transition active:scale-90 cursor-pointer"
+                  aria-label="เมนูถัดไป"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Horizontal Compact Mini-Card Track */}
+          <div
+            ref={sliderTrackRef}
+            onScroll={() => {
+              const container = sliderTrackRef.current;
+              if (!container || container.children.length === 0) return;
+              const scrollLeft = container.scrollLeft;
+              let closestIdx = 0;
+              let minDist = Infinity;
+              for (let i = 0; i < container.children.length; i++) {
+                const el = container.children[i] as HTMLElement;
+                const dist = Math.abs(el.offsetLeft - container.offsetLeft - scrollLeft);
+                if (dist < minDist) {
+                  minDist = dist;
+                  closestIdx = i;
+                }
+              }
+              setSliderActiveIdx(closestIdx);
+            }}
+            className="flex items-stretch gap-2.5 overflow-x-auto snap-x snap-mandatory scroll-smooth no-scrollbar pb-0.5"
+          >
+            {weeklyRecommendations.map(({ item, badgeType, badgeLabel, soldCount }) => {
+              const cartItem = cart.find((c) => c.menuItem.id === item.id);
+              const isBest = badgeType === 'bestseller';
+
+              return (
+                <div
+                  key={`weekly_${item.id}`}
+                  className={`min-w-[238px] sm:min-w-[255px] max-w-[265px] shrink-0 snap-start bg-white rounded-xl p-2.5 border shadow-2xs flex items-center gap-2.5 transition ${
+                    isBest ? 'border-rose-200/90' : 'border-emerald-200/90'
+                  }`}
+                >
+                  {/* Thumbnail */}
+                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-stone-100 border border-stone-200 shrink-0">
+                    <img
+                      src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                      alt={item.name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                      }}
+                      loading="lazy"
+                    />
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch">
+                    <div className="space-y-0.5">
+                      {/* Alternating Badge: เมนูขายดี / เมนูใหม่ล่าสุด */}
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black leading-none border ${
+                            isBest
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}
+                        >
+                          {isBest ? (
+                            <Flame className="w-2.5 h-2.5 text-rose-600" />
+                          ) : (
+                            <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                          )}
+                          <span>{badgeLabel}</span>
+                        </span>
+                        {isBest && soldCount > 0 && (
+                          <span className="text-[10px] font-bold text-stone-400 tabular-nums shrink-0">
+                            {soldCount} จาน
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="font-bold text-xs sm:text-sm text-stone-900 truncate leading-tight">
+                        {item.name}
+                      </h3>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-1.5 pt-1">
+                      <span className="font-black text-sm text-red-600 tabular-nums">
+                        {item.price} <span className="text-[10px] font-normal text-stone-500">บ.</span>
+                      </span>
+
+                      {!item.isAvailable ? (
+                        <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-500 border border-stone-200 text-[10px] font-bold">
+                          สินค้าหมด
+                        </span>
+                      ) : cartItem ? (
+                        <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, -1)}
+                            className="w-5 h-5 flex items-center justify-center bg-white text-red-600 rounded shadow-2xs active:scale-90 cursor-pointer"
+                            aria-label={`ลด ${item.name}`}
+                          >
+                            <Minus className="w-2.5 h-2.5" />
+                          </button>
+                          <span className="w-4 text-center text-[11px] font-black text-red-700 tabular-nums">
+                            {cartItem.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, 1)}
+                            className="w-5 h-5 flex items-center justify-center bg-red-600 text-white rounded shadow-2xs active:scale-90 cursor-pointer"
+                            aria-label={`เพิ่ม ${item.name}`}
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleAddToCart(item)}
+                          className="inline-flex items-center gap-0.5 px-2.5 py-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-[11px] rounded-lg shadow-2xs transition cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3 stroke-[3]" />
+                          <span>เพิ่ม</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Dot Indicators */}
+          {weeklyRecommendations.length > 1 && (
+            <div className="flex items-center justify-center gap-1 pt-0.5">
+              {weeklyRecommendations.map((rec, idx) => (
+                <button
+                  key={`dot_${rec.item.id}`}
+                  type="button"
+                  onClick={() => scrollSliderToIndex(idx)}
+                  aria-label={`ไปยังเมนูแนะนำที่ ${idx + 1}`}
+                  className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                    idx === sliderActiveIdx
+                      ? 'w-4 bg-red-600'
+                      : 'w-1.5 bg-stone-300 hover:bg-stone-400'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Category Filter Pills (if any new categories added) */}
+      {sortedCategories.length > 1 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto py-1 scrollbar-none">
+          <button
+            onClick={() => setSelectedCategory('ทั้งหมด')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+              selectedCategory === 'ทั้งหมด'
+                ? 'bg-red-600 text-white shadow-sm'
+                : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+            }`}
+          >
+            ทั้งหมด ({visibleMenus.length})
+          </button>
+          {sortedCategories.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedCategory(c.name)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                selectedCategory === c.name
+                  ? 'bg-red-600 text-white shadow-sm'
+                  : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+              }`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 7. Menu List (Food Items) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-bold text-stone-800 flex items-center gap-2">
+              <Utensils className="w-4 h-4 text-red-600" />
+              <span>รายการอาหาร</span>
+            </h2>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Real-Time
+            </span>
+          </div>
+          <span className="text-xs text-stone-500">
+            {filteredMenus.length} รายการ
+          </span>
+        </div>
+
+        {filteredMenus.length === 0 ? (
+          <div className="p-8 text-center bg-white rounded-2xl border border-stone-200 text-stone-500 text-sm">
+            ไม่มีรายการอาหารในหมวดหมู่นี้
+          </div>
+        ) : (
+          filteredMenus.map((item, idx) => {
+            const cartItem = cart.find((c) => c.menuItem.id === item.id);
+            const isSoldOut = !item.isAvailable;
+            const prevItem = idx > 0 ? filteredMenus[idx - 1] : null;
+            const showDrinkDivider =
+              selectedCategory === 'ทั้งหมด' &&
+              isDrinkCategory(item.category) &&
+              (!prevItem || !isDrinkCategory(prevItem.category)) &&
+              idx > 0;
+
+            return (
+              <React.Fragment key={item.id}>
+                {showDrinkDivider && (
+                  <div className="flex items-center gap-2 pt-3 pb-1 px-1">
+                    <span className="text-xs font-black text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-lg">
+                      🥤 เมนูเครื่องดื่ม
+                    </span>
+                    <div className="h-px flex-1 bg-stone-200" />
+                  </div>
+                )}
+                <div
+                  className={`bg-white rounded-2xl p-3.5 sm:p-4 border shadow-sm transition flex gap-3.5 items-center ${
+                    isSoldOut ? 'border-rose-200 bg-rose-50/20' : 'border-stone-200'
+                  }`}
+                >
+                {/* Food Photo */}
+                <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-stone-100 shrink-0 border border-stone-200">
+                  {item.imageUrl ? (
+                    <img
+                      src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                      alt={item.name}
+                      referrerPolicy="no-referrer"
+                      className={`w-full h-full object-cover ${
+                        isSoldOut ? 'grayscale brightness-75' : ''
+                      }`}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                      }}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-stone-400">
+                      <Utensils className="w-8 h-8" />
+                    </div>
+                  )}
+
+                  {/* Requirement: สินค้าหมด: แสดง “สินค้าหมด” และห้ามเพิ่มลงตะกร้า */}
+                  {isSoldOut && (
+                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-1">
+                      <span className="px-2 py-1 rounded bg-rose-600 text-white font-extrabold text-[11px] tracking-wide shadow">
+                        สินค้าหมด
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Info & Order Controls (Clean & Minimal: Photo, Name, Price, Status, Add Button) */}
+                <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3
+                      className={`font-bold text-base leading-tight truncate ${
+                        isSoldOut ? 'text-stone-500' : 'text-stone-900'
+                      }`}
+                    >
+                      {item.name}
+                    </h3>
+
+                    {/* Status Badge: พร้อมขาย / สินค้าหมด */}
+                    {isSoldOut ? (
+                      <span className="text-[10px] px-2 py-0.5 bg-rose-50 text-rose-700 font-bold border border-rose-200 rounded-md shrink-0">
+                        สินค้าหมด
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-md shrink-0">
+                        พร้อมขาย
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-stone-100">
+                    <div className="font-extrabold text-lg text-red-600 tabular-nums">
+                      {item.price} <span className="text-xs font-normal text-stone-500">บาท</span>
+                    </div>
+
+                    {/* Add/Reduce Quantity Buttons */}
+                    {isSoldOut ? (
+                      <span className="px-3 py-1.5 rounded-xl bg-stone-100 text-stone-400 text-xs font-semibold cursor-not-allowed">
+                        สินค้าหมด
+                      </span>
+                    ) : cartItem ? (
+                      <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-xl p-1">
+                        <button
+                          onClick={() => handleUpdateQuantity(item.id, -1)}
+                          className="w-7 h-7 flex items-center justify-center bg-white text-red-600 rounded-lg shadow-xs hover:bg-red-50 active:scale-90 font-bold"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="w-6 text-center font-bold text-sm text-red-700 tabular-nums">
+                          {cartItem.quantity}
+                        </span>
+                        <button
+                          onClick={() => handleUpdateQuantity(item.id, 1)}
+                          className="w-7 h-7 flex items-center justify-center bg-red-600 text-white rounded-lg shadow-xs hover:bg-red-700 active:scale-90 font-bold"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => handleAddToCart(item)}
+                        className="flex items-center gap-1 px-3.5 py-1.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>เพิ่ม</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              </React.Fragment>
+            );
+          })
+        )}
+      </div>
+
+      {/* 9, 10, 11, 12, 13. Cart Drawer & Customer Order Form */}
+      {isCartOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-xs p-0 sm:p-4 animate-fadeIn">
+          <div className="w-full max-w-lg max-h-[92vh] bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden text-stone-900">
+            {/* Cart Header */}
+            <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-red-600" />
+                <h3 className="font-extrabold text-base">รายการสั่งอาหารในตะกร้า</h3>
+              </div>
+              <button
+                onClick={() => setIsCartOpen(false)}
+                className="p-1.5 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-200 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Cart Items & Form Body */}
+            <form onSubmit={handleOrderSubmit} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Items in cart */}
+              <div className="space-y-2 bg-stone-50 p-3 rounded-2xl border border-stone-200">
+                <div className="text-xs font-bold text-stone-600 uppercase tracking-wider mb-1">
+                  อาหารที่เลือก ({cartItemCount} ชิ้น)
+                </div>
+                {cart.map((c) => (
+                  <div
+                    key={c.menuItem.id}
+                    className="flex items-center justify-between py-1.5 border-b border-stone-200/60 last:border-0 text-sm"
+                  >
+                    <div className="flex-1 min-w-0 pr-2">
+                      <div className="font-bold text-stone-800 truncate">{c.menuItem.name}</div>
+                      <div className="text-xs text-stone-500">
+                        {c.menuItem.price} บ. × {c.quantity}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateQuantity(c.menuItem.id, -1)}
+                          className="w-6 h-6 flex items-center justify-center text-stone-600 hover:text-red-600"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="w-5 text-center text-xs font-bold">{c.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateQuantity(c.menuItem.id, 1)}
+                          className="w-6 h-6 flex items-center justify-center text-stone-600 hover:text-red-600"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="font-bold text-stone-800 w-14 text-right">
+                        {c.menuItem.price * c.quantity} บ.
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Customer Details: Nickname, Phone, Table / Address */}
+              <div className="space-y-3">
+                {/* 1. เลือกรูปแบบการรับอาหาร (มีครบ 3 ตัวเลือก: ทานที่ร้าน, ส่งที่บ้าน, นัดรับกลับบ้าน) */}
+                <div className="space-y-1.5 pt-1">
+                  <label className="block text-xs font-bold text-stone-800">
+                    เลือกรูปแบบการรับอาหาร <span className="text-red-500">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-stone-100 rounded-2xl border border-stone-200">
+                    <button
+                      type="button"
+                      onClick={() => setDiningType('มาทานที่ร้าน')}
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
+                        diningType === 'มาทานที่ร้าน'
+                          ? 'bg-emerald-600 text-white shadow-xs font-black'
+                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <Utensils className="w-4 h-4" />
+                      <span className="text-[11px] sm:text-xs">1) ทานที่ร้าน</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDiningType('สั่งกลับบ้าน')}
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
+                        diningType === 'สั่งกลับบ้าน'
+                          ? 'bg-purple-600 text-white shadow-xs font-black'
+                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                      <span className="text-[11px] sm:text-xs">2) สั่งกลับบ้าน</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDiningType('ส่งอาหารที่บ้าน')}
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
+                        diningType === 'ส่งอาหารที่บ้าน'
+                          ? 'bg-red-600 text-white shadow-xs font-black'
+                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <Truck className="w-4 h-4" />
+                      <span className="text-[11px] sm:text-xs">3) ส่งที่บ้าน</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDiningType('นัดรับอาหาร');
+                        setIsOutOfZoneProceed(null);
+                      }}
+                      className={`py-2 px-1 text-center rounded-xl text-xs font-bold transition flex flex-col items-center gap-1 cursor-pointer ${
+                        diningType === 'นัดรับอาหาร'
+                          ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300'
+                          : 'text-stone-600 hover:text-stone-900 hover:bg-white/60'
+                      }`}
+                    >
+                      <MapPin className="w-4 h-4" />
+                      <span className="text-[11px] sm:text-xs">4) นัดรับอาหาร</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. กรณีทานที่ร้าน (มาทานที่ร้าน): ชื่อ, เบอร์ และ เลขโต๊ะ จะใส่ก็ได้ไม่ใส่ก็ได้ */}
+                {diningType === 'มาทานที่ร้าน' ? (
+                  <div className="space-y-3 bg-amber-50/60 p-3.5 rounded-2xl border border-amber-200 animate-fadeIn">
+                    {/* ข้อมูลโต๊ะ */}
+                    {urlTableNumber ? (
+                      <div className="p-2.5 bg-emerald-50 rounded-xl border border-emerald-300 text-xs flex items-center justify-between text-emerald-950">
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">🍽️</span>
+                          <span className="font-extrabold">สแกนจาก QR ประจำโต๊ะ: โต๊ะ {urlTableNumber}</span>
+                        </div>
+                        <span className="px-2 py-0.5 bg-emerald-600 text-white font-black text-[10px] rounded-lg">
+                          จองโต๊ะเรียบร้อย
+                        </span>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-xs font-semibold text-stone-700 mb-1">
+                          หมายเลขโต๊ะที่นั่ง <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <select
+                            value={selectedTableNumber ? String(selectedTableNumber) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSelectedTableNumber(val ? Number(val) : null);
+                            }}
+                            className="px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-800 focus:outline-none focus:border-red-500"
+                          >
+                            <option value="">-- ไม่ระบุเลขโต๊ะ --</option>
+                            {tables.map((tbl) => (
+                              <option key={tbl.id} value={String(tbl.number)}>
+                                {tbl.name} {tbl.isOccupied ? '(🔴 มีคนนั่ง)' : '(🟢 ว่าง)'}
+                              </option>
+                            ))}
+                            <option value="9">โต๊ะ 9</option>
+                            <option value="10">โต๊ะ 10</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={selectedTableNumber ? String(selectedTableNumber) : ''}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9]/g, '');
+                              setSelectedTableNumber(val ? Number(val) : null);
+                            }}
+                            placeholder="หรือพิมพ์เลขโต๊ะเอง"
+                            className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs focus:outline-none focus:border-red-500"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ชื่อลูกค้า (ไม่ใส่ก็ได้) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ชื่อลูกค้า / ชื่อเรียก <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="เช่น คุณสมศักดิ์, พี่เอก (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500"
+                      />
+                    </div>
+
+                    {/* เบอร์โทรศัพท์ (ไม่ใส่ก็ได้) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        เบอร์โทรศัพท์ <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="เช่น 081-234-5678 (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500"
+                      />
+                    </div>
+                  </div>
+                ) : diningType === 'สั่งกลับบ้าน' ? (
+                  /* 3. กรณีสั่งกลับบ้าน: ชื่อและเบอร์โทร ไม่บังคับใส่ */
+                  <div className="space-y-3 bg-purple-50/70 p-3.5 rounded-2xl border border-purple-200 animate-fadeIn">
+                    <div className="flex items-center gap-2 text-purple-900 font-extrabold text-xs">
+                      <ShoppingBag className="w-4 h-4 text-purple-700 shrink-0" />
+                      <span>🛍️ รูปแบบ: สั่งกลับบ้าน (รอรับที่หน้าร้าน • ไม่มีค่าจัดส่ง)</span>
+                    </div>
+
+                    {/* ชื่อลูกค้า (ไม่บังคับใส่) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ชื่อลูกค้า / ชื่อเรียกรับอาหาร <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="เช่น คุณสมศักดิ์, พี่เอก (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+
+                    {/* เบอร์โทรศัพท์ (ไม่บังคับใส่) */}
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        เบอร์โทรศัพท์ <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
+                      </label>
+                      <input
+                        type="tel"
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="เช่น 081-234-5678 (หรือเว้นว่างไว้)"
+                        className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* 4. กรณีส่งที่บ้าน หรือ นัดรับ: มีช่องพิมพ์ชื่อ และ เบอร์โทรศัพท์ */
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ชื่อลูกค้า / ชื่อเรียกรับอาหาร <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        placeholder="เช่น คุณสมศักดิ์, พี่เอก, น้องมุก"
+                        className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        เบอร์โทรศัพท์ <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        placeholder="เช่น 081-234-5678"
+                        className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* 🎁 แจ้งสิทธิของฟรีเมื่อลูกค้ามีแต้มสะสม */}
+                {customerRewardsNotice.length > 0 && (
+                  <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-300 space-y-1 text-xs text-emerald-950 animate-fadeIn">
+                    <div className="flex items-center gap-1.5 font-black text-emerald-800">
+                      <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                      <span>🎉 ท่านได้รับสิทธิพิเศษจากแต้มสะสม:</span>
+                    </div>
+                    <ul className="list-disc list-inside space-y-0.5 text-emerald-900 font-bold text-[11px] pl-1">
+                      {customerRewardsNotice.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                    <p className="text-[10px] text-emerald-700">
+                      (ระบบจะแจ้งสิทธิ์นี้ไปยังร้านค้า และร้านจะจัดของแถมให้พร้อมกับออเดอร์นี้)
+                    </p>
+                  </div>
+                )}
+
+                {/* --- สรุปข้อมูลสำหรับผู้สั่งสแกนจากโต๊ะ --- */}
+                {(urlTableNumber || diningType === 'มาทานที่ร้าน') && (
+                  <div className="p-3 bg-rose-50/70 rounded-2xl border border-rose-200 text-xs text-stone-800 space-y-1 animate-fadeIn">
+                    <div className="font-extrabold text-red-700 flex items-center gap-1.5 text-xs">
+                      <Store className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                      <span>{SHOP_INFO.name} (อ.ชุมแพ)</span>
+                    </div>
+                    <p className="text-[11px] text-stone-600 leading-relaxed">
+                      ออเดอร์นี้จะถูกส่งไปยังห้องครัวทันทีโดยระบุ {customerName || `โต๊ะ ${urlTableNumber || 1}`} (ไม่มีค่าจัดส่ง)
+                    </p>
+                  </div>
+                )}
+
+                {/* --- 2.1 กรณี ส่งอาหารที่บ้าน: ใส่ที่อยู่ + ปุ่มปักหมุด GPS บ้านลูกค้า (ไม่แสดงแผนที่) --- */}
+                {diningType === 'ส่งอาหารที่บ้าน' && (
+                  <div className="space-y-3 animate-fadeIn">
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        ที่อยู่ / จุดสังเกตส่งอาหาร <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        required
+                        rows={2}
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        placeholder="ระบุบ้านเลขที่ ซอย หมู่บ้าน หรือจุดสังเกต..."
+                        className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm focus:outline-none focus:border-red-500 focus:bg-white"
+                      />
+                    </div>
+
+                    {/* ปุ่ม ปักหมุด GPS บ้านลูกค้า (ไม่ต้องแสดงแผนที่เพราะกินพื้นที่หน้าจอ) */}
+                    <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-stone-700 flex items-center gap-1.5">
+                          <MapPin className="w-4 h-4 text-red-600" />
+                          <span>พิกัด GPS บ้านลูกค้า</span>
+                        </span>
+                        {gpsLocation && (
+                          <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <span>ปักหมุดแล้ว</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* ปุ่มกดเพื่อดึงพิกัด GPS */}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <button
+                          type="button"
+                          onClick={handleLocateCustomer}
+                          disabled={isLocating}
+                          className="flex-1 py-2.5 px-3 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-300 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center justify-center gap-1.5"
+                        >
+                          {isLocating ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>กำลังค้นหาพิกัด GPS...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Navigation className="w-4 h-4" />
+                              <span>{gpsLocation ? '🔄 ปักหมุด GPS ใหม่' : '📍 ปักหมุด GPS บ้านลูกค้า'}</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowManualGps(!showManualGps)}
+                          className="py-2.5 px-3 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-semibold border border-stone-300 transition"
+                        >
+                          {showManualGps ? 'ปิดช่องระบุพิกัด' : 'ระบุพิกัด/ลิงก์'}
+                        </button>
+                      </div>
+
+                      {/* แสดงพิกัดและระยะทางที่คำนวณได้ */}
+                      {gpsLocation && (
+                        <div className="p-2.5 bg-white rounded-xl border border-stone-200 text-xs text-stone-700 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-stone-600">ระยะทางจากร้าน:</span>
+                            <strong className="text-sm text-red-600">{distanceKm} กม.</strong>
+                          </div>
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="text-stone-500">ค่าจัดส่ง:</span>
+                            <span className="font-bold text-emerald-700">
+                              {deliveryFee === 0 ? 'ฟรี 0 บาท' : `${deliveryFee} บาท`}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-stone-400 font-mono pt-0.5 truncate">
+                            พิกัด: {gpsLocation.lat.toFixed(5)}, {gpsLocation.lng.toFixed(5)}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ช่องใส่พิกัดแบบ Manual / Google Maps URL หากดึง GPS ไม่ได้ */}
+                      {showManualGps && (
+                        <div className="p-2.5 bg-white rounded-xl border border-stone-300 space-y-1.5 text-xs">
+                          <label className="text-[11px] font-semibold text-stone-600">
+                            วางลิงก์ Google Maps หรือพิกัด (เช่น 16.5373606, 102.102266):
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={manualGpsInput}
+                              onChange={(e) => setManualGpsInput(e.target.value)}
+                              placeholder="วางพิกัด เช่น 16.5373606, 102.102266"
+                              className="flex-1 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleApplyManualGps}
+                              className="px-3 py-1.5 bg-stone-800 hover:bg-stone-900 text-white rounded-lg text-xs font-bold shrink-0"
+                            >
+                              ตกลง
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 2.3 หากตำแหน่ง GPS อยู่นอกเขตบริการเกิน 12 กิโลเมตร */}
+                      {isOutOfDeliveryZone && (
+                        <div className="p-3 bg-amber-50 rounded-xl border-2 border-amber-300 text-xs text-amber-950 space-y-2 animate-fadeIn">
+                          <div className="flex items-center gap-1.5 font-black text-amber-900 text-xs sm:text-sm">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>นอกเขตพื้นที่บริการ (ระยะทาง {distanceKm} กม. เกิน 12 กม.)</span>
+                          </div>
+                          <p className="text-[11px] text-stone-700 leading-relaxed">
+                            ตำแหน่งบ้านลูกค้าอยู่นอกเขตบริการจัดส่งเดลิเวอรี่ของร้าน (บริการจัดส่งภายใน 12 กม.)
+                          </p>
+
+                          <div className="pt-1.5 border-t border-amber-200">
+                            <p className="font-bold text-stone-800 mb-1.5">ต้องการสั่งต่อหรือไม่?</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setIsOutOfZoneProceed('no')}
+                                className={`py-1.5 px-2.5 rounded-xl font-bold text-xs border transition ${
+                                  isOutOfZoneProceed === 'no'
+                                    ? 'bg-stone-800 text-white border-stone-900'
+                                    : 'bg-white text-stone-700 border-stone-300 hover:bg-stone-100'
+                                }`}
+                              >
+                                ❌ ไม่ต้องการ
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsOutOfZoneProceed('yes')}
+                                className={`py-1.5 px-2.5 rounded-xl font-bold text-xs border transition ${
+                                  isOutOfZoneProceed === 'yes'
+                                    ? 'bg-amber-500 text-stone-950 font-black border-amber-600 ring-2 ring-amber-300'
+                                    : 'bg-white text-amber-900 border-amber-400 hover:bg-amber-100'
+                                }`}
+                              >
+                                ✅ ต้องการ
+                              </button>
+                            </div>
+                          </div>
+
+                          {isOutOfZoneProceed === 'no' && (
+                            <div className="p-2 bg-rose-50 rounded-lg border border-rose-200 text-rose-800 text-[11px] font-semibold">
+                              ขออภัยในความไม่สะดวกครับ ทางร้านให้บริการนำส่งถึงบ้านภายในระยะ 12 กม. เท่านั้น
+                            </div>
+                          )}
+
+                          {isOutOfZoneProceed === 'yes' && (
+                            <div className="p-2.5 bg-white rounded-xl border border-amber-300 space-y-2 text-xs">
+                              <p className="font-bold text-stone-800">
+                                ท่านสามารถเปลี่ยนเป็นรูปแบบนัดรับกลับบ้านได้:
+                              </p>
+                              <div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDiningType('นัดรับอาหาร');
+                                    setIsOutOfZoneProceed(null);
+                                    onNotify('เปลี่ยนรูปแบบเป็น: นัดรับอาหาร (รับกลับบ้าน)', 'info');
+                                  }}
+                                  className="w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-500 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-xs ring-1 ring-amber-500"
+                                >
+                                  <MapPin className="w-4 h-4" />
+                                  <span>เปลี่ยนเป็น "นัดรับอาหารที่ร้าน (รับกลับบ้าน)" ฟรีค่าจัดส่ง</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* --- 3. กรณี นัดรับอาหาร: แจ้งเบอร์โทรร้านเพื่อนัดรับ + สรุปยอดค่าอาหาร (ยังไม่รวมค่าส่ง) --- */}
+                {diningType === 'นัดรับอาหาร' && (
+                  <div className="p-3.5 bg-amber-50 rounded-2xl border-2 border-amber-300 text-xs text-amber-950 space-y-2.5 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-black text-amber-900 text-xs sm:text-sm">
+                        <MapPin className="w-4 h-4 text-amber-600" />
+                        <span>นัดรับอาหาร (โทรนัดหมายกับทางร้าน)</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-amber-200 text-amber-950 rounded-full font-black text-[10px] border border-amber-400">
+                        📍 นัดรับ
+                      </span>
+                    </div>
+
+                    {/* กล่องเบอร์โทรร้านเพื่อนัดรับ */}
+                    <div className="p-2.5 bg-white rounded-xl border border-amber-200 flex items-center justify-between gap-2 shadow-2xs">
+                      <div>
+                        <div className="text-[11px] text-stone-500 font-medium">เบอร์โทรติดต่อร้านเพื่อนัดรับ:</div>
+                        <div className="text-sm font-black text-red-600 tracking-wide">
+                          {settings?.phone || '085-045-1606'}
+                        </div>
+                      </div>
+                      <a
+                        href={`tel:${(settings?.phone || '085-045-1606').replace(/[^0-9]/g, '')}`}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-xs shrink-0 transition"
+                      >
+                        <PhoneCall className="w-3.5 h-3.5" />
+                        <span>โทรนัดรับ</span>
+                      </a>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-stone-700 mb-1">
+                        จุดนัดรับ / ข้อความระบุถึงร้าน <span className="text-stone-400 font-normal">(ถ้ามี หรือโทรนัดหมายได้)</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        placeholder="ระบุจุดนัดพบที่สะดวก หรือช่วงเวลาที่ต้องการนัดรับอาหาร (ถ้ามี)..."
+                        className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Price Summary Breakdown */}
+                <div className="p-4 bg-stone-100/80 rounded-2xl border border-stone-200/80 text-xs space-y-2">
+                  <div className="text-xs font-bold text-stone-800 uppercase tracking-wider pb-1 border-b border-stone-200">
+                    สรุปยอดชำระเงิน
+                  </div>
+                  <div className="flex justify-between text-stone-600">
+                    <span>ค่าอาหาร ({cartItemCount} ชิ้น)</span>
+                    <span className="font-semibold text-stone-900">{foodSubtotal} บาท</span>
+                  </div>
+
+                  {/* ค่าจัดส่งตามรูปแบบการรับอาหาร */}
+                  <div className="flex justify-between text-stone-600 items-center">
+                    <span>
+                      ค่าจัดส่ง
+                      {diningType === 'ส่งอาหารที่บ้าน' && distanceKm !== null
+                        ? ` (${distanceKm} กม.)`
+                        : ''}
+                    </span>
+                    <span className="font-semibold text-stone-900">
+                      {diningType === 'มาทานที่ร้าน' ? (
+                        <span className="text-emerald-600 font-bold">ฟรี 0 บาท (ทานที่ร้าน)</span>
+                      ) : diningType === 'นัดรับอาหาร' ? (
+                        <span className="text-amber-900 font-bold bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                          ยังไม่รวมค่าส่ง
+                        </span>
+                      ) : gpsLocation ? (
+                        deliveryFee === 0 ? (
+                          <span className="text-emerald-600 font-bold">ฟรี 0 บาท</span>
+                        ) : (
+                          `${deliveryFee} บาท`
+                        )
+                      ) : (
+                        <span className="text-amber-700 font-medium">รอระบุ GPS</span>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-sm font-extrabold text-red-600 pt-2 border-t border-stone-200 items-baseline">
+                    <span>ยอดรวมทั้งหมด</span>
+                    <div className="text-right">
+                      <span className="text-base font-black">
+                        {diningType === 'ส่งอาหารที่บ้าน' ? totalAmount : foodSubtotal} บาท
+                      </span>
+                      {diningType === 'นัดรับอาหาร' && (
+                        <span className="block text-[10px] text-amber-700 font-medium">
+                          *(ยังไม่รวมค่าส่ง)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Order Submit Button */}
+              <div className="pt-2">
+                {settings?.isOpen === false ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full py-3.5 bg-rose-600 text-white font-extrabold text-sm rounded-2xl shadow-md opacity-90 cursor-not-allowed text-center"
+                  >
+                    ขณะนี้ร้านปิด ยังไม่สามารถสั่งอาหารได้
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={
+                      isSubmittingOrder ||
+                      cart.length === 0 ||
+                      (diningType === 'ส่งอาหารที่บ้าน' && isOutOfDeliveryZone && isOutOfZoneProceed !== 'yes') ||
+                      (diningType === 'ส่งอาหารที่บ้าน' && isOutOfZoneProceed === 'no')
+                    }
+                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 active:scale-98 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-extrabold text-base rounded-2xl shadow-md transition flex items-center justify-center gap-2"
+                  >
+                    {isSubmittingOrder ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>กำลังส่งคำสั่งซื้อ...</span>
+                      </span>
+                    ) : diningType === 'ส่งอาหารที่บ้าน' && !gpsLocation ? (
+                      <span>ปักหมุด GPS แล้ว ยืนยัน สั่งอาหาร ({diningType})</span>
+                    ) : diningType === 'ส่งอาหารที่บ้าน' && isOutOfDeliveryZone && isOutOfZoneProceed !== 'yes' ? (
+                      <span>นอกเขตบริการ (เลือกเปลี่ยนรูปแบบการรับ)</span>
+                    ) : (
+                      <span>ยืนยัน สั่งอาหาร ({diningType})</span>
+                    )}
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 14, 15, 16. Order Success Modal:
+          "หลังสั่งสำเร็จแสดงเลขออเดอร์"
+          "แสดงเพียง “สั่งอาหารเรียบร้อย รอร้านติดต่อกลับ”"
+          "ลูกค้าไม่ต้องเห็นสถานะออเดอร์" */}
+      {completedOrderNumber && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-xs p-4 animate-fadeIn">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl text-center space-y-4 border border-stone-200">
+            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-10 h-10 stroke-[2.5]" />
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="text-xs font-bold text-stone-400 uppercase tracking-widest">
+                เลขออเดอร์ของคุณ
+              </span>
+              <div className="text-2xl font-black text-red-600 tracking-wider">
+                #{completedOrderNumber}
+              </div>
+            </div>
+
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 text-stone-700 font-bold text-sm">
+              สั่งอาหารเรียบร้อย รอร้านติดต่อกลับ
+            </div>
+
+            {/* Dining Type summary badge */}
+            <div className="flex justify-center">
+              {completedOrderDiningType === 'มาทานที่ร้าน' ? (
+                <div className="space-y-1">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-900 border border-emerald-300 rounded-full text-xs font-black">
+                    <Store className="w-3.5 h-3.5 text-emerald-700" />
+                    <span>🍽️ รูปแบบ: มาทานที่ร้าน {selectedTableNumber ? `(โต๊ะ ${selectedTableNumber})` : ''}</span>
+                  </span>
+                  <p className="text-[11px] text-stone-500 font-medium">
+                    ทางร้านกำลังปรุงอาหารและจะนำไปเสิร์ฟที่ โต๊ะ {selectedTableNumber || urlTableNumber} ครับ
+                  </p>
+                </div>
+              ) : completedOrderDiningType === 'สั่งกลับบ้าน' ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-100 text-purple-900 border border-purple-300 rounded-full text-xs font-black">
+                  <ShoppingBag className="w-3.5 h-3.5 text-purple-700" />
+                  <span>🛍️ รูปแบบ: สั่งกลับบ้าน (รอรับหน้าร้าน)</span>
+                </span>
+              ) : completedOrderDiningType === 'นัดรับอาหาร' ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-400 text-stone-950 border-2 border-amber-600 rounded-full text-xs font-black shadow-xs">
+                  <MapPin className="w-3.5 h-3.5 text-stone-950" />
+                  <span>📍 รูปแบบ: นัดรับอาหาร (โทรนัดหมายร้าน)</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-sky-100 text-sky-900 border border-sky-300 rounded-full text-xs font-bold">
+                  <Truck className="w-3.5 h-3.5 text-sky-700" />
+                  <span>🛵 รูปแบบ: ส่งอาหารที่บ้าน</span>
+                </span>
+              )}
+            </div>
+
+            {/* 🎁 แจ้งสิทธิพิเศษที่ได้รับ */}
+            {completedOrderRewards.length > 0 && (
+              <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-300 text-xs text-emerald-950 text-left space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-emerald-800">
+                  <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span>🎉 สิทธิ์พิเศษที่คุณได้รับจากแต้มสะสม:</span>
+                </div>
+                <ul className="list-disc list-inside text-[11px] font-bold text-emerald-900 pl-1 space-y-0.5">
+                  {completedOrderRewards.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-emerald-700 pt-0.5">
+                  (ระบบแจ้งสิทธิ์ไปยังร้านแล้ว และร้านจะจัดของแถมให้พร้อมออเดอร์นี้)
+                </p>
+              </div>
+            )}
+
+            {/* ⚠️ แจ้งเตือนนอกเขตบริการเกิน 12 กม. */}
+            {completedOrderIsOutOfZone && (
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-300 text-xs text-amber-950 text-left space-y-1">
+                <div className="flex items-center gap-1.5 font-black text-amber-900">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>แจ้งเตือน: นอกเขตบริการ (เกิน 12 กม.)</span>
+                </div>
+                <p className="text-[11px] text-amber-900 leading-relaxed font-medium">
+                  รายการออเดอร์เข้าสู่ระบบเรียบร้อย เนื่องจากระยะทางเกิน 12 กม. ทางร้านจะโทรติดต่อกลับเพื่อพิจารณาการจัดส่งหรือแจ้งให้ทราบครับ
+                </p>
+              </div>
+            )}
+
+            <p className="text-xs text-stone-500 leading-relaxed">
+              ทางร้าน {SHOP_INFO.name} ได้รับรายการแล้ว จะรีบโทรยืนยันและนำส่งความอร่อยถึงบ้านครับ
+            </p>
+
+            <button
+              onClick={() => setCompletedOrderNumber(null)}
+              className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition shadow-sm"
+            >
+              ตกลง
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sticky Bottom Bar for Cart summary */}
+      {cartItemCount > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-30 p-3 bg-white/95 backdrop-blur-md border-t border-stone-200 shadow-xl">
+          <div className="max-w-xl mx-auto flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs text-stone-500">
+                เลือกไว้ {cartItemCount} รายการ
+              </div>
+              <div className="text-lg font-black text-red-600">
+                {foodSubtotal + deliveryFee}{' '}
+                <span className="text-xs font-normal text-stone-600">บาท (รวมส่ง)</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setIsCartOpen(true)}
+              className="flex items-center gap-2 py-3 px-6 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-extrabold text-sm rounded-xl shadow-md transition"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              <span>ดูตะกร้า & สั่งอาหาร</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* LINE OA QR Code Modal */}
+      {isQrModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-fadeIn text-stone-900">
+          <div className="w-full max-w-xs bg-white rounded-3xl p-5 shadow-2xl text-center space-y-3.5 border border-stone-200">
+            <div className="flex justify-between items-center pb-2 border-b border-stone-100">
+              <h3 className="font-extrabold text-sm text-stone-900">
+                LINE OA {settings?.lineName || settings?.lineOaName || 'บ้าน สเต็กออนไลน์'}
+              </h3>
+              <button
+                onClick={() => setIsQrModalOpen(false)}
+                className="p-1 rounded-lg text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200 inline-block mx-auto shadow-2xs">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(
+                  settings?.lineUrl || 'https://line.me/ti/p/~0850451606'
+                )}`}
+                alt="QR Code LINE OA"
+                className="w-44 h-44 object-contain mx-auto"
+              />
+            </div>
+
+            <p className="text-xs text-stone-500 font-medium">
+              สแกน QR Code ด้วยแอป LINE เพื่อเพิ่มเพื่อนและสั่งอาหาร
+            </p>
+
+            <a
+              href={settings?.lineUrl || 'https://line.me/ti/p/~0850451606'}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full py-2.5 px-4 bg-[#06C755] hover:bg-[#05b34c] text-white font-extrabold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2"
+            >
+              <MessageCircle className="w-4 h-4 fill-white" />
+              <span>เปิดแอป LINE ทันที</span>
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Footer Note & Admin Access */}
+      <div className="text-center pt-8 pb-4 text-xs text-stone-400 font-medium flex flex-col items-center gap-2">
+        <span>© บ้าน สเต็กออนไลน์ • บริการส่งความอร่อยถึงมือคุณ</span>
+        <button
+          type="button"
+          onClick={onOpenAdminLogin}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-200/50 text-xs font-semibold transition cursor-pointer"
+          title="เข้าสู่ระบบ Admin สำหรับร้านค้า"
+        >
+          <Lock className="w-3.5 h-3.5" />
+          <span>เข้าสู่ระบบ Admin</span>
+        </button>
+      </div>
+
+      {/* Modal สั่งอาหารเพิ่มในออเดอร์เดิมสำหรับลูกค้า */}
+      <CustomerAppendOrderModal
+        isOpen={Boolean(appendOrderTarget)}
+        onClose={() => setAppendOrderTarget(null)}
+        order={appendOrderTarget}
+        menus={menus}
+        onNotify={onNotify}
+      />
+    </div>
+  );
+};
