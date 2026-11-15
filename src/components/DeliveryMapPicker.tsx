@@ -455,7 +455,7 @@ export const DeliveryMapPicker: React.FC<DeliveryMapPickerProps> = ({
       }
       if (onNotify) onNotify('ปักหมุดจากพิกัดเรียบร้อย', 'success');
     } else {
-      setPasteError('รูปแบบพิกัดไม่ถูกต้อง เช่น 16.5447, 102.1005 หรือลิงก์ Google Maps');
+      setPasteError('รูปแบบพิกัดไม่ถูกต้อง เช่น 16.5373606, 102.102266 หรือลิงก์ Google Maps');
     }
   };
 
@@ -560,7 +560,7 @@ export const DeliveryMapPicker: React.FC<DeliveryMapPickerProps> = ({
               setPasteInput(e.target.value);
               setPasteError(null);
             }}
-            placeholder="เช่น 16.5447, 102.1005 หรือ ลิงก์ Google Maps"
+            placeholder="เช่น 16.5373606, 102.102266 หรือ ลิงก์ Google Maps"
             className="flex-1 px-2.5 py-1.5 border border-stone-300 rounded-lg text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"
           />
           <button

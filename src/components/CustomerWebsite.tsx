@@ -4,9 +4,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Compass,
   ExternalLink,
+  Flame,
   Gift,
   Loader2,
   Lock,
@@ -30,11 +33,11 @@ import {
   calculateDistanceKm,
   createOrder,
   getCustomerRewardsByPhone,
+  isDrinkCategory,
   normalizeMenuImageUrl,
   SHOP_INFO,
   sortCategories,
   sortMenus,
-  updateTableStatus,
 } from '../services/menuService';
 import heroImage from '../assets/IMG_20261007_161813.jpg';
 import { audioAlert } from '../utils/audioAlert';
@@ -177,11 +180,8 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         setDiningType('มาทานที่ร้าน');
         setCustomerName(`โต๊ะ ${tableParam}`);
         setAddress(`ทานที่ร้าน โต๊ะ ${tableParam}`);
-        // จองโต๊ะอัตโนมัติในระบบทันทีเมื่อลูกค้าสแกน QR Code ประจำโต๊ะ
-        const tNum = parseInt(tableParam, 10);
-        if (!isNaN(tNum)) {
-          updateTableStatus(`table_${tNum}`, true).catch(() => {});
-        }
+        // หมายเหตุ: ไม่ล็อคสถานะโต๊ะเป็น "เต็ม" ทันทีตอนเปิดลิงก์ เพื่อป้องกันโต๊ะค้างเต็มเมื่อลูกค้ายังไม่ส่งออเดอร์
+        // ระบบจะเปลี่ยนโต๊ะเป็น "ไม่ว่าง" อัตโนมัติเมื่อลูกค้ากดส่งออเดอร์สำเร็จจริงใน createOrder()
       } else if (typeParam) {
         if (typeParam === 'pickup' || typeParam === 'takeaway') {
           setDiningType('นัดรับอาหาร');
@@ -240,8 +240,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
   }, [customerPhone]);
 
-  // Sort categories (สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม)
-  // and menus by category then price ascending (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
+  // Sort menus: food items strictly cheapest -> most expensive, drinks always at bottom
   const sortedCategories = sortCategories(categories);
   const sortedMenus = sortMenus(menus, sortedCategories);
   const visibleMenus = sortedMenus.filter((m) => m.isPublished);
@@ -250,9 +249,133 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       ? visibleMenus
       : visibleMenus.filter((m) => m.category === selectedCategory);
 
-  // GPS Distance & Delivery Fee Calculation
-  const shopLat = settings?.shopLatitude ?? 16.5447;
-  const shopLng = settings?.shopLongitude ?? 102.1005;
+  // Weekly Recommendation Mini Slider: สลับป้าย "เมนูขายดี" และ "เมนูใหม่ล่าสุด" จากข้อมูลออเดอร์และเมนูจริง
+  const sliderTrackRef = React.useRef<HTMLDivElement | null>(null);
+  const [sliderActiveIdx, setSliderActiveIdx] = useState(0);
+  const [isSliderPaused, setIsSliderPaused] = useState(false);
+
+  const weeklyRecommendations = React.useMemo(() => {
+    const published = visibleMenus.filter((m) => m.isAvailable);
+    if (published.length === 0) return [];
+
+    const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const validOrders = orders.filter((o) => !o.isCancelled && o.status !== 'ยกเลิก');
+    const recentOrders = validOrders.filter((o) => {
+      const t = o.createdAt ? new Date(o.createdAt).getTime() : 0;
+      return !isNaN(t) && t >= sevenDaysAgoMs;
+    });
+    const sourceOrders = recentOrders.length > 0 ? recentOrders : validOrders;
+
+    const qtyByMenuId: Record<string, number> = {};
+    const qtyByName: Record<string, number> = {};
+    for (const ord of sourceOrders) {
+      if (!Array.isArray(ord.items)) continue;
+      for (const it of ord.items) {
+        const q = Number(it.quantity) || 1;
+        if (it.menuId) qtyByMenuId[it.menuId] = (qtyByMenuId[it.menuId] || 0) + q;
+        if (it.name) qtyByName[it.name] = (qtyByName[it.name] || 0) + q;
+      }
+    }
+
+    const getSoldCount = (m: MenuItem) => (qtyByMenuId[m.id] || 0) + (qtyByName[m.name] || 0);
+
+    const bestSellers = [...published]
+      .filter((m) => getSoldCount(m) > 0)
+      .sort((a, b) => getSoldCount(b) - getSoldCount(a));
+
+    const newestMenus = [...published].sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tB !== tA) return tB - tA;
+      return b.id.localeCompare(a.id);
+    });
+
+    const result: Array<{
+      item: MenuItem;
+      badgeType: 'bestseller' | 'new';
+      badgeLabel: string;
+      soldCount: number;
+    }> = [];
+    const seenIds = new Set<string>();
+
+    const maxSlots = Math.min(6, published.length);
+    let bIdx = 0;
+    let nIdx = 0;
+    let turn: 'bestseller' | 'new' = bestSellers.length > 0 ? 'bestseller' : 'new';
+
+    for (let safety = 0; safety < published.length * 3 && result.length < maxSlots; safety++) {
+      if (turn === 'bestseller') {
+        while (bIdx < bestSellers.length && seenIds.has(bestSellers[bIdx].id)) bIdx++;
+        if (bIdx < bestSellers.length) {
+          const item = bestSellers[bIdx++];
+          seenIds.add(item.id);
+          result.push({
+            item,
+            badgeType: 'bestseller',
+            badgeLabel: 'เมนูขายดี',
+            soldCount: getSoldCount(item),
+          });
+        }
+        turn = 'new';
+      } else {
+        while (nIdx < newestMenus.length && seenIds.has(newestMenus[nIdx].id)) nIdx++;
+        if (nIdx < newestMenus.length) {
+          const item = newestMenus[nIdx++];
+          seenIds.add(item.id);
+          result.push({
+            item,
+            badgeType: 'new',
+            badgeLabel: 'เมนูใหม่ล่าสุด',
+            soldCount: getSoldCount(item),
+          });
+        }
+        turn = bestSellers.length > 0 ? 'bestseller' : 'new';
+      }
+    }
+
+    return result;
+  }, [visibleMenus, orders]);
+
+  const scrollSliderToIndex = React.useCallback(
+    (nextIdx: number) => {
+      if (!sliderTrackRef.current || weeklyRecommendations.length === 0) return;
+      const wrapped = (nextIdx + weeklyRecommendations.length) % weeklyRecommendations.length;
+      const container = sliderTrackRef.current;
+      const cardEl = container.children[wrapped] as HTMLElement | undefined;
+      if (cardEl) {
+        container.scrollTo({
+          left: cardEl.offsetLeft - container.offsetLeft,
+          behavior: 'smooth',
+        });
+      }
+      setSliderActiveIdx(wrapped);
+    },
+    [weeklyRecommendations.length]
+  );
+
+  React.useEffect(() => {
+    if (weeklyRecommendations.length <= 1 || isSliderPaused) return;
+    const timer = window.setInterval(() => {
+      setSliderActiveIdx((prev) => {
+        const next = (prev + 1) % weeklyRecommendations.length;
+        if (sliderTrackRef.current) {
+          const cardEl = sliderTrackRef.current.children[next] as HTMLElement | undefined;
+          if (cardEl) {
+            sliderTrackRef.current.scrollTo({
+              left: cardEl.offsetLeft - sliderTrackRef.current.offsetLeft,
+              behavior: 'smooth',
+            });
+          }
+        }
+        return next;
+      });
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [weeklyRecommendations.length, isSliderPaused]);
+
+  // GPS Distance & Delivery Fee Calculation (พิกัด บ้านสเต็กออนไลน์ ประยูรพืชผล อ.ชุมแพ จ.ขอนแก่น 40130)
+  const shopLat = settings?.shopLatitude ?? 16.5373606;
+  const shopLng = settings?.shopLongitude ?? 102.102266;
 
   const distanceKm = gpsLocation
     ? calculateDistanceKm(shopLat, shopLng, gpsLocation.lat, gpsLocation.lng)
@@ -925,9 +1048,11 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
           {/* ปุ่มพิกัดร้าน ต่อจาก "เบอร์โทร" "QR Line" พร้อม icon ปักหมุด "มาทานที่ร้าน" อยู่ในแนวเดียวกัน */}
           <a
-            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-              `${settings?.shopLatitude || 16.5447},${settings?.shopLongitude || 102.1005}`
-            )}`}
+            href={
+              Math.abs(shopLat - 16.5373606) < 0.0001 && Math.abs(shopLng - 102.102266) < 0.0001
+                ? 'https://maps.app.goo.gl/mWeWfq28mnEAXro17'
+                : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${shopLat},${shopLng}`)}`
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 hover:text-red-800 border border-red-200 rounded-lg transition font-bold text-xs active:scale-95 shadow-2xs cursor-pointer shrink-0 whitespace-nowrap"
@@ -957,6 +1082,205 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           )}
         </div>
       </div>
+
+      {/* 6.5 แนะนำเมนูประจำสัปดาห์ (Compact Mini Slider ด้านบนรายการอาหาร) */}
+      {weeklyRecommendations.length > 0 && (
+        <section
+          className="bg-gradient-to-br from-amber-50/90 via-white to-rose-50/70 rounded-2xl p-3 border border-amber-200/80 shadow-xs space-y-2.5"
+          onMouseEnter={() => setIsSliderPaused(true)}
+          onMouseLeave={() => setIsSliderPaused(false)}
+          onTouchStart={() => setIsSliderPaused(true)}
+          onTouchEnd={() => setIsSliderPaused(false)}
+          aria-label="แนะนำเมนูประจำสัปดาห์"
+        >
+          {/* Slider Header */}
+          <div className="flex items-center justify-between gap-2 px-0.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <div className="w-6 h-6 rounded-lg bg-red-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                <Sparkles className="w-3.5 h-3.5" />
+              </div>
+              <h2 className="text-sm font-black text-stone-900 tracking-tight truncate">
+                แนะนำเมนูประจำสัปดาห์
+              </h2>
+              {weeklyRecommendations[sliderActiveIdx] && (
+                <span
+                  className={`hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border shrink-0 transition-all ${
+                    weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
+                      ? 'bg-rose-100 text-rose-800 border-rose-200'
+                      : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                  }`}
+                >
+                  {weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
+                    ? '🔥 เมนูขายดี'
+                    : '✨ เมนูใหม่ล่าสุด'}
+                </span>
+              )}
+            </div>
+
+            {weeklyRecommendations.length > 1 && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => scrollSliderToIndex(sliderActiveIdx - 1)}
+                  className="w-6 h-6 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-stone-700 flex items-center justify-center transition active:scale-90 cursor-pointer"
+                  aria-label="เมนูก่อนหน้า"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scrollSliderToIndex(sliderActiveIdx + 1)}
+                  className="w-6 h-6 rounded-lg bg-white hover:bg-stone-100 border border-stone-200 text-stone-700 flex items-center justify-center transition active:scale-90 cursor-pointer"
+                  aria-label="เมนูถัดไป"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Horizontal Compact Mini-Card Track */}
+          <div
+            ref={sliderTrackRef}
+            onScroll={() => {
+              const container = sliderTrackRef.current;
+              if (!container || container.children.length === 0) return;
+              const scrollLeft = container.scrollLeft;
+              let closestIdx = 0;
+              let minDist = Infinity;
+              for (let i = 0; i < container.children.length; i++) {
+                const el = container.children[i] as HTMLElement;
+                const dist = Math.abs(el.offsetLeft - container.offsetLeft - scrollLeft);
+                if (dist < minDist) {
+                  minDist = dist;
+                  closestIdx = i;
+                }
+              }
+              setSliderActiveIdx(closestIdx);
+            }}
+            className="flex items-stretch gap-2.5 overflow-x-auto snap-x snap-mandatory scroll-smooth no-scrollbar pb-0.5"
+          >
+            {weeklyRecommendations.map(({ item, badgeType, badgeLabel, soldCount }) => {
+              const cartItem = cart.find((c) => c.menuItem.id === item.id);
+              const isBest = badgeType === 'bestseller';
+
+              return (
+                <div
+                  key={`weekly_${item.id}`}
+                  className={`min-w-[238px] sm:min-w-[255px] max-w-[265px] shrink-0 snap-start bg-white rounded-xl p-2.5 border shadow-2xs flex items-center gap-2.5 transition ${
+                    isBest ? 'border-rose-200/90' : 'border-emerald-200/90'
+                  }`}
+                >
+                  {/* Thumbnail */}
+                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-stone-100 border border-stone-200 shrink-0">
+                    <img
+                      src={normalizeMenuImageUrl(item.imageUrl, item.name)}
+                      alt={item.name}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
+                      }}
+                      loading="lazy"
+                    />
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch">
+                    <div className="space-y-0.5">
+                      {/* Alternating Badge: เมนูขายดี / เมนูใหม่ล่าสุด */}
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black leading-none border ${
+                            isBest
+                              ? 'bg-rose-50 text-rose-700 border-rose-200'
+                              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}
+                        >
+                          {isBest ? (
+                            <Flame className="w-2.5 h-2.5 text-rose-600" />
+                          ) : (
+                            <Sparkles className="w-2.5 h-2.5 text-emerald-600" />
+                          )}
+                          <span>{badgeLabel}</span>
+                        </span>
+                        {isBest && soldCount > 0 && (
+                          <span className="text-[10px] font-bold text-stone-400 tabular-nums shrink-0">
+                            {soldCount} จาน
+                          </span>
+                        )}
+                      </div>
+
+                      <h3 className="font-bold text-xs sm:text-sm text-stone-900 truncate leading-tight">
+                        {item.name}
+                      </h3>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-1.5 pt-1">
+                      <span className="font-black text-sm text-red-600 tabular-nums">
+                        {item.price} <span className="text-[10px] font-normal text-stone-500">บ.</span>
+                      </span>
+
+                      {cartItem ? (
+                        <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, -1)}
+                            className="w-5 h-5 flex items-center justify-center bg-white text-red-600 rounded shadow-2xs active:scale-90 cursor-pointer"
+                            aria-label={`ลด ${item.name}`}
+                          >
+                            <Minus className="w-2.5 h-2.5" />
+                          </button>
+                          <span className="w-4 text-center text-[11px] font-black text-red-700 tabular-nums">
+                            {cartItem.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, 1)}
+                            className="w-5 h-5 flex items-center justify-center bg-red-600 text-white rounded shadow-2xs active:scale-90 cursor-pointer"
+                            aria-label={`เพิ่ม ${item.name}`}
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleAddToCart(item)}
+                          className="inline-flex items-center gap-0.5 px-2.5 py-1 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-[11px] rounded-lg shadow-2xs transition cursor-pointer"
+                        >
+                          <Plus className="w-3 h-3 stroke-[3]" />
+                          <span>เพิ่ม</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Dot Indicators */}
+          {weeklyRecommendations.length > 1 && (
+            <div className="flex items-center justify-center gap-1 pt-0.5">
+              {weeklyRecommendations.map((rec, idx) => (
+                <button
+                  key={`dot_${rec.item.id}`}
+                  type="button"
+                  onClick={() => scrollSliderToIndex(idx)}
+                  aria-label={`ไปยังเมนูแนะนำที่ ${idx + 1}`}
+                  className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                    idx === sliderActiveIdx
+                      ? 'w-4 bg-red-600'
+                      : 'w-1.5 bg-stone-300 hover:bg-stone-400'
+                  }`}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Category Filter Pills (if any new categories added) */}
       {sortedCategories.length > 1 && (
@@ -1010,17 +1334,31 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
             ไม่มีรายการอาหารในหมวดหมู่นี้
           </div>
         ) : (
-          filteredMenus.map((item) => {
+          filteredMenus.map((item, idx) => {
             const cartItem = cart.find((c) => c.menuItem.id === item.id);
             const isSoldOut = !item.isAvailable;
+            const prevItem = idx > 0 ? filteredMenus[idx - 1] : null;
+            const showDrinkDivider =
+              selectedCategory === 'ทั้งหมด' &&
+              isDrinkCategory(item.category) &&
+              (!prevItem || !isDrinkCategory(prevItem.category)) &&
+              idx > 0;
 
             return (
-              <div
-                key={item.id}
-                className={`bg-white rounded-2xl p-3.5 sm:p-4 border shadow-sm transition flex gap-3.5 items-center ${
-                  isSoldOut ? 'border-rose-200 bg-rose-50/20' : 'border-stone-200'
-                }`}
-              >
+              <React.Fragment key={item.id}>
+                {showDrinkDivider && (
+                  <div className="flex items-center gap-2 pt-3 pb-1 px-1">
+                    <span className="text-xs font-black text-sky-800 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-lg">
+                      🥤 เมนูเครื่องดื่ม
+                    </span>
+                    <div className="h-px flex-1 bg-stone-200" />
+                  </div>
+                )}
+                <div
+                  className={`bg-white rounded-2xl p-3.5 sm:p-4 border shadow-sm transition flex gap-3.5 items-center ${
+                    isSoldOut ? 'border-rose-200 bg-rose-50/20' : 'border-stone-200'
+                  }`}
+                >
                 {/* Food Photo */}
                 <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-stone-100 shrink-0 border border-stone-200">
                   {item.imageUrl ? (
@@ -1077,7 +1415,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   </div>
 
                   <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-stone-100">
-                    <div className="font-extrabold text-lg text-red-600">
+                    <div className="font-extrabold text-lg text-red-600 tabular-nums">
                       {item.price} <span className="text-xs font-normal text-stone-500">บาท</span>
                     </div>
 
@@ -1094,7 +1432,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
-                        <span className="w-6 text-center font-bold text-sm text-red-700">
+                        <span className="w-6 text-center font-bold text-sm text-red-700 tabular-nums">
                           {cartItem.quantity}
                         </span>
                         <button
@@ -1116,6 +1454,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                   </div>
                 </div>
               </div>
+              </React.Fragment>
             );
           })
         )}
@@ -1512,14 +1851,14 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       {showManualGps && (
                         <div className="p-2.5 bg-white rounded-xl border border-stone-300 space-y-1.5 text-xs">
                           <label className="text-[11px] font-semibold text-stone-600">
-                            วางลิงก์ Google Maps หรือพิกัด (เช่น 16.5447, 102.1005):
+                            วางลิงก์ Google Maps หรือพิกัด (เช่น 16.5373606, 102.102266):
                           </label>
                           <div className="flex gap-1.5">
                             <input
                               type="text"
                               value={manualGpsInput}
                               onChange={(e) => setManualGpsInput(e.target.value)}
-                              placeholder="วางพิกัด เช่น 16.5447, 102.1005"
+                              placeholder="วางพิกัด เช่น 16.5373606, 102.102266"
                               className="flex-1 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-lg text-xs"
                             />
                             <button

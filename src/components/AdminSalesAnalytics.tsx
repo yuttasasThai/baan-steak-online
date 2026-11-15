@@ -18,6 +18,7 @@ import {
 import { DailyExpenseRecord, MenuItem, Order } from '../types';
 import { formatOrderTime } from './AdminOrdersManager';
 import { formatDateKeyToThai, normalizeOrderStatus } from '../services/menuService';
+import { AdminSalesDashboard } from './AdminSalesDashboard';
 
 interface AdminSalesAnalyticsProps {
   orders: Order[];
@@ -710,6 +711,14 @@ export const AdminSalesAnalytics: React.FC<AdminSalesAnalyticsProps> = ({
 
   return (
     <div className="space-y-5 text-stone-900 max-w-4xl mx-auto">
+      {/* Immediate Overview: Daily / Weekly / Monthly Summary Cards + Recharts Line Chart */}
+      <AdminSalesDashboard
+        orders={orders}
+        menus={menus}
+        dailyExpenses={dailyExpenses}
+        onSelectDateKey={(dateKey) => setSelectedDateKey(dateKey)}
+      />
+
       {/* Header & Filter Controls */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 border border-stone-200 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div>

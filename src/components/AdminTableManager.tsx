@@ -21,10 +21,13 @@ import {
   Zap,
 } from 'lucide-react';
 import QRCode from 'qrcode';
-import { RestaurantTable } from '../types';
+import { Order, RestaurantTable } from '../types';
 import {
   addCustomTable,
   deleteTable,
+  extractOrderTableIdentifier,
+  isOrderHoldingTable,
+  reconcileTablesWithOrders,
   setAllTablesStatus,
   setTotalTableCount,
   updateTableStatus,
@@ -32,11 +35,13 @@ import {
 
 interface AdminTableManagerProps {
   tables: RestaurantTable[];
+  orders?: Order[];
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
   tables,
+  orders = [],
   onNotify,
 }) => {
   const [activeTab, setActiveTab] = useState<'tables' | 'table_qrs' | 'pickup_qr'>('tables');
@@ -107,18 +112,46 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
   const occupiedCount = tables.filter((t) => t.isOccupied).length;
   const availableCount = totalTables - occupiedCount;
 
+  // Map of table numbers currently holding an active dine-in order
+  const activeOrderTableMap = React.useMemo(() => {
+    const map = new Map<string, Order>();
+    for (const ord of orders) {
+      if (!isOrderHoldingTable(ord)) continue;
+      const key = extractOrderTableIdentifier(ord);
+      if (key) {
+        map.set(key, ord);
+        const parsed = parseInt(key, 10);
+        if (!isNaN(parsed)) map.set(String(parsed), ord);
+      }
+    }
+    return map;
+  }, [orders]);
+
   // Toggle table occupancy status (ว่าง <-> เต็ม)
   const handleToggleTable = async (table: RestaurantTable) => {
     try {
       const nextStatus = !table.isOccupied;
-      await updateTableStatus(table.id, nextStatus);
+      await updateTableStatus(table.id, nextStatus, 'manual');
       if (nextStatus) {
-        onNotify(`🔴 เปลี่ยน "${table.name}" เป็น: โต๊ะเต็ม (มีลูกค้านั่ง)`, 'info');
+        onNotify(`🔴 เปลี่ยน "${table.name}" เป็น: โต๊ะเต็ม (ตั้งค่าโดยแอดมิน)`, 'info');
       } else {
         onNotify(`🟢 เปลี่ยน "${table.name}" เป็น: โต๊ะว่าง (พร้อมรับลูกค้าใหม่)`, 'success');
       }
     } catch (err) {
       onNotify('ไม่สามารถเปลี่ยนสถานะโต๊ะได้ กรุณาลองใหม่อีกครั้ง', 'error');
+    }
+  };
+
+  const handleSyncTablesWithOrders = async () => {
+    try {
+      const changed = await reconcileTablesWithOrders(tables, orders);
+      if (changed) {
+        onNotify('🔄 ซิงก์และเคลียร์โต๊ะที่ไม่มีออเดอร์ค้างให้เป็น "ว่าง" เรียบร้อยแล้ว', 'success');
+      } else {
+        onNotify('✅ สถานะโต๊ะทุกโต๊ะตรงกับออเดอร์ปัจจุบันเรียบร้อยดีครับ', 'info');
+      }
+    } catch {
+      onNotify('ไม่สามารถซิงก์สถานะโต๊ะได้', 'error');
     }
   };
 
@@ -398,6 +431,16 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
 
               <button
                 type="button"
+                onClick={handleSyncTablesWithOrders}
+                className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-300 font-bold rounded-xl flex items-center gap-1 transition cursor-pointer"
+                title="ตรวจสอบออเดอร์ปัจจุบันและล้างสถานะโต๊ะค้างอัตโนมัติ"
+              >
+                <Zap className="w-3.5 h-3.5 text-sky-600" />
+                <span>ซิงก์ตามออเดอร์จริง</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setShowAddCustomModal(true)}
                 className="px-3 py-1.5 bg-stone-900 hover:bg-stone-800 text-white font-bold rounded-xl flex items-center gap-1 transition cursor-pointer"
               >
@@ -415,14 +458,14 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
                 <span>แตะที่ปุ่มสถานะของแต่ละโต๊ะเพื่อสลับ "ว่าง" / "เต็ม" ได้ทันที:</span>
               </div>
               <span className="text-[11px] text-stone-400">
-                เมื่อลูกค้ากดส่งออเดอร์จากโต๊ะ สถานะจะเปลี่ยนเป็น "เต็ม" อัตโนมัติ
+                โต๊ะจะเปลี่ยนเป็น "เต็ม" เมื่อมีออเดอร์จริง และว่างอัตโนมัติเมื่อเช็คบิล/ยกเลิก
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {tables.map((table) => {
                 const isFull = table.isOccupied;
-                const qrUrl = tableQrMap[table.id];
+                const activeOrd = activeOrderTableMap.get(String(table.number));
 
                 return (
                   <div
@@ -440,7 +483,13 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
                           {table.name}
                         </span>
                         <span className="text-[10px] text-stone-500 font-medium">
-                          สำหรับทานที่ร้าน
+                          {isFull
+                            ? activeOrd
+                              ? `ออเดอร์ #${activeOrd.orderNumber}`
+                              : table.occupiedSource === 'manual'
+                              ? 'แอดมินตั้งค่าโต๊ะเต็ม'
+                              : 'สำหรับทานที่ร้าน'
+                            : 'พร้อมรับลูกค้า'}
                         </span>
                       </div>
 

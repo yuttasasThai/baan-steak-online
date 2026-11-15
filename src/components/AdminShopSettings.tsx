@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -116,13 +116,22 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
   );
   const [isTestingNotification, setIsTestingNotification] = useState(false);
 
-  // GPS Coordinates
+  // GPS Coordinates (พิกัด บ้านสเต็กออนไลน์ ประยูรพืชผล อ.ชุมแพ จ.ขอนแก่น 40130)
   const [shopLatitude, setShopLatitude] = useState<string>(
-    settings.shopLatitude?.toString() || '16.5447'
+    settings.shopLatitude?.toString() || '16.5373606'
   );
   const [shopLongitude, setShopLongitude] = useState<string>(
-    settings.shopLongitude?.toString() || '102.1005'
+    settings.shopLongitude?.toString() || '102.102266'
   );
+
+  useEffect(() => {
+    if (typeof settings.shopLatitude === 'number' && !isNaN(settings.shopLatitude)) {
+      setShopLatitude(settings.shopLatitude.toString());
+    }
+    if (typeof settings.shopLongitude === 'number' && !isNaN(settings.shopLongitude)) {
+      setShopLongitude(settings.shopLongitude.toString());
+    }
+  }, [settings.shopLatitude, settings.shopLongitude]);
 
   const [isSaving, setIsSaving] = useState(false);
 
@@ -1017,7 +1026,12 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
               <span>พิกัด GPS ร้านค้า (จุดคำนวณระยะทางจัดส่ง)</span>
             </div>
             <a
-              href={`https://www.google.com/maps?q=${shopLatitude},${shopLongitude}`}
+              href={
+                Math.abs(parseFloat(shopLatitude) - 16.5373606) < 0.0001 &&
+                Math.abs(parseFloat(shopLongitude) - 102.102266) < 0.0001
+                  ? 'https://maps.app.goo.gl/mWeWfq28mnEAXro17'
+                  : `https://www.google.com/maps?q=${shopLatitude},${shopLongitude}`
+              }
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs font-bold text-red-600 hover:text-red-700 flex items-center gap-1"
@@ -1027,9 +1041,30 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
             </a>
           </div>
 
-          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
-            <strong>คำชี้แจง:</strong> พิกัดนี้คือจุดศูนย์กลางของร้านที่ใช้คำนวณระยะทางจริงไปยัง GPS ของลูกค้า
-            (ระบบจะไม่ใช้ GPS ของเครื่อง Admin โดยอัตโนมัติ เพื่อความแม่นยำสูงสุดของหน้าร้าน)
+          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed space-y-2">
+            <div>
+              <strong>คำชี้แจง:</strong> พิกัดนี้คือจุดศูนย์กลางของร้าน (<strong>บ้านสเต็กออนไลน์ ประยูรพืชผล ต.ชุมแพ อ.ชุมแพ จ.ขอนแก่น 40130</strong>) ที่ใช้คำนวณระยะทางจริงไปยัง GPS ของลูกค้า
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                setShopLatitude('16.5373606');
+                setShopLongitude('102.102266');
+                try {
+                  await updateShopSettings({
+                    shopLatitude: 16.5373606,
+                    shopLongitude: 102.102266,
+                  });
+                  onNotify('📍 อัปเดตหมุดร้านเป็น "บ้านสเต็กออนไลน์ ประยูรพืชผล (16.5373606, 102.102266)" เรียบร้อยแล้ว', 'success');
+                } catch {
+                  onNotify('ตั้งค่าพิกัดบนหน้าจอแล้ว กดบันทึกการตั้งค่าเพื่อซิงก์', 'info');
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-lg font-bold text-[11px] transition cursor-pointer shadow-2xs"
+            >
+              <MapPin className="w-3.5 h-3.5 text-red-600" />
+              <span>ใช้หมุดปักร้านล่าสุด (16.5373606, 102.102266)</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1043,7 +1078,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
                 required
                 value={shopLatitude}
                 onChange={(e) => setShopLatitude(e.target.value)}
-                placeholder="16.5447"
+                placeholder="16.5373606"
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm font-mono font-medium focus:outline-none focus:border-red-500 focus:bg-white"
               />
             </div>
@@ -1057,7 +1092,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
                 required
                 value={shopLongitude}
                 onChange={(e) => setShopLongitude(e.target.value)}
-                placeholder="102.1005"
+                placeholder="102.102266"
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-sm font-mono font-medium focus:outline-none focus:border-red-500 focus:bg-white"
               />
             </div>

@@ -24,6 +24,7 @@ import { CategoryItem, MenuItem } from '../types';
 import { compressImageFile } from '../utils/imageCompressor';
 import {
   addMenuItem,
+  cleanupLegacyAutoSeededMenus,
   deleteMenuItem,
   initializeBaanSteakMenu,
   normalizeMenuImageUrl,
@@ -60,6 +61,8 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [itemToDelete, setItemToDelete] = useState<MenuItem | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [isCleaningMockDrinks, setIsCleaningMockDrinks] = useState(false);
 
   // Link Generator Modal state
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
@@ -122,6 +125,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   // and menus by category then price ascending (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
   const sortedCategories = sortCategories(categories);
   const sortedMenus = sortMenus(menus, sortedCategories);
+  const autoSeededMockDrinks = sortedMenus.filter((m) => /^menu_drink_\d+$/.test(m.id));
 
   const filteredMenus = sortedMenus.filter((m) => {
     const matchSearch =
@@ -135,7 +139,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     try {
       setIsReordering(true);
       await reorderMenusByCategoryAndPrice(sortedCategories);
-      onNotify('⚡ จัดเรียงลำดับเมนู (สเต็ก/สลัด/ทานเล่น/เครื่องดื่ม & ถูก->แพง) ใน Firestore เรียบร้อยแล้ว', 'success');
+      onNotify('⚡ จัดเรียงลำดับเมนู (อาหารราคาถูก->แพง และเครื่องดื่มไว้ด้านล่าง) ใน Firestore เรียบร้อยแล้ว', 'success');
     } catch (err) {
       console.error('Auto reorder error:', err);
       onNotify('เกิดข้อผิดพลาดในการจัดเรียงเมนู', 'error');
@@ -202,17 +206,33 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     setInlinePriceId(null);
   };
 
-  const handleResetToBaanSteakExact = async () => {
-    if (window.confirm('ต้องการรีเซ็ตเมนูในฐานข้อมูลให้เป็น 5 เมนูหลักของ "บ้าน สเต็กออนไลน์" หรือไม่?')) {
-      try {
-        setIsResetting(true);
-        await initializeBaanSteakMenu(true);
-        onNotify('รีเซ็ตเป็น 5 เมนูหลักของร้านเรียบร้อย', 'success');
-      } catch (err) {
-        onNotify('เกิดข้อผิดพลาดในการรีเซ็ต', 'error');
-      } finally {
-        setIsResetting(false);
-      }
+  const handleCleanupAutoSeededDrinks = async () => {
+    if (autoSeededMockDrinks.length === 0) return;
+    try {
+      setIsCleaningMockDrinks(true);
+      const count = await cleanupLegacyAutoSeededMenus(autoSeededMockDrinks.map((m) => m.id));
+      onNotify(
+        `🧹 ลบเมนูเครื่องดื่มตัวอย่างที่ระบบเดิมสร้างอัตโนมัติออกแล้ว ${count} รายการ (เมนูของร้านยังอยู่ครบทั้งหมด)`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Cleanup legacy drinks error:', err);
+      onNotify('ไม่สามารถลบเมนูตัวอย่างอัตโนมัติได้', 'error');
+    } finally {
+      setIsCleaningMockDrinks(false);
+    }
+  };
+
+  const handleConfirmResetToBaanSteakExact = async () => {
+    try {
+      setIsResetting(true);
+      await initializeBaanSteakMenu(true);
+      setIsResetConfirmOpen(false);
+      onNotify('รีเซ็ตเป็นเมนูเริ่มต้นเรียบร้อยแล้ว', 'success');
+    } catch (err) {
+      onNotify('เกิดข้อผิดพลาดในการรีเซ็ต', 'error');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -257,7 +277,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
             onClick={handleAutoReorder}
             disabled={isReordering}
             className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50"
-            title="จัดเรียงเมนูอัตโนมัติ: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม และเรียงจากราคาน้อยไปหามาก"
+            title="จัดเรียงเมนูอัตโนมัติ: เมนูอาหารเรียงจากราคาถูกไปแพง และจัดเครื่องดื่มไว้ด้านล่าง"
           >
             <Zap className={`w-3.5 h-3.5 text-amber-600 ${isReordering ? 'animate-spin' : ''}`} />
             <span>⚡ จัดเรียงลำดับเมนู (ถูก-&gt;แพง)</span>
@@ -272,10 +292,11 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           </button>
 
           <button
-            onClick={handleResetToBaanSteakExact}
+            type="button"
+            onClick={() => setIsResetConfirmOpen(true)}
             disabled={isResetting}
-            className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
-            title="รีเซ็ตให้เป็น 5 เมนูหลักของร้านตามที่กำหนด"
+            className="px-3 py-2 bg-stone-100 hover:bg-rose-50 hover:text-rose-700 text-stone-600 border border-stone-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+            title="คำเตือน: รีเซ็ตล้างเมนูทั้งหมดกลับเป็นชุดเริ่มต้น"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
             <span>รีเซ็ตเมนูเริ่มต้น</span>
@@ -343,6 +364,36 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
         </div>
       </div>
 
+      {/* Alert Banner when legacy auto-injected mock drinks exist in Firestore */}
+      {autoSeededMockDrinks.length > 0 && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-950 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className="text-xs leading-relaxed">
+              <div className="font-extrabold text-amber-900">
+                พบเมนูเครื่องดื่มตัวอย่าง {autoSeededMockDrinks.length} รายการ ที่ระบบเวอร์ชันเดิมสร้างอัตโนมัติ:
+              </div>
+              <div className="text-amber-800 mt-0.5">
+                {autoSeededMockDrinks.map((d) => `"${d.name}"`).join(', ')} (เมนูที่ร้านเพิ่มเองจะไม่ถูกลบ)
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleCleanupAutoSeededDrinks}
+            disabled={isCleaningMockDrinks}
+            className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+          >
+            {isCleaningMockDrinks ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            <span>ลบเมนูตัวอย่างอัตโนมัติออก ({autoSeededMockDrinks.length})</span>
+          </button>
+        </div>
+      )}
+
       {/* Filter and Search */}
       <div className="bg-white rounded-2xl p-3 border border-stone-200 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
         <div className="relative flex-1">
@@ -390,12 +441,15 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
         ) : filteredMenus.length === 0 ? (
           <div className="py-16 text-center text-stone-400 text-sm space-y-2">
             <div>ไม่พบรายการอาหาร</div>
-            <button
-              onClick={handleResetToBaanSteakExact}
-              className="text-xs text-red-600 font-bold underline"
-            >
-              คลิกเพื่อนำเข้า 5 เมนูหลักของร้านทันที
-            </button>
+            {menus.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(true)}
+                className="text-xs text-red-600 font-bold underline"
+              >
+                คลิกเพื่อนำเข้าเมนูเริ่มต้นของร้าน
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -446,6 +500,11 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                         }`}>
                           {item.isAvailable ? '🟢 พร้อมขาย' : '🔴 หมด'}
                         </span>
+                        {/^menu_drink_\d+$/.test(item.id) && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                            ตัวอย่างระบบเดิม
+                          </span>
+                        )}
                         <span className="text-[10px] text-stone-400">
                           {item.isPublished ? 'แสดงบนเว็บ' : 'ซ่อน'}
                         </span>
@@ -592,6 +651,11 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                           <div className="min-w-0">
                             <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-1.5">
                               <span>{item.name}</span>
+                              {/^menu_drink_\d+$/.test(item.id) && (
+                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
+                                  ตัวอย่างระบบเดิม
+                                </span>
+                              )}
                             </div>
                             {item.description && (
                               <div className="text-[11px] text-stone-500 line-clamp-1">
@@ -735,6 +799,43 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                 className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-sm"
               >
                 ยืนยันการลบ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Explicit Two-Step Reset Confirmation Modal */}
+      {isResetConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-fadeIn text-stone-900">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-3 border-2 border-rose-300">
+            <div className="flex items-center gap-2 text-rose-600">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <h3 className="font-extrabold text-base">คำเตือน: ล้างและรีเซ็ตเมนูทั้งหมด</h3>
+            </div>
+            <p className="text-xs text-stone-700 leading-relaxed">
+              การกดปุ่มนี้จะ <strong className="text-rose-600">ลบรายการเมนูและราคาปัจจุบันทั้งหมด</strong> ที่ร้านแก้ไขไว้ แล้วแทนที่ด้วยเมนูเริ่มต้นจากเทมเพลต (สเต็กไก่ 59 บ., เกี๊ยวน้ำ, เกี๊ยวทอด ฯลฯ)
+            </p>
+            <p className="text-[11px] text-stone-500">
+              หากไม่ต้องการล้างเมนูที่ร้านตั้งไว้ กรุณากด "ยกเลิก"
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(false)}
+                disabled={isResetting}
+                className="px-4 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetToBaanSteakExact}
+                disabled={isResetting}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-bold shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                {isResetting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>ยืนยันล้างและรีเซ็ต</span>
               </button>
             </div>
           </div>
