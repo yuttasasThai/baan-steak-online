@@ -8,20 +8,20 @@ export interface RevisionRecord {
 }
 
 export const CURRENT_REVISION: RevisionRecord = {
-  version: '2.27.0',
-  revisionCode: 'rev-2.27.0',
+  version: '2.27.1',
+  revisionCode: 'rev-2.27.1',
   buildTimestamp: new Date().toISOString(),
   formattedDateTh: new Intl.DateTimeFormat('th-TH', {
     dateStyle: 'medium',
     timeStyle: 'short',
     timeZone: 'Asia/Bangkok',
   }).format(new Date()),
-  description: 'เวอร์ชัน 2.27.0: เพิ่มระบบให้ร้านค้าเลือก เพิ่ม/ลบ/จัดลำดับ "เมนูแนะนำประจำสัปดาห์" ได้เอง + แก้ไขรายการไฟล์อัปเดต GitHub & Patch ZIP ให้ครบทุกไฟล์ (รวม AdminSalesDashboard, AdminSalesAnalytics, CustomerAppendOrderModal และ package.json)',
+  description: 'เวอร์ชัน 2.27.1: แก้ไข Vercel Build Error โดยเพิ่ม react-is (^19.3.1) คู่กับ recharts ใน package.json + ระบบเพิ่ม/ลบเมนูแนะนำประจำสัปดาห์ด้วยตนเอง + อัปเดตตัวช่วยส่งออกโค้ด GitHub (rev-2.27.1)',
   features: [
+    '🔧 เพิ่ม "react-is": "^19.3.1" ใน package.json แก้ปัญหา Vercel Build ล้มเหลวตอนสร้างกราฟ Recharts เมื่อใช้ legacy-peer-deps=true',
     '⭐ ร้านค้าสามารถ เพิ่ม/ลบ/เลื่อนลำดับ "เมนูแนะนำประจำสัปดาห์" ได้เองในหน้าจัดการรายการอาหาร ซิงก์เรียลไทม์ไปหน้าลูกค้าทันที',
-    '📦 แก้ไขรายการไฟล์อัปเดต GitHub & Patch ZIP ให้รวม AdminSalesDashboard.tsx, AdminSalesAnalytics.tsx, CustomerAppendOrderModal.tsx และ package.json (recharts) ครบถ้วน ไม่มีไฟล์ซ้ำ',
-    '📊 หน้าวิเคราะห์ยอดขายแสดงการ์ดสรุป รายวัน/สัปดาห์/เดือน พร้อมกราฟเส้น Recharts และตาราง Excel Popup ครบสมบูรณ์',
-    '🔎 คงระบบ Forensic Log ใน subscribeMenus และระบบป้องกันเมนูตัวอย่างเดิมแทรกซ้ำถาวร',
+    '📦 แก้ไขรายการไฟล์อัปเดต GitHub & Patch ZIP ให้ครบทั้ง AdminSalesDashboard, AdminSalesAnalytics, CustomerAppendOrderModal และ package.json',
+    '⚠️ เพิ่มคำแนะนำวิธีลดจำนวน Commit และลบโปรเจกต์ Vercel ซ้ำเพื่อไม่ให้ติด Limit 100 Deploy/วัน',
   ],
 };
 
