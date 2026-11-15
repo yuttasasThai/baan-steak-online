@@ -255,8 +255,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   const [isSliderPaused, setIsSliderPaused] = useState(false);
 
   const weeklyRecommendations = React.useMemo(() => {
-    const published = visibleMenus.filter((m) => m.isAvailable);
-    if (published.length === 0) return [];
+    if (visibleMenus.length === 0) return [];
 
     const sevenDaysAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const validOrders = orders.filter((o) => !o.isCancelled && o.status !== 'ยกเลิก');
@@ -278,6 +277,39 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
 
     const getSoldCount = (m: MenuItem) => (qtyByMenuId[m.id] || 0) + (qtyByName[m.name] || 0);
+
+    // Shop-managed manual recommendations (ร้านค้าเลือกเพิ่ม/ลบเอง)
+    if (settings?.recommendedMenuMode === 'manual') {
+      const byId = new Map(visibleMenus.map((m) => [m.id, m]));
+      const manualIds = Array.isArray(settings.recommendedMenuIds) ? settings.recommendedMenuIds : [];
+      const seen = new Set<string>();
+      const manualList: Array<{
+        item: MenuItem;
+        badgeType: 'bestseller' | 'new';
+        badgeLabel: string;
+        soldCount: number;
+      }> = [];
+
+      manualIds.forEach((id) => {
+        if (seen.has(id)) return;
+        const found = byId.get(id);
+        if (!found) return;
+        seen.add(id);
+        const soldCount = getSoldCount(found);
+        const useBestBadge = soldCount > 0 && manualList.length % 2 === 0;
+        manualList.push({
+          item: found,
+          badgeType: useBestBadge ? 'bestseller' : 'new',
+          badgeLabel: useBestBadge ? 'เมนูขายดี' : 'เมนูแนะนำร้าน',
+          soldCount,
+        });
+      });
+
+      return manualList;
+    }
+
+    const published = visibleMenus.filter((m) => m.isAvailable);
+    if (published.length === 0) return [];
 
     const bestSellers = [...published]
       .filter((m) => getSoldCount(m) > 0)
@@ -334,7 +366,13 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     }
 
     return result;
-  }, [visibleMenus, orders]);
+  }, [visibleMenus, orders, settings?.recommendedMenuMode, settings?.recommendedMenuIds]);
+
+  React.useEffect(() => {
+    if (sliderActiveIdx >= weeklyRecommendations.length && weeklyRecommendations.length > 0) {
+      setSliderActiveIdx(0);
+    }
+  }, [sliderActiveIdx, weeklyRecommendations.length]);
 
   const scrollSliderToIndex = React.useCallback(
     (nextIdx: number) => {
@@ -1104,7 +1142,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
               </h2>
               {weeklyRecommendations[sliderActiveIdx] && (
                 <span
-                  className={`hidden xs:inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border shrink-0 transition-all ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border shrink-0 transition-all ${
                     weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
                       ? 'bg-rose-100 text-rose-800 border-rose-200'
                       : 'bg-emerald-100 text-emerald-800 border-emerald-200'
@@ -1112,7 +1150,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                 >
                   {weeklyRecommendations[sliderActiveIdx].badgeType === 'bestseller'
                     ? '🔥 เมนูขายดี'
-                    : '✨ เมนูใหม่ล่าสุด'}
+                    : `✨ ${weeklyRecommendations[sliderActiveIdx].badgeLabel}`}
                 </span>
               )}
             </div>
@@ -1222,7 +1260,11 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                         {item.price} <span className="text-[10px] font-normal text-stone-500">บ.</span>
                       </span>
 
-                      {cartItem ? (
+                      {!item.isAvailable ? (
+                        <span className="px-2 py-1 rounded-lg bg-stone-100 text-stone-500 border border-stone-200 text-[10px] font-bold">
+                          สินค้าหมด
+                        </span>
+                      ) : cartItem ? (
                         <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg p-0.5">
                           <button
                             type="button"
