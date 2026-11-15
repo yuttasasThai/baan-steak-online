@@ -2,7 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /menus/{menuId} {
-      allow read, write: if true;
+      allow read, update, delete: if true;
+      allow create: if !(menuId.matches('^menu_drink_[0-9]+$') || menuId.matches('^menu_00[0-9]+$'));
     }
 
     match /categories/{categoryId} {
