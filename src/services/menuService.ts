@@ -14,6 +14,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { CategoryItem, CustomerRecord, DailyExpenseItem, DailyExpenseRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 import { sendOrderNotification } from './notificationService';
+import { CURRENT_REVISION } from '../revisionInfo';
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   name: 'บ้าน สเต็กออนไลน์',
@@ -25,8 +26,8 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   lineId: '@baansteak',
   lineEnabled: true,
   isOpen: true,
-  shopLatitude: 16.5447, // พิกัด อ.ชุมแพ จ.ขอนแก่น
-  shopLongitude: 102.1005,
+  shopLatitude: 16.5373606, // พิกัด บ้านสเต็กออนไลน์ ประยูรพืชผล อ.ชุมแพ จ.ขอนแก่น 40130
+  shopLongitude: 102.102266,
   heroBannerUrl: '/IMG_20261007_161813.jpg',
   hideAdminButtonInCustomerView: false,
   lineNotifyEnabled: false,
@@ -104,6 +105,11 @@ export function subscribeShopSettings(
     (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        const rawLat = typeof data.shopLatitude === 'number' ? data.shopLatitude : DEFAULT_SHOP_SETTINGS.shopLatitude;
+        const rawLng = typeof data.shopLongitude === 'number' ? data.shopLongitude : DEFAULT_SHOP_SETTINGS.shopLongitude;
+        const isLegacyDefaultPin =
+          Math.abs(rawLat - 16.5447) < 0.0001 && Math.abs(rawLng - 102.1005) < 0.0001;
+
         onUpdate({
           name: data.name || DEFAULT_SHOP_SETTINGS.name,
           slogan: data.slogan || DEFAULT_SHOP_SETTINGS.slogan,
@@ -114,14 +120,8 @@ export function subscribeShopSettings(
           lineId: data.lineId || DEFAULT_SHOP_SETTINGS.lineId,
           lineEnabled: data.lineEnabled !== false,
           isOpen: data.isOpen !== false,
-          shopLatitude:
-            typeof data.shopLatitude === 'number'
-              ? data.shopLatitude
-              : DEFAULT_SHOP_SETTINGS.shopLatitude,
-          shopLongitude:
-            typeof data.shopLongitude === 'number'
-              ? data.shopLongitude
-              : DEFAULT_SHOP_SETTINGS.shopLongitude,
+          shopLatitude: isLegacyDefaultPin ? DEFAULT_SHOP_SETTINGS.shopLatitude : rawLat,
+          shopLongitude: isLegacyDefaultPin ? DEFAULT_SHOP_SETTINGS.shopLongitude : rawLng,
           heroBannerUrl:
             data.heroBannerUrl &&
             !data.heroBannerUrl.includes('file_00000000322c8230a99655a0452e2494')
@@ -189,16 +189,24 @@ export function subscribeTables(
 }
 
 // Toggle or update single table status (ว่าง / เต็ม)
-export async function updateTableStatus(tableId: string, isOccupied: boolean): Promise<void> {
+export async function updateTableStatus(
+  tableId: string,
+  isOccupied: boolean,
+  source: 'order' | 'manual' = 'manual'
+): Promise<void> {
   const tableDocRef = doc(db, 'settings', 'tables');
   const snap = await getDoc(tableDocRef);
   let currentTables: RestaurantTable[] = INITIAL_TABLES;
   if (snap.exists() && Array.isArray(snap.data().tables)) {
     currentTables = snap.data().tables;
   }
-  const updated = currentTables.map((t) =>
-    t.id === tableId ? { ...t, isOccupied, updatedAt: new Date().toISOString() } : t
-  );
+  const updated = currentTables.map((t) => {
+    if (t.id !== tableId) return t;
+    const { occupiedSource: _prev, ...rest } = t;
+    return isOccupied
+      ? { ...rest, isOccupied: true, occupiedSource: source, updatedAt: new Date().toISOString() }
+      : { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+  });
   await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
@@ -238,11 +246,12 @@ export async function setAllTablesStatus(isOccupied: boolean): Promise<void> {
   if (snap.exists() && Array.isArray(snap.data().tables)) {
     currentTables = snap.data().tables;
   }
-  const updated = currentTables.map((t) => ({
-    ...t,
-    isOccupied,
-    updatedAt: new Date().toISOString(),
-  }));
+  const updated = currentTables.map((t) => {
+    const { occupiedSource: _prev, ...rest } = t;
+    return isOccupied
+      ? { ...rest, isOccupied: true, occupiedSource: 'manual' as const, updatedAt: new Date().toISOString() }
+      : { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+  });
   await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
@@ -303,22 +312,39 @@ export function sortCategories(categories: CategoryItem[]): CategoryItem[] {
   });
 }
 
+export function isDrinkCategory(categoryName?: string): boolean {
+  if (!categoryName) return false;
+  const normalized = categoryName.trim().toLowerCase();
+  return (
+    normalized === 'เครื่องดื่ม' ||
+    normalized.includes('เครื่องดื่ม') ||
+    normalized.includes('drink') ||
+    normalized.includes('beverage')
+  );
+}
+
 /**
- * จัดเรียงเมนูอาหารตามความต้องการ:
- * 1) หมวดหมู่ตามลำดับ: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม
- * 2) ภายในหมวดหมู่: เรียงตามราคาจาก "ราคาน้อยอยู่ข้างบน" ไปหา "ราคาแพงอยู่ข้างล่าง" (เช่น สเต็กไก่ 59 บ. ก่อน สเต็กหมู 69 บ.)
- * 3) หากราคาเท่ากัน: ใช้ orderIndex และชื่อภาษาไทยตามลำดับ
+ * จัดเรียงเมนูอาหารตามความต้องการล่าสุด:
+ * 1) เมนูอาหารทั้งหมด (ไม่ใช่เครื่องดื่ม) อยู่ด้านบน — เมนูเครื่องดื่มจัดไว้ด้านล่างเสมอ
+ * 2) ภายในกลุ่มอาหาร และภายในกลุ่มเครื่องดื่ม: เรียงลำดับตามราคาจาก "ราคาน้อย (ถูก) อยู่บน" -> "ราคาแพงอยู่ล่าง" ทุกครั้ง
+ * 3) หากราคาเท่ากัน: ใช้ลำดับหมวดหมู่, orderIndex และชื่อภาษาไทยตามลำดับ
  */
 export function sortMenus(items: MenuItem[], categories?: CategoryItem[]): MenuItem[] {
   return [...items].sort((a, b) => {
-    const catA = getCategoryPriorityIndex(a.category, categories);
-    const catB = getCategoryPriorityIndex(b.category, categories);
-    if (catA !== catB) return catA - catB;
+    const isDrinkA = isDrinkCategory(a.category);
+    const isDrinkB = isDrinkCategory(b.category);
+    if (isDrinkA !== isDrinkB) {
+      return isDrinkA ? 1 : -1;
+    }
 
-    // Within category: lowest price first (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
+    // ราคาถูกลงมาราคาแพงทุกครั้ง (lowest price first)
     if (a.price !== b.price) {
       return a.price - b.price;
     }
+
+    const catA = getCategoryPriorityIndex(a.category, categories);
+    const catB = getCategoryPriorityIndex(b.category, categories);
+    if (catA !== catB) return catA - catB;
 
     if ((a.orderIndex ?? 0) !== (b.orderIndex ?? 0)) {
       return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
@@ -522,6 +548,120 @@ export const NEXT_ORDER_STATUS_MAP: Record<OrderStatus, OrderStatus | null> = {
   'ยกเลิก': null,
 };
 
+export interface MenuFetchAuditEntry {
+  seq: number;
+  readAt: string;
+  readAtThai: string;
+  fromCache: boolean;
+  hasPendingWrites: boolean;
+  totalDocs: number;
+  changesCount: number;
+  anomaliesCount: number;
+  appRevision: string;
+  host: string;
+  anomalies: Array<{
+    menuId: string;
+    name: string;
+    price: number;
+    category: string;
+    changeType: 'initial-scan' | 'added' | 'modified' | 'removed';
+    readAt: string;
+    readAtThai: string;
+    fromCache: boolean;
+    createdAt: string;
+    updatedAt: string;
+    createdBy: string;
+    updatedBy: string;
+    createdSourceAppVersion: string;
+    createdHost: string;
+    inferredOrigin: string;
+    anomalyReasons: string[];
+  }>;
+  changes: Array<{
+    type: 'added' | 'modified' | 'removed';
+    menuId: string;
+    name: string;
+    price: number;
+    category: string;
+    createdAt: string;
+    updatedAt: string;
+    createdBy: string;
+    inferredOrigin: string;
+  }>;
+}
+
+const MENU_FETCH_AUDIT_LOGS: MenuFetchAuditEntry[] = [];
+const MAX_MENU_AUDIT_LOGS = 100;
+
+export function getMenuFetchAuditLogs(): MenuFetchAuditEntry[] {
+  return [...MENU_FETCH_AUDIT_LOGS];
+}
+
+function getRuntimeHost(): string {
+  return typeof window !== 'undefined' ? window.location.host : 'server';
+}
+
+export function inferMenuCreatorOrigin(menuId: string, data: Record<string, any>): string {
+  if (typeof data.createdBy === 'string' && data.createdBy.trim()) {
+    return data.createdBy.trim();
+  }
+  if (/^menu_drink_\d+$/.test(menuId)) {
+    return 'legacy-auto-drink-seeder (!hasDrinks)';
+  }
+  if (/^menu_00\d+$/.test(menuId)) {
+    return 'legacy-exact-initial-seeder (hasOldMockData / forceReset)';
+  }
+  if (/^menu_seed_\d+_\d+$/.test(menuId)) {
+    return 'explicit-initial-seeder';
+  }
+  if (/^menu_\d{13}_[a-z0-9]+$/i.test(menuId)) {
+    return 'admin-manual-form (legacy-untagged)';
+  }
+  return 'unknown-external-client';
+}
+
+function detectMenuAnomalyReasons(
+  menuId: string,
+  data: Record<string, any>,
+  inferredOrigin: string,
+  changeType: 'initial-scan' | 'added' | 'modified' | 'removed',
+  isRuntimeUpdate: boolean
+): string[] {
+  const reasons: string[] = [];
+  const name = String(data.name || '').trim();
+  const price = Number(data.price) || 0;
+
+  if (/^menu_drink_\d+$/.test(menuId)) {
+    reasons.push('legacy_auto_drink_id');
+  }
+  if (/^menu_00\d+$/.test(menuId)) {
+    reasons.push('legacy_initial_seed_id');
+  }
+  if (/^menu_seed_\d+_\d+$/.test(menuId)) {
+    reasons.push('explicit_seed_id');
+  }
+  if (!data.createdBy) {
+    reasons.push('missing_createdBy_provenance');
+  }
+  if (AUTO_INJECTED_DRINK_NAMES.includes(name)) {
+    reasons.push('matches_auto_injected_drink_name');
+  }
+  if ((name === 'เกี๊ยวน้ำหมูสับ' || name === 'เกี๊ยวหมูสับทอด') && !data.createdBy) {
+    reasons.push('matches_legacy_snack_without_creator');
+  }
+  if (name === 'สเต็กไก่' && price === 59 && /^menu_00\d+$/.test(menuId)) {
+    reasons.push('legacy_default_chicken_steak_price_59');
+  }
+  if (inferredOrigin === 'unknown-external-client') {
+    reasons.push('unrecognized_doc_id_pattern');
+  }
+  if (isRuntimeUpdate && changeType === 'added' && (!data.createdBy || data.createdBy !== 'admin-manual')) {
+    reasons.push('runtime_added_non_manual_source');
+  }
+
+  return reasons;
+}
+
 // Subscribe Menus
 export function subscribeMenus(
   onUpdate: (menus: MenuItem[]) => void,
@@ -529,13 +669,30 @@ export function subscribeMenus(
 ): () => void {
   const menusRef = collection(db, 'menus');
   const q = query(menusRef, orderBy('orderIndex', 'asc'));
+  let snapshotSeq = 0;
 
   return onSnapshot(
     q,
     (snapshot) => {
+      snapshotSeq += 1;
+      const isInitialSnapshot = snapshotSeq === 1;
+      const readDate = new Date();
+      const readAt = readDate.toISOString();
+      const readAtThai = new Intl.DateTimeFormat('th-TH', {
+        dateStyle: 'short',
+        timeStyle: 'medium',
+        timeZone: 'Asia/Bangkok',
+      }).format(readDate);
+      const fromCache = snapshot.metadata.fromCache;
+      const hasPendingWrites = snapshot.metadata.hasPendingWrites;
+      const runtimeHost = getRuntimeHost();
+
       const items: MenuItem[] = [];
+      const docDataById = new Map<string, Record<string, any>>();
+
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
+        docDataById.set(docSnap.id, data);
         items.push({
           id: docSnap.id,
           name: data.name || '',
@@ -549,12 +706,149 @@ export function subscribeMenus(
           orderIndex: Number(data.orderIndex) ?? 0,
           createdAt: data.createdAt || '',
           updatedAt: data.updatedAt || '',
+          createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
+          updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+          createdSourceAppVersion:
+            typeof data.createdSourceAppVersion === 'string' ? data.createdSourceAppVersion : undefined,
+          createdHost: typeof data.createdHost === 'string' ? data.createdHost : undefined,
         });
       });
+
+      const docChanges = snapshot.docChanges();
+      const changeLogs: MenuFetchAuditEntry['changes'] = [];
+      const anomalies: MenuFetchAuditEntry['anomalies'] = [];
+      const flaggedIds = new Set<string>();
+
+      docChanges.forEach((change) => {
+        const docSnap = change.doc;
+        const data = docSnap.data();
+        const inferredOrigin = inferMenuCreatorOrigin(docSnap.id, data);
+
+        changeLogs.push({
+          type: change.type,
+          menuId: docSnap.id,
+          name: String(data.name || ''),
+          price: Number(data.price) || 0,
+          category: String(data.category || ''),
+          createdAt: String(data.createdAt || ''),
+          updatedAt: String(data.updatedAt || ''),
+          createdBy: String(data.createdBy || ''),
+          inferredOrigin,
+        });
+
+        if (change.type !== 'removed') {
+          const reasons = detectMenuAnomalyReasons(
+            docSnap.id,
+            data,
+            inferredOrigin,
+            change.type,
+            !isInitialSnapshot
+          );
+          if (reasons.length > 0) {
+            flaggedIds.add(docSnap.id);
+            anomalies.push({
+              menuId: docSnap.id,
+              name: String(data.name || ''),
+              price: Number(data.price) || 0,
+              category: String(data.category || ''),
+              changeType: change.type,
+              readAt,
+              readAtThai,
+              fromCache,
+              createdAt: String(data.createdAt || ''),
+              updatedAt: String(data.updatedAt || ''),
+              createdBy: String(data.createdBy || '(none)'),
+              updatedBy: String(data.updatedBy || '(none)'),
+              createdSourceAppVersion: String(data.createdSourceAppVersion || '(unknown-older-version)'),
+              createdHost: String(data.createdHost || '(unknown-host)'),
+              inferredOrigin,
+              anomalyReasons: reasons,
+            });
+          }
+        }
+      });
+
+      // On initial snapshot, ensure any pre-existing doc not emitted or missed in changes is scanned
+      if (isInitialSnapshot) {
+        docDataById.forEach((data, docId) => {
+          if (flaggedIds.has(docId)) return;
+          const inferredOrigin = inferMenuCreatorOrigin(docId, data);
+          const reasons = detectMenuAnomalyReasons(docId, data, inferredOrigin, 'initial-scan', false);
+          if (reasons.length > 0) {
+            flaggedIds.add(docId);
+            anomalies.push({
+              menuId: docId,
+              name: String(data.name || ''),
+              price: Number(data.price) || 0,
+              category: String(data.category || ''),
+              changeType: 'initial-scan',
+              readAt,
+              readAtThai,
+              fromCache,
+              createdAt: String(data.createdAt || ''),
+              updatedAt: String(data.updatedAt || ''),
+              createdBy: String(data.createdBy || '(none)'),
+              updatedBy: String(data.updatedBy || '(none)'),
+              createdSourceAppVersion: String(data.createdSourceAppVersion || '(unknown-older-version)'),
+              createdHost: String(data.createdHost || '(unknown-host)'),
+              inferredOrigin,
+              anomalyReasons: reasons,
+            });
+          }
+        });
+      }
+
+      const auditEntry: MenuFetchAuditEntry = {
+        seq: snapshotSeq,
+        readAt,
+        readAtThai,
+        fromCache,
+        hasPendingWrites,
+        totalDocs: items.length,
+        changesCount: changeLogs.length,
+        anomaliesCount: anomalies.length,
+        appRevision: CURRENT_REVISION.revisionCode,
+        host: runtimeHost,
+        anomalies,
+        changes: changeLogs,
+      };
+
+      MENU_FETCH_AUDIT_LOGS.push(auditEntry);
+      if (MENU_FETCH_AUDIT_LOGS.length > MAX_MENU_AUDIT_LOGS) {
+        MENU_FETCH_AUDIT_LOGS.shift();
+      }
+      if (typeof window !== 'undefined') {
+        (window as any).__baanSteakMenuLogs = MENU_FETCH_AUDIT_LOGS;
+      }
+
+      console.info(
+        `[subscribeMenus] #${snapshotSeq} readAt=${readAtThai} (${readAt}) | source=${
+          fromCache ? 'local-cache' : 'firestore-server'
+        } | pendingWrites=${hasPendingWrites} | docs=${items.length} | changes=${changeLogs.length} | anomalies=${anomalies.length}`,
+        {
+          appRevision: CURRENT_REVISION.revisionCode,
+          host: runtimeHost,
+          changes: changeLogs,
+        }
+      );
+
+      if (anomalies.length > 0) {
+        console.warn(
+          `[subscribeMenus][ANOMALY] พบเมนูผิดปกติหรือไม่มีข้อมูลผู้สร้าง ${anomalies.length} รายการ (อ่านเมื่อ ${readAtThai}, source=${
+            fromCache ? 'local-cache' : 'firestore-server'
+          }):`,
+          anomalies
+        );
+      }
+
       const sortedItems = sortMenus(items);
       onUpdate(sortedItems);
     },
     (error) => {
+      console.error('[subscribeMenus][ERROR]', {
+        readAt: new Date().toISOString(),
+        error,
+      });
       if (onError) onError(error);
       handleFirestoreError(error, OperationType.LIST, 'menus');
     }
@@ -789,7 +1083,12 @@ export async function createOrder(data: {
             t.id === `table_${parsedNum}`
           ) {
             found = true;
-            return { ...t, isOccupied: true, updatedAt: new Date().toISOString() };
+            return {
+              ...t,
+              isOccupied: true,
+              occupiedSource: 'order' as const,
+              updatedAt: new Date().toISOString(),
+            };
           }
           return t;
         });
@@ -799,6 +1098,7 @@ export async function createOrder(data: {
             number: parsedNum,
             name: `โต๊ะ ${parsedNum}`,
             isOccupied: true,
+            occupiedSource: 'order',
             updatedAt: new Date().toISOString(),
           });
         }
@@ -942,7 +1242,7 @@ export async function appendItemsToOrder(
   return { newSubtotal, newTotal };
 }
 
-// Cancel an order (Removes from active list, retains items history for best seller metrics without customer point accumulation)
+// Cancel an order (Removes from active list and frees its table if no other active order occupies it)
 export async function cancelOrder(order: Order, reason: string = 'ยกเลิกโดยร้าน'): Promise<void> {
   const orderRef = doc(db, 'orders', order.id);
   const updatePayload = {
@@ -964,13 +1264,21 @@ export async function cancelOrder(order: Order, reason: string = 'ยกเล�
       throw fallbackError;
     }
   }
+
+  // Reconcile / free table associated with this cancelled order
+  await freeTableIfNoOtherActiveOrders(order);
 }
 
 // Permanently delete a single order document from Firestore (Admin only)
 export async function deleteOrder(orderId: string): Promise<void> {
   const orderRef = doc(db, 'orders', orderId);
   try {
+    const snap = await getDoc(orderRef);
+    const orderData = snap.exists() ? ({ id: snap.id, ...snap.data() } as Order) : null;
     await deleteDoc(orderRef);
+    if (orderData) {
+      await freeTableIfNoOtherActiveOrders(orderData);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `orders/${orderId}`);
     throw error;
@@ -1024,6 +1332,24 @@ export async function clearOrdersHistory(options: {
         await Promise.all(chunk.map((id) => deleteDoc(doc(db, 'customers', id))));
       }
       resetCustomersCount = custIds.length;
+    }
+
+    // If active orders were wiped, free stale order-locked tables as well
+    if (options.scope === 'all' || options.scope === 'active_only') {
+      try {
+        const tableDocRef = doc(db, 'settings', 'tables');
+        const tableSnap = await getDoc(tableDocRef);
+        if (tableSnap.exists() && Array.isArray(tableSnap.data().tables)) {
+          const remainingOrdersSnap = await getDocs(collection(db, 'orders'));
+          const remainingOrders: Order[] = remainingOrdersSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<Order, 'id'>),
+          }));
+          await reconcileTablesWithOrders(tableSnap.data().tables as RestaurantTable[], remainingOrders);
+        }
+      } catch (tblErr) {
+        console.warn('Reconcile tables after clearOrdersHistory warning:', tblErr);
+      }
     }
 
     return {
@@ -1094,8 +1420,8 @@ export async function getCustomerRewardsByPhone(rawPhone: string): Promise<{
   }
 }
 
-// Helper: Extract table number from order & set table status to available (false) in real-time
-async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
+// Helper: Extract numeric/raw table identifier from an Order
+export function extractOrderTableIdentifier(order: Pick<Order, 'tableNumber' | 'customerName' | 'address'>): string {
   let rawNum = '';
   if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
     rawNum = String(order.tableNumber).replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
@@ -1108,7 +1434,108 @@ async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
     const m = order.address.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
     if (m) rawNum = m[1];
   }
+  return rawNum;
+}
 
+// Helper: Determine whether an order currently holds a table (active dine-in before checkout/cancel)
+export function isOrderHoldingTable(order: Order): boolean {
+  const normStatus = normalizeOrderStatus(order.status);
+  if (order.isCancelled || normStatus === 'ยกเลิก' || normStatus === 'เช็คบิล') {
+    return false;
+  }
+  // Pre-v2.22 legacy delivered orders older than 12 hours no longer hold a physical table
+  if (normStatus === 'ส่งแล้ว') {
+    const refIso = order.updatedAt || order.createdAt;
+    const ageHours = refIso ? (Date.now() - new Date(refIso).getTime()) / (1000 * 60 * 60) : 999;
+    if (isNaN(ageHours) || ageHours > 12) {
+      return false;
+    }
+  }
+  const hasTable = extractOrderTableIdentifier(order) !== '';
+  return hasTable && (order.deliveryType === 'มาทานที่ร้าน' || order.tableNumber !== undefined && order.tableNumber !== null);
+}
+
+// Reconcile occupied tables with live orders so phantom/stale occupied flags clear automatically
+export async function reconcileTablesWithOrders(
+  tables: RestaurantTable[],
+  orders: Order[]
+): Promise<boolean> {
+  if (!Array.isArray(tables) || tables.length === 0) return false;
+
+  const activeTableKeys = new Set<string>();
+  for (const ord of orders) {
+    if (!isOrderHoldingTable(ord)) continue;
+    const rawNum = extractOrderTableIdentifier(ord);
+    if (rawNum) {
+      activeTableKeys.add(rawNum);
+      const parsed = parseInt(rawNum, 10);
+      if (!isNaN(parsed)) {
+        activeTableKeys.add(String(parsed));
+      }
+    }
+  }
+
+  let hasChanges = false;
+  const updated = tables.map((t) => {
+    if (!t.isOccupied) return t;
+    // Respect explicit manual locks toggled by Admin
+    if (t.occupiedSource === 'manual') return t;
+
+    const numKey = String(t.number);
+    const nameKey = t.name.replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+    const hasActiveOrder = activeTableKeys.has(numKey) || (nameKey && activeTableKeys.has(nameKey));
+
+    if (!hasActiveOrder) {
+      hasChanges = true;
+      const { occupiedSource: _prev, ...rest } = t;
+      return { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+    }
+    return t;
+  });
+
+  if (!hasChanges) return false;
+
+  try {
+    const tableDocRef = doc(db, 'settings', 'tables');
+    await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('Reconcile stale tables warning:', err);
+    return false;
+  }
+}
+
+// Helper: Extract table number from order & set table status to available (false) if no other active order occupies it
+async function freeTableIfNoOtherActiveOrders(order: Order): Promise<void> {
+  const rawNum = extractOrderTableIdentifier(order);
+  if (!rawNum) return;
+
+  try {
+    const parsedNum = parseInt(rawNum, 10);
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    let stillOccupiedByOther = false;
+    ordersSnap.forEach((d) => {
+      if (d.id === order.id) return;
+      const other = { id: d.id, ...(d.data() as Omit<Order, 'id'>) };
+      if (!isOrderHoldingTable(other)) return;
+      const otherRaw = extractOrderTableIdentifier(other);
+      const otherParsed = parseInt(otherRaw, 10);
+      if (otherRaw === rawNum || (!isNaN(parsedNum) && otherParsed === parsedNum)) {
+        stillOccupiedByOther = true;
+      }
+    });
+
+    if (!stillOccupiedByOther) {
+      await freeTableForCheckedOutOrder(order);
+    }
+  } catch {
+    await freeTableForCheckedOutOrder(order);
+  }
+}
+
+// Helper: Extract table number from order & set table status to available (false) in real-time
+async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
+  const rawNum = extractOrderTableIdentifier(order);
   if (!rawNum) return;
 
   try {
@@ -1128,7 +1555,8 @@ async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
         t.id === `table_${rawNum}` ||
         t.id === `table_${parsedNum}`
       ) {
-        return { ...t, isOccupied: false, updatedAt: new Date().toISOString() };
+        const { occupiedSource: _prev, ...rest } = t;
+        return { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
       }
       return t;
     });
@@ -1262,10 +1690,20 @@ export async function redeemCustomerReward(
   }
 }
 
+async function markMenusInitializedFlag(): Promise<void> {
+  try {
+    await setDoc(doc(db, 'settings', 'shop'), { menusInitialized: true }, { merge: true });
+  } catch {
+    // non-fatal metadata flag
+  }
+}
+
 // Menu Management Functions for Admin
 export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
   const menuId = `menu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
   const menuRef = doc(db, 'menus', menuId);
+  const nowIso = new Date().toISOString();
+  const runtimeHost = getRuntimeHost();
 
   const payload = {
     name: data.name.trim().slice(0, 120),
@@ -1277,12 +1715,17 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
     isAvailable: Boolean(data.isAvailable),
     isPublished: Boolean(data.isPublished),
     orderIndex: Number(data.orderIndex),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    createdBy: data.createdBy || 'admin-manual',
+    updatedBy: 'admin-manual',
+    createdSourceAppVersion: CURRENT_REVISION.revisionCode,
+    createdHost: runtimeHost,
   };
 
   try {
     await setDoc(menuRef, payload);
+    void markMenusInitializedFlag();
     return menuId;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `menus/${menuId}`);
@@ -1293,6 +1736,9 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
   const menuRef = doc(db, 'menus', id);
   const payload: Record<string, any> = {
     updatedAt: new Date().toISOString(),
+    updatedBy: data.updatedBy || 'admin-manual',
+    updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
+    updatedHost: getRuntimeHost(),
   };
 
   if (data.name !== undefined) payload.name = data.name.trim().slice(0, 120);
@@ -1307,6 +1753,7 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
 
   try {
     await updateDoc(menuRef, payload);
+    void markMenusInitializedFlag();
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `menus/${id}`);
   }
@@ -1316,9 +1763,45 @@ export async function deleteMenuItem(id: string): Promise<void> {
   const menuRef = doc(db, 'menus', id);
   try {
     await deleteDoc(menuRef);
+    void markMenusInitializedFlag();
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `menus/${id}`);
   }
+}
+
+export const AUTO_INJECTED_DRINK_NAMES = [
+  'น้ำดื่มขวดเย็น',
+  'โค้ก / เป๊ปซี่ เย็นฉ่ำ',
+  'ชามะนาวเย็น',
+  'ชาเขียวเย็น',
+  'น้ำส้มเย็นสดชื่น',
+];
+
+export function isLegacyAutoSeededDrink(item: Pick<MenuItem, 'id' | 'name'>): boolean {
+  return /^menu_drink_\d+$/.test(item.id) || AUTO_INJECTED_DRINK_NAMES.includes(item.name.trim());
+}
+
+/**
+ * ลบเฉพาะเมนูเครื่องดื่มตัวอย่างที่ระบบเวอร์ชันเก่าแทรกเข้ามาอัตโนมัติ (id ขึ้นต้นด้วย menu_drink_*)
+ * จะไม่แตะต้องเมนูที่ร้านค้าเพิ่มเอง (ซึ่งใช้ id รูปแบบ menu_<timestamp>_...)
+ */
+export async function cleanupLegacyAutoSeededMenus(idsToDelete?: string[]): Promise<number> {
+  const menusSnap = await getDocs(collection(db, 'menus'));
+  let deletedCount = 0;
+
+  for (const docSnap of menusSnap.docs) {
+    const matchesTarget = idsToDelete
+      ? idsToDelete.includes(docSnap.id) && /^menu_drink_\d+$/.test(docSnap.id)
+      : /^menu_drink_\d+$/.test(docSnap.id);
+
+    if (matchesTarget) {
+      await deleteDoc(doc(db, 'menus', docSnap.id));
+      deletedCount++;
+    }
+  }
+
+  await markMenusInitializedFlag();
+  return deletedCount;
 }
 
 export async function toggleMenuItemAvailability(id: string, current: boolean): Promise<boolean> {
@@ -1388,6 +1871,8 @@ export async function reorderMenusByCategoryAndPrice(categories?: CategoryItem[]
     updateDoc(doc(db, 'menus', item.id), {
       orderIndex: idx,
       updatedAt: new Date().toISOString(),
+      updatedBy: 'admin-auto-reorder',
+      updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
     })
   );
   await Promise.all(updates);
@@ -1413,119 +1898,102 @@ export async function deleteCategory(id: string): Promise<void> {
   }
 }
 
-// Reset & Seed EXACTLY the user's 5 items for "บ้าน สเต็กออนไลน์"
+// Initialize shop settings once & ONLY seed initial menus on first-ever setup or explicit admin forceReset
 export async function initializeBaanSteakMenu(forceReset: boolean = false): Promise<void> {
   try {
-    // 1. Ensure settings/shop always uses the latest cover image
+    let menusAlreadyInitialized = false;
+
+    // 1. Ensure settings/shop uses the latest cover image, updated shop GPS pin, and read menusInitialized lock
     try {
       const shopRef = doc(db, 'settings', 'shop');
       const shopSnap = await getDoc(shopRef);
       if (!shopSnap.exists()) {
         await setDoc(
           shopRef,
-          { heroBannerUrl: '/IMG_20261007_161813.jpg', isOpen: true },
+          {
+            heroBannerUrl: '/IMG_20261007_161813.jpg',
+            isOpen: true,
+            shopLatitude: DEFAULT_SHOP_SETTINGS.shopLatitude,
+            shopLongitude: DEFAULT_SHOP_SETTINGS.shopLongitude,
+          },
           { merge: true }
         );
       } else {
         const data = shopSnap.data();
+        menusAlreadyInitialized = Boolean(data.menusInitialized);
+        const updates: Record<string, any> = {};
         if (
           !data.heroBannerUrl ||
-          data.heroBannerUrl !== '/IMG_20261007_161813.jpg' ||
           data.heroBannerUrl.includes('file_00000000322c8230a99655a0452e2494')
         ) {
-          await setDoc(
-            shopRef,
-            { heroBannerUrl: '/IMG_20261007_161813.jpg' },
-            { merge: true }
-          );
+          updates.heroBannerUrl = '/IMG_20261007_161813.jpg';
+        }
+        const isLegacyPin =
+          data.shopLatitude === undefined ||
+          data.shopLongitude === undefined ||
+          (Math.abs(Number(data.shopLatitude) - 16.5447) < 0.0001 &&
+            Math.abs(Number(data.shopLongitude) - 102.1005) < 0.0001);
+        if (isLegacyPin) {
+          updates.shopLatitude = DEFAULT_SHOP_SETTINGS.shopLatitude;
+          updates.shopLongitude = DEFAULT_SHOP_SETTINGS.shopLongitude;
+        }
+        if (Object.keys(updates).length > 0) {
+          await setDoc(shopRef, updates, { merge: true });
         }
       }
     } catch {
       // ignore non-fatal settings sync
+    }
+
+    // 2. STRICT GUARD: Never modify, inject, or overwrite menus during normal startup!
+    // Once menus have been initialized or any menu exists, never auto-seed again even if menus are later deleted.
+    if (!forceReset && menusAlreadyInitialized) {
+      return;
     }
 
     const menusSnap = await getDocs(collection(db, 'menus'));
-    
-    // Check if we already have the menus and don't need reset
     if (!forceReset && !menusSnap.empty) {
-      // Check if existing items contain old placeholder like "Wagyu" or "Salmon"
-      let hasOldMockData = false;
-      let hasDrinks = false;
-      menusSnap.forEach((docSnap) => {
-        const data = docSnap.data();
-        if (data.name && (data.name.includes('Wagyu') || data.name.includes('Salmon') || data.name.includes('ทีโบน'))) {
-          hasOldMockData = true;
-        }
-        if (data.category === 'เครื่องดื่ม') {
-          hasDrinks = true;
-        }
-      });
-      if (!hasOldMockData) {
-        // Ensure 'เครื่องดื่ม' category exists
-        const drinkCatRef = doc(db, 'categories', 'cat_drinks');
-        const drinkCatSnap = await getDoc(drinkCatRef);
-        if (!drinkCatSnap.exists()) {
-          await setDoc(drinkCatRef, { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 3 });
-        }
-        // If no drinks items yet, seed default drinks
-        if (!hasDrinks) {
-          const drinkItems = EXACT_INITIAL_MENUS.filter((m) => m.category === 'เครื่องดื่ม');
-          for (let i = 0; i < drinkItems.length; i++) {
-            const item = drinkItems[i];
-            const menuId = `menu_drink_${i + 1}`;
-            await setDoc(doc(db, 'menus', menuId), {
-              ...item,
-              orderIndex: 20 + i,
-            });
-          }
-        }
-        return; // already clean and accurate
+      await markMenusInitializedFlag();
+      return;
+    }
+
+    // 3. Only runs when database has NEVER been initialized and is completely empty,
+    // OR when Admin explicitly confirms a full forceReset.
+    if (forceReset) {
+      for (const docSnap of menusSnap.docs) {
+        await deleteDoc(doc(db, 'menus', docSnap.id));
+      }
+
+      const catSnap = await getDocs(collection(db, 'categories'));
+      for (const docSnap of catSnap.docs) {
+        await deleteDoc(doc(db, 'categories', docSnap.id));
       }
     }
 
-    // Delete existing old mock items to fulfill: "ลบข้อมูลตัวอย่างทั้งหมดที่ไม่ได้มาจากข้อมูลด้านบน"
-    for (const docSnap of menusSnap.docs) {
-      await deleteDoc(doc(db, 'menus', docSnap.id));
+    const existingCatsSnap = await getDocs(collection(db, 'categories'));
+    if (forceReset || existingCatsSnap.empty) {
+      for (const cat of INITIAL_CATEGORIES) {
+        await setDoc(doc(db, 'categories', cat.id), cat);
+      }
     }
 
-    // Clear and set categories
-    const catSnap = await getDocs(collection(db, 'categories'));
-    for (const docSnap of catSnap.docs) {
-      await deleteDoc(doc(db, 'categories', docSnap.id));
-    }
-    for (const cat of INITIAL_CATEGORIES) {
-      await setDoc(doc(db, 'categories', cat.id), cat);
-    }
-
-    // Populate EXACT 5 items for "บ้าน สเต็กออนไลน์"
+    const seedBatchTs = Date.now();
+    const seedCreator = forceReset ? 'admin-force-reset' : 'initial-empty-seed';
+    const runtimeHost = getRuntimeHost();
     for (let i = 0; i < EXACT_INITIAL_MENUS.length; i++) {
       const item = EXACT_INITIAL_MENUS[i];
-      const menuId = `menu_00${i + 1}`;
+      const menuId = `menu_seed_${seedBatchTs}_${i + 1}`;
       await setDoc(doc(db, 'menus', menuId), {
         ...item,
         orderIndex: i,
+        createdBy: seedCreator,
+        updatedBy: seedCreator,
+        createdSourceAppVersion: CURRENT_REVISION.revisionCode,
+        createdHost: runtimeHost,
       });
     }
 
-    // Ensure settings/shop uses the new cover image
-    try {
-      const shopRef = doc(db, 'settings', 'shop');
-      const shopSnap = await getDoc(shopRef);
-      if (!shopSnap.exists()) {
-        await setDoc(shopRef, {
-          heroBannerUrl: '/IMG_20261007_161813.jpg',
-        }, { merge: true });
-      } else {
-        const data = shopSnap.data();
-        if (!data.heroBannerUrl || data.heroBannerUrl.includes('file_00000000322c8230a99655a0452e2494')) {
-          await setDoc(shopRef, {
-            heroBannerUrl: '/IMG_20261007_161813.jpg',
-          }, { merge: true });
-        }
-      }
-    } catch {
-      // ignore non-fatal settings sync
-    }
+    await markMenusInitializedFlag();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'menus');
   }
