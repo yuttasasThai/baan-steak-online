@@ -52,6 +52,7 @@ import {
   cancelOrder,
   DEFAULT_SHOP_SETTINGS,
   initializeBaanSteakMenu,
+  reconcileTablesWithOrders,
   SHOP_INFO,
   subscribeCategories,
   subscribeCustomers,
@@ -123,6 +124,9 @@ export function App() {
   const [dailyExpenses, setDailyExpenses] = useState<DailyExpenseRecord[]>([]);
   const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
   const [isLoading, setIsLoading] = useState(true);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [tablesLoaded, setTablesLoaded] = useState(false);
+  const lastReconcileSignatureRef = useRef<string>('');
 
   // Toast notification system
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -173,6 +177,7 @@ export function App() {
       (items) => {
         if (!isMounted) return;
         setOrders(items);
+        setOrdersLoaded(true);
       },
       (error) => {
         console.error('Orders error:', error);
@@ -200,6 +205,7 @@ export function App() {
     const unsubTables = subscribeTables((tblList) => {
       if (!isMounted) return;
       setTables(tblList);
+      setTablesLoaded(true);
     });
 
     // 8. Subscribe to Daily Expenses (ตารางรายจ่ายประจำวัน)
@@ -224,6 +230,24 @@ export function App() {
       unsubExpenses();
     };
   }, []);
+
+  // Reconcile stale occupied tables once both orders and tables have loaded
+  useEffect(() => {
+    if (!ordersLoaded || !tablesLoaded || tables.length === 0) return;
+    const occupiedSummary = tables
+      .filter((t) => t.isOccupied && t.occupiedSource !== 'manual')
+      .map((t) => t.id)
+      .join(',');
+    if (!occupiedSummary) return;
+
+    const sig = `${occupiedSummary}::${orders.length}::${orders.filter((o) => !o.isArchived && !o.isCancelled).length}`;
+    if (lastReconcileSignatureRef.current === sig) return;
+    lastReconcileSignatureRef.current = sig;
+
+    reconcileTablesWithOrders(tables, orders).catch((err) => {
+      console.warn('Auto table reconcile warning:', err);
+    });
+  }, [ordersLoaded, tablesLoaded, tables, orders]);
 
   // 8. Pending Incoming Orders (status === 'รับออเดอร์', not cancelled, not archived)
   const pendingIncomingOrders = useMemo(() => {
@@ -873,7 +897,7 @@ export function App() {
               />
             )}
             {adminTab === 'tables' && (
-              <AdminTableManager tables={tables} onNotify={notify} />
+              <AdminTableManager tables={tables} orders={orders} onNotify={notify} />
             )}
             {adminTab === 'customers' && (
               <AdminCustomerHistory

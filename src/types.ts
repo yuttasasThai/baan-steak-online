@@ -11,6 +11,10 @@ export interface MenuItem {
   orderIndex: number;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
+  createdSourceAppVersion?: string;
+  createdHost?: string;
 }
 
 export interface CategoryItem {
@@ -131,5 +135,6 @@ export interface RestaurantTable {
   number: number; // 1, 2, 3...
   name: string; // e.g. "โต๊ะ 1"
   isOccupied: boolean; // false = ว่าง (Available), true = เต็ม (Occupied)
+  occupiedSource?: 'order' | 'manual'; // 'order' = ลูกค้าสั่งออเดอร์, 'manual' = แอดมินกดปิดเอง
   updatedAt?: string;
 }
