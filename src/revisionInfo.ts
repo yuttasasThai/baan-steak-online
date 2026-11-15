@@ -8,20 +8,20 @@ export interface RevisionRecord {
 }
 
 export const CURRENT_REVISION: RevisionRecord = {
-  version: '2.26.1',
-  revisionCode: 'rev-2.26.1',
+  version: '2.27.0',
+  revisionCode: 'rev-2.27.0',
   buildTimestamp: new Date().toISOString(),
   formattedDateTh: new Intl.DateTimeFormat('th-TH', {
     dateStyle: 'medium',
     timeStyle: 'short',
     timeZone: 'Asia/Bangkok',
   }).format(new Date()),
-  description: 'เวอร์ชัน 2.26.1: เพิ่ม Log ตรวจสอบย้อนหลังใน subscribeMenus เพื่อระบุเวลาที่อ่านจาก Firestore (Server/Cache), การเปลี่ยนแปลงแบบเรียลไทม์, และแหล่งที่มาผู้สร้างเมนู (createdBy/เวอร์ชัน/โฮสต์) พร้อมตรวจจับเมนูผิดปกติอัตโนมัติ',
+  description: 'เวอร์ชัน 2.27.0: เพิ่มระบบให้ร้านค้าเลือก เพิ่ม/ลบ/จัดลำดับ "เมนูแนะนำประจำสัปดาห์" ได้เอง + แก้ไขรายการไฟล์อัปเดต GitHub & Patch ZIP ให้ครบทุกไฟล์ (รวม AdminSalesDashboard, AdminSalesAnalytics, CustomerAppendOrderModal และ package.json)',
   features: [
-    '🔎 เพิ่ม Forensic Log ใน subscribeMenus แสดงเวลาที่อ่านจาก Firestore, แหล่งข้อมูล (firestore-server/local-cache) และ docChanges()',
-    '🧬 บันทึกข้อมูลผู้สร้าง/แหล่งที่มา (createdBy, updatedBy, createdSourceAppVersion, createdHost) ทุกครั้งที่เพิ่มหรือแก้ไขเมนู',
-    '🚨 ตรวจจับและแจ้งเตือนใน Console ([subscribeMenus][ANOMALY]) ทันทีเมื่อพบเมนูรหัสตัวอย่างเดิมหรือเมนูที่ไม่มีข้อมูลผู้สร้าง',
-    '🛡️ ป้องกันเมนูเก่าและเมนูน้ำหวานแทรกซ้ำถาวร + ล็อคสิทธิ์ใน firestore.rules + ปุ่มลบเมนูตัวอย่างใน 1 คลิก',
+    '⭐ ร้านค้าสามารถ เพิ่ม/ลบ/เลื่อนลำดับ "เมนูแนะนำประจำสัปดาห์" ได้เองในหน้าจัดการรายการอาหาร ซิงก์เรียลไทม์ไปหน้าลูกค้าทันที',
+    '📦 แก้ไขรายการไฟล์อัปเดต GitHub & Patch ZIP ให้รวม AdminSalesDashboard.tsx, AdminSalesAnalytics.tsx, CustomerAppendOrderModal.tsx และ package.json (recharts) ครบถ้วน ไม่มีไฟล์ซ้ำ',
+    '📊 หน้าวิเคราะห์ยอดขายแสดงการ์ดสรุป รายวัน/สัปดาห์/เดือน พร้อมกราฟเส้น Recharts และตาราง Excel Popup ครบสมบูรณ์',
+    '🔎 คงระบบ Forensic Log ใน subscribeMenus และระบบป้องกันเมนูตัวอย่างเดิมแทรกซ้ำถาวร',
   ],
 };
 

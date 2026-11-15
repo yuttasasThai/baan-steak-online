@@ -111,6 +111,8 @@ export interface ShopSettings {
   webhookUrl?: string; // Webhook URL สากล เช่น Discord, Telegram, Make, Zapier, Google Apps Script
   lineNotifyToken?: string; // LINE Notify Token (สำหรับ Token เดิมที่ยังใช้งานได้ ก่อนปิดตัว 31 มี.ค. 2568)
   lineNotifySendOnCreate?: boolean; // ส่งการแจ้งเตือนทันทีเมื่อมีออเดอร์ใหม่เข้า (ค่าเริ่มต้น true)
+  recommendedMenuMode?: 'auto' | 'manual'; // โหมดเมนูแนะนำประจำสัปดาห์: auto = สุ่มขายดี/ใหม่ล่าสุด, manual = ร้านค้าเลือกเอง
+  recommendedMenuIds?: string[]; // รายการ ID เมนูแนะนำประจำสัปดาห์ที่ร้านค้ากำหนดเอง
 }
 
 export interface CustomerRecord {

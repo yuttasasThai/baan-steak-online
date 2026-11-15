@@ -892,6 +892,8 @@ export function App() {
               <AdminMenuManager
                 menus={menus}
                 categories={categories}
+                settings={settings}
+                orders={orders}
                 isLoading={isLoading}
                 onNotify={notify}
               />
