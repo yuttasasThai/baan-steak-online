@@ -11,7 +11,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { CategoryItem, CustomerRecord, DailyExpenseItem, DailyExpenseRecord, DiningType, MenuItem, Order, OrderItem, OrderStatus, RestaurantTable, ShopSettings } from '../types';
+import { CategoryItem, CustomerRecord, DailyExpenseItem, DailyExpenseRecord, DiningType, MenuItem, Order, OrderItem, OrderItemStatus, OrderStatus, RestaurantTable, ShopSettings } from '../types';
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 import { sendOrderNotification } from './notificationService';
 import { CURRENT_REVISION } from '../revisionInfo';
@@ -1576,8 +1576,264 @@ async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
   }
 }
 
+// Order status linear index for forward-only progression
+const ORDER_STEP_INDEX: Record<OrderStatus, number> = {
+  'รับออเดอร์': 0,
+  'กำลังทำ': 1,
+  'ส่งออเดอร์': 2,
+  'กำลังส่ง': 2,
+  'ส่งแล้ว': 3,
+  'เช็คบิล': 4,
+  'ยกเลิก': 99,
+};
+
+export const ORDER_ITEM_STATUS_OPTIONS: OrderItemStatus[] = [
+  'รอทำ',
+  'กำลังทำ',
+  'พร้อมเสิร์ฟ',
+  'เสิร์ฟแล้ว',
+];
+
+export function getEffectiveItemStatus(item: OrderItem, orderStatus: OrderStatus): OrderItemStatus {
+  const norm = normalizeOrderStatus(orderStatus);
+  if (norm === 'ส่งแล้ว' || norm === 'เช็คบิล') {
+    return item.itemStatus || 'เสิร์ฟแล้ว';
+  }
+  return item.itemStatus || 'รอทำ';
+}
+
+export function getOrderCompletionSummary(order: Pick<Order, 'items' | 'status'>): {
+  totalLines: number;
+  completedLines: number;
+  readyLines: number;
+  cookingLines: number;
+  pendingLines: number;
+  totalDishes: number;
+  completedDishes: number;
+  isAllCompleted: boolean;
+  progressPercent: number;
+} {
+  const items = Array.isArray(order.items) ? order.items : [];
+  let completedLines = 0;
+  let readyLines = 0;
+  let cookingLines = 0;
+  let pendingLines = 0;
+  let totalDishes = 0;
+  let completedDishes = 0;
+
+  for (const item of items) {
+    const qty = Math.max(1, Number(item.quantity) || 1);
+    totalDishes += qty;
+    const effective = getEffectiveItemStatus(item, order.status);
+    if (effective === 'เสิร์ฟแล้ว') {
+      completedLines += 1;
+      completedDishes += qty;
+    } else if (effective === 'พร้อมเสิร์ฟ') {
+      readyLines += 1;
+    } else if (effective === 'กำลังทำ') {
+      cookingLines += 1;
+    } else {
+      pendingLines += 1;
+    }
+  }
+
+  const totalLines = items.length;
+  const isAllCompleted = totalLines > 0 && completedLines === totalLines;
+  const progressPercent = totalLines > 0 ? Math.round((completedLines / totalLines) * 100) : 0;
+
+  return {
+    totalLines,
+    completedLines,
+    readyLines,
+    cookingLines,
+    pendingLines,
+    totalDishes,
+    completedDishes,
+    isAllCompleted,
+    progressPercent,
+  };
+}
+
+// Record customer loyalty summary helper (reusable across updateOrderStatus & finalizeOrderCheckout)
+async function upsertCustomerStatsForOrder(
+  order: Pick<Order, 'customerPhone' | 'customerName' | 'address' | 'items'>,
+  nowIso: string
+): Promise<void> {
+  if (!order.customerPhone) return;
+  const rawPhone = order.customerPhone.trim();
+  const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
+  if (!cleanPhone) return;
+
+  const custRef = doc(db, 'customers', cleanPhone);
+  const existingSnap = await getDoc(custRef);
+
+  const existingData = existingSnap.exists() ? (existingSnap.data() || {}) : {};
+  const currentCount = existingSnap.exists()
+    ? Number(existingData.orderCount || 0) + 1
+    : 1;
+
+  const currentItemCounts: Record<string, number> = { ...(existingData.itemCounts || {}) };
+  if (Array.isArray(order.items)) {
+    for (const itm of order.items) {
+      if (itm.name) {
+        const q = Number(itm.quantity) || 1;
+        currentItemCounts[itm.name] = (currentItemCounts[itm.name] || 0) + q;
+      }
+    }
+  }
+
+  await setDoc(
+    custRef,
+    {
+      name: (order.customerName || '').trim(),
+      phone: rawPhone,
+      address: (order.address || '').trim(),
+      monthYear: getThaiMonthYear(),
+      lastOrderMonthYear: getThaiMonthYear(),
+      orderCount: currentCount,
+      itemCounts: currentItemCounts,
+      lastOrderAt: nowIso,
+      updatedAt: nowIso,
+    },
+    { merge: true }
+  );
+}
+
+// Update individual item status inside an order (รอทำ / กำลังทำ / พร้อมเสิร์ฟ / เสิร์ฟแล้ว)
+export async function updateOrderItemStatus(
+  order: Order,
+  itemIndex: number,
+  nextItemStatus: OrderItemStatus
+): Promise<OrderItem[]> {
+  const currentItems = Array.isArray(order.items) ? [...order.items] : [];
+  if (itemIndex < 0 || itemIndex >= currentItems.length) {
+    throw new Error('ไม่พบรายการอาหารที่ต้องการอัปเดต');
+  }
+
+  currentItems[itemIndex] = {
+    ...currentItems[itemIndex],
+    itemStatus: nextItemStatus,
+  };
+
+  const orderRef = doc(db, 'orders', order.id);
+  try {
+    await updateDoc(orderRef, {
+      items: currentItems,
+      updatedAt: new Date().toISOString(),
+    });
+    return currentItems;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
+    return currentItems;
+  }
+}
+
+// Mark all items inside an order with a single status (e.g. 'เสิร์ฟแล้ว')
+export async function markAllOrderItemsStatus(
+  order: Order,
+  targetItemStatus: OrderItemStatus = 'เสิร์ฟแล้ว'
+): Promise<OrderItem[]> {
+  const currentItems = Array.isArray(order.items) ? order.items : [];
+  const updatedItems: OrderItem[] = currentItems.map((it) => ({
+    ...it,
+    itemStatus: targetItemStatus,
+  }));
+
+  const orderRef = doc(db, 'orders', order.id);
+  try {
+    await updateDoc(orderRef, {
+      items: updatedItems,
+      updatedAt: new Date().toISOString(),
+    });
+    return updatedItems;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
+    return updatedItems;
+  }
+}
+
+// Finalize check-bill with summarized / added items and latest edited total amount
+export async function finalizeOrderCheckout(params: {
+  order: Order;
+  finalItems: OrderItem[];
+  deliveryFee: number;
+  finalTotalAmount: number;
+  markAllItemsServed?: boolean;
+}): Promise<Order> {
+  const { order, finalItems, deliveryFee, finalTotalAmount, markAllItemsServed = true } = params;
+  const currentStatus = normalizeOrderStatus(order.status);
+
+  if (currentStatus === 'ยกเลิก') {
+    throw new Error('ออเดอร์นี้ถูกยกเลิกแล้ว ไม่สามารถเช็คบิลได้');
+  }
+  if (currentStatus === 'เช็คบิล') {
+    throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
+  }
+
+  const sanitizedItems: OrderItem[] = finalItems
+    .filter((it) => Number(it.quantity) > 0)
+    .map((it) => ({
+      menuId: it.menuId,
+      name: it.name,
+      price: Math.max(0, Number(it.price) || 0),
+      quantity: Math.max(1, Number(it.quantity) || 1),
+      itemStatus: markAllItemsServed ? 'เสิร์ฟแล้ว' : it.itemStatus || 'เสิร์ฟแล้ว',
+    }));
+
+  const computedSubtotal = sanitizedItems.reduce(
+    (sum, it) => sum + it.price * it.quantity,
+    0
+  );
+  const safeDeliveryFee = Math.max(0, Number(deliveryFee) || 0);
+  const safeTotal = Math.max(0, Number(finalTotalAmount) || 0);
+  const nowIso = new Date().toISOString();
+
+  const orderRef = doc(db, 'orders', order.id);
+  try {
+    await updateDoc(orderRef, {
+      items: sanitizedItems,
+      subtotal: computedSubtotal,
+      deliveryFee: safeDeliveryFee,
+      totalAmount: safeTotal,
+      status: 'เช็คบิล' as OrderStatus,
+      isArchived: true,
+      checkedOutAt: nowIso,
+      updatedAt: nowIso,
+    });
+
+    await freeTableForCheckedOutOrder(order);
+
+    if (currentStatus !== 'ส่งแล้ว') {
+      await upsertCustomerStatsForOrder(
+        {
+          customerPhone: order.customerPhone,
+          customerName: order.customerName,
+          address: order.address,
+          items: sanitizedItems,
+        },
+        nowIso
+      );
+    }
+
+    return {
+      ...order,
+      items: sanitizedItems,
+      subtotal: computedSubtotal,
+      deliveryFee: safeDeliveryFee,
+      totalAmount: safeTotal,
+      status: 'เช็คบิล',
+      isArchived: true,
+      checkedOutAt: nowIso,
+      updatedAt: nowIso,
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
+    throw error;
+  }
+}
+
 // Update order status & record customer summary when status is "ส่งแล้ว" or "เช็คบิล"
-// Strictly 1-way: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว -> เช็คบิล (หรือกดเช็คบิลได้ทันที)
+// Strictly 1-way forward progression: รับออเดอร์ -> กำลังทำ -> ส่งออเดอร์ -> ส่งแล้ว -> เช็คบิล (หรือกดเช็คบิลได้ทันที)
 export async function updateOrderStatus(order: Order, newStatus: OrderStatus): Promise<void> {
   const currentStatus = normalizeOrderStatus(order.status);
   const targetStatus = normalizeOrderStatus(newStatus);
@@ -1589,10 +1845,10 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
     throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
   }
 
-  // Allow direct checkout ('เช็คบิล') from any active/delivered order; otherwise enforce 1-way forward step
-  const allowedNext = NEXT_ORDER_STATUS_MAP[currentStatus];
-  if (targetStatus !== 'เช็คบิล' && allowedNext !== targetStatus) {
-    throw new Error(`ไม่อนุญาตให้ย้อนสถานะหรือข้ามสถานะ (จาก "${currentStatus}" ไป "${targetStatus}")`);
+  const currentIdx = ORDER_STEP_INDEX[currentStatus] ?? 0;
+  const targetIdx = ORDER_STEP_INDEX[targetStatus] ?? 0;
+  if (targetStatus !== 'เช็คบิล' && targetIdx <= currentIdx) {
+    throw new Error(`ไม่อนุญาตให้ย้อนสถานะหรือเลือกสถานะเดิม (จาก "${currentStatus}" ไป "${targetStatus}")`);
   }
 
   const orderRef = doc(db, 'orders', order.id);
@@ -1621,44 +1877,8 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
       (targetStatus === 'ส่งแล้ว' && currentStatus !== 'ส่งแล้ว') ||
       (targetStatus === 'เช็คบิล' && currentStatus !== 'ส่งแล้ว');
 
-    if (shouldRecordCustomer && order.customerPhone) {
-      const rawPhone = order.customerPhone.trim();
-      const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
-      if (cleanPhone) {
-        const custRef = doc(db, 'customers', cleanPhone);
-        const existingSnap = await getDoc(custRef);
-
-        const existingData = existingSnap.exists() ? (existingSnap.data() || {}) : {};
-        const currentCount = existingSnap.exists()
-          ? Number(existingData.orderCount || 0) + 1
-          : 1;
-
-        const currentItemCounts: Record<string, number> = { ...(existingData.itemCounts || {}) };
-        if (Array.isArray(order.items)) {
-          for (const itm of order.items) {
-            if (itm.name) {
-              const q = Number(itm.quantity) || 1;
-              currentItemCounts[itm.name] = (currentItemCounts[itm.name] || 0) + q;
-            }
-          }
-        }
-
-        await setDoc(
-          custRef,
-          {
-            name: order.customerName.trim(),
-            phone: rawPhone,
-            address: order.address.trim(),
-            monthYear: getThaiMonthYear(),
-            lastOrderMonthYear: getThaiMonthYear(),
-            orderCount: currentCount,
-            itemCounts: currentItemCounts,
-            lastOrderAt: nowIso,
-            updatedAt: nowIso,
-          },
-          { merge: true }
-        );
-      }
+    if (shouldRecordCustomer) {
+      await upsertCustomerStatsForOrder(order, nowIso);
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
