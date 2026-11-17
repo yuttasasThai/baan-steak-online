@@ -187,7 +187,7 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-xs animate-fadeIn">
-      <div className="w-full sm:max-w-xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-teal-200 overflow-hidden flex flex-col max-h-[94vh] text-stone-900">
+      <div className="w-full max-w-full sm:max-w-xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-teal-200 overflow-hidden flex flex-col max-h-[94vh] text-stone-900">
         {/* Header */}
         <div className="p-4 sm:p-5 bg-gradient-to-r from-teal-700 via-emerald-700 to-teal-800 text-white flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -216,7 +216,7 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 bg-stone-50/80">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-5 space-y-4 bg-stone-50/80 min-w-0">
           {/* Order Type Badge */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             {renderDeliveryTypeBadge(order.deliveryType, order.tableNumber)}
@@ -242,8 +242,8 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
           {/* Expandable Add Menu Picker */}
           {showAddMenuDrawer && (
             <div className="bg-amber-50/70 border-2 border-amber-300 rounded-2xl p-3 space-y-2.5 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+              <div className="flex flex-col sm:flex-row gap-2 min-w-0">
+                <div className="w-full sm:w-auto min-w-0 flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                   <button
                     type="button"
                     onClick={() => setSelectedCategory('ทั้งหมด')}
@@ -376,27 +376,28 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
           </div>
 
           {/* Totals & Latest Editable Total Box */}
-          <div className="bg-white rounded-2xl border-2 border-teal-300 p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between text-xs text-stone-600 font-semibold">
-              <span>ค่าอาหารรวม (คำนวณจากรายการ):</span>
-              <span className="font-black text-stone-900 tabular-nums">
+          <div className="bg-white rounded-2xl border-2 border-teal-300 p-3.5 sm:p-4 space-y-3 shadow-xs w-full max-w-full overflow-hidden min-w-0">
+            <div className="flex items-center justify-between gap-2 text-xs text-stone-600 font-semibold min-w-0">
+              <span className="truncate">ค่าอาหารรวม (คำนวณจากรายการ):</span>
+              <span className="font-black text-stone-900 tabular-nums shrink-0">
                 ฿{computedSubtotal.toLocaleString()}
               </span>
             </div>
 
-            <div className="flex items-center justify-between gap-2 text-xs text-stone-600 font-semibold">
-              <span>ค่าจัดส่ง (บาท):</span>
+            <div className="flex items-center justify-between gap-2 text-xs text-stone-600 font-semibold min-w-0">
+              <span className="truncate">ค่าจัดส่ง (บาท):</span>
               <input
                 type="number"
+                inputMode="numeric"
                 min={0}
                 value={deliveryFee}
                 onChange={(e) => setDeliveryFee(Math.max(0, Number(e.target.value) || 0))}
-                className="w-24 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-xl text-right font-black text-stone-900 tabular-nums focus:outline-none focus:border-teal-600"
+                className="w-24 shrink-0 px-2.5 py-1.5 bg-stone-50 border border-stone-300 rounded-xl text-right font-black text-stone-900 tabular-nums focus:outline-none focus:border-teal-600"
               />
             </div>
 
-            <div className="pt-2.5 border-t border-stone-200 space-y-2">
-              <div className="flex items-center justify-between gap-2">
+            <div className="pt-2.5 border-t border-stone-200 space-y-2 min-w-0">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
                 <label className="text-xs sm:text-sm font-black text-stone-900">
                   💰 แก้ไขยอดรวมสุทธิล่าสุด (บาท):
                 </label>
@@ -415,10 +416,11 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
                 )}
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-xl font-black text-red-600">฿</span>
+              <div className="flex items-center gap-2 w-full min-w-0">
+                <span className="text-xl font-black text-red-600 shrink-0">฿</span>
                 <input
                   type="number"
+                  inputMode="numeric"
                   min={0}
                   step={1}
                   value={manualTotalStr}
@@ -426,7 +428,7 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
                     setIsTotalManuallyEdited(true);
                     setManualTotalStr(e.target.value);
                   }}
-                  className="flex-1 px-3.5 py-2.5 bg-amber-50/60 border-2 border-teal-500 rounded-xl text-right text-2xl font-black text-red-600 tabular-nums focus:outline-none focus:ring-2 focus:ring-teal-300"
+                  className="w-full min-w-0 flex-1 px-3 py-2 bg-amber-50/60 border-2 border-teal-500 rounded-xl text-right text-xl sm:text-2xl font-black text-red-600 tabular-nums focus:outline-none focus:ring-2 focus:ring-teal-300"
                 />
               </div>
 
@@ -439,14 +441,14 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
               )}
             </div>
 
-            <label className="flex items-center gap-2 pt-1 text-xs font-bold text-stone-700 cursor-pointer">
+            <label className="flex items-start sm:items-center gap-2 pt-1 text-xs font-bold text-stone-700 cursor-pointer">
               <input
                 type="checkbox"
                 checked={markAllServed}
                 onChange={(e) => setMarkAllServed(e.target.checked)}
-                className="rounded accent-teal-600 w-4 h-4"
+                className="rounded accent-teal-600 w-4 h-4 shrink-0 mt-0.5 sm:mt-0"
               />
-              <span>อัปเดตสถานะทุกรายการอาหารเป็น &quot;ได้รับ/เสิร์ฟครบแล้ว&quot;</span>
+              <span className="leading-snug">อัปเดตสถานะทุกรายการอาหารเป็น &quot;ได้รับ/เสิร์ฟครบแล้ว&quot;</span>
             </label>
           </div>
         </div>

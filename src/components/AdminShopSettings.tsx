@@ -347,12 +347,12 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
               สำหรับแชร์ให้ลูกค้า
             </span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 w-full min-w-0">
             <input
               type="text"
               readOnly
               value={customerUrl}
-              className="flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
+              className="w-full min-w-0 flex-1 px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
             />
             <button
               type="button"
@@ -401,12 +401,12 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
           {/* ลิงก์หลัก /admin */}
           <div className="space-y-1">
             <div className="text-[11px] font-bold text-stone-600">ลิงก์หลัก (แบบ URL สวยงาม):</div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 w-full min-w-0">
               <input
                 type="text"
                 readOnly
                 value={adminUrl}
-                className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
+                className="w-full min-w-0 flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
               />
               <button
                 type="button"
@@ -442,12 +442,12 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
             <div className="text-[11px] font-bold text-stone-600">
               ลิงก์สำรอง (แบบ Hash <code>/#admin</code> เปิดได้ 100% บนมือถือทุกรุ่นและเบราว์เซอร์ LINE):
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 w-full min-w-0">
               <input
                 type="text"
                 readOnly
                 value={adminHashUrl}
-                className="flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
+                className="w-full min-w-0 flex-1 px-3 py-1.5 bg-white border border-stone-300 rounded-xl text-xs font-mono text-stone-700 select-all focus:outline-none"
               />
               <button
                 type="button"

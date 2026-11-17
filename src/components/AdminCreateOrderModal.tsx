@@ -248,11 +248,11 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
                 <label className="block text-xs font-bold text-stone-700 mb-1">
                   เลือกโต๊ะอาหาร (หรือพิมพ์เลขโต๊ะ) <span className="text-stone-400 font-normal">(ใส่หรือไม่ใส่ก็ได้)</span>
                 </label>
-                <div className="flex gap-2">
+                <div className="flex gap-2 w-full min-w-0">
                   <select
                     value={tableNumber}
                     onChange={(e) => setTableNumber(e.target.value)}
-                    className="px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold focus:outline-none focus:border-red-500"
+                    className="px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold focus:outline-none focus:border-red-500 shrink-0"
                   >
                     {tables.map((t) => (
                       <option key={t.id} value={String(t.number)}>
@@ -267,7 +267,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
                     value={tableNumber}
                     onChange={(e) => setTableNumber(e.target.value)}
                     placeholder="เลขโต๊ะ เช่น 1, 2, VIP"
-                    className="flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold focus:outline-none focus:border-red-500"
+                    className="w-full min-w-0 flex-1 px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-bold focus:outline-none focus:border-red-500"
                   />
                 </div>
               </div>
