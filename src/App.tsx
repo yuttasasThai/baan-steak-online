@@ -553,31 +553,31 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col font-['Prompt',sans-serif]">
+    <div className="min-h-screen w-full max-w-full overflow-x-clip bg-stone-100 text-stone-900 flex flex-col font-['Prompt',sans-serif]">
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-xs">
-        <div className="max-w-4xl mx-auto px-3 sm:px-4 h-16 flex items-center justify-between gap-2">
+      <header className="sticky top-0 z-40 bg-white border-b border-stone-200 shadow-xs w-full">
+        <div className="max-w-4xl w-full mx-auto px-2.5 sm:px-4 py-2 sm:py-0 sm:h-16 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 min-w-0">
           {/* Logo / Shop Name */}
           <div
             onClick={() => navigateToView('customer')}
-            className="flex items-center gap-2 cursor-pointer shrink-0"
+            className="flex items-center gap-2 cursor-pointer min-w-0 shrink"
             title="กลับไปหน้าหลัก"
           >
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-black text-base sm:text-lg shadow-xs">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-black text-base sm:text-lg shadow-xs shrink-0">
               บ
             </div>
-            <div>
-              <div className="font-extrabold text-sm sm:text-base leading-tight text-red-600">
+            <div className="min-w-0">
+              <div className="font-extrabold text-sm sm:text-base leading-tight text-red-600 truncate">
                 {SHOP_INFO.name}
               </div>
-              <div className="text-[9px] sm:text-[10px] text-stone-500 font-medium">
+              <div className="text-[9px] sm:text-[10px] text-stone-500 font-medium truncate">
                 {SHOP_INFO.slogan} • อ.ชุมแพ
               </div>
             </div>
           </div>
 
           {/* Top Switcher: Customer vs Admin */}
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2 min-w-0 max-w-full ml-auto">
             {/* Store Status Quick Toggle (Always visible in header) */}
             <button
               type="button"
@@ -593,7 +593,7 @@ export function App() {
             </button>
 
             {currentView === 'admin' ? (
-              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2 min-w-0">
                 {/* 🚨 ปุ่มเปิดหน้าต่างเด้งออเดอร์ทั้งหมดแบบเรียลไทม์ */}
                 <button
                   type="button"
@@ -606,7 +606,8 @@ export function App() {
                   title="เปิดหน้าต่างเด้งออเดอร์ทั้งหมด และดูสถานะเรียลไทม์ รับออเดอร์, กำลังทำ, ส่งออเดอร์"
                 >
                   <Bell className="w-3.5 h-3.5" />
-                  <span>หน้าต่างออเดอร์ ({allActiveOrders.length})</span>
+                  <span className="hidden xs:inline sm:inline">หน้าต่างออเดอร์ ({allActiveOrders.length})</span>
+                  <span className="xs:hidden sm:hidden">ออเดอร์ ({allActiveOrders.length})</span>
                 </button>
 
                 <button
@@ -634,7 +635,7 @@ export function App() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="p-1 sm:p-1.5 rounded-xl text-stone-400 hover:text-red-600 hover:bg-stone-100 cursor-pointer shrink-0"
+                  className="p-1.5 rounded-xl text-stone-500 hover:text-red-600 hover:bg-stone-100 cursor-pointer shrink-0"
                   title="ออกจากระบบ"
                 >
                   <LogOut className="w-4 h-4" />
@@ -827,11 +828,11 @@ export function App() {
 
       {/* Sticky Alert Banner if modal is minimized and pending orders are waiting */}
       {currentView === 'admin' && pendingIncomingOrders.length > 0 && !isIncomingModalOpen && (
-        <div className="sticky top-16 z-30 bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white px-4 py-3 shadow-md border-b-2 border-amber-300 flex items-center justify-between gap-3 animate-pulse">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="text-xl shrink-0">🚨</span>
+        <div className="sticky top-16 z-30 bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white px-3 sm:px-4 py-2.5 shadow-md border-b-2 border-amber-300 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 animate-pulse w-full">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg sm:text-xl shrink-0">🚨</span>
             <div className="truncate">
-              <span className="font-black text-sm">
+              <span className="font-black text-xs sm:text-sm">
                 มี {pendingIncomingOrders.length} ออเดอร์เข้าค้างรับ!
               </span>
               <span className="ml-1.5 text-xs text-amber-200 font-bold hidden sm:inline">
@@ -843,7 +844,7 @@ export function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
             <button
               type="button"
               onClick={handleToggleSound}
@@ -856,16 +857,16 @@ export function App() {
             <button
               type="button"
               onClick={() => setIsIncomingModalOpen(true)}
-              className="px-3.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-stone-950 text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 ring-2 ring-white"
+              className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-stone-950 text-xs font-black rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1 ring-2 ring-white"
             >
-              <span>👉 เปิดหน้าต่างรับออเดอร์</span>
+              <span>👉 เปิดรับออเดอร์</span>
             </button>
           </div>
         </div>
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4">
+      <main className="flex-1 w-full max-w-4xl mx-auto px-2.5 sm:px-4 py-3 sm:py-4 min-w-0">
         {currentView === 'customer' ? (
           <CustomerWebsite
             menus={menus}

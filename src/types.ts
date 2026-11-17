@@ -34,11 +34,14 @@ export type OrderStatus =
 
 export type DiningType = 'มาทานที่ร้าน' | 'สั่งกลับบ้าน' | 'ส่งอาหารที่บ้าน' | 'นัดรับอาหาร';
 
+export type OrderItemStatus = 'รอทำ' | 'กำลังทำ' | 'พร้อมเสิร์ฟ' | 'เสิร์ฟแล้ว';
+
 export interface OrderItem {
   menuId: string;
   name: string;
   price: number;
   quantity: number;
+  itemStatus?: OrderItemStatus;
 }
 
 export interface Order {
