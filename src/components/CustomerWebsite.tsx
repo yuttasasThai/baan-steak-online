@@ -96,7 +96,60 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   const [showManualTracker, setShowManualTracker] = useState(false);
   const [appendOrderTarget, setAppendOrderTarget] = useState<Order | null>(null);
 
-  // Active tracked orders for customer: เฉพาะออเดอร์ของเครื่องนี้เท่านั้น ไม่แสดงของคนอื่น
+  const getThaiCalendarDateKey = (dateInput?: string | Date): string => {
+    try {
+      const d = dateInput ? new Date(dateInput) : new Date();
+      if (isNaN(d.getTime())) return '';
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(d);
+    } catch {
+      const d = dateInput ? new Date(dateInput) : new Date();
+      if (isNaN(d.getTime())) return '';
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  };
+
+  const [todayDateKey, setTodayDateKey] = useState<string>(() => getThaiCalendarDateKey());
+
+  // เคลียร์ประวัติการติดตามออเดอร์บนหน้าเว็บอัตโนมัติเมื่อเริ่มต้นวันใหม่ (00:00 น.)
+  React.useEffect(() => {
+    const syncAndClearIfNewDay = () => {
+      const currentKey = getThaiCalendarDateKey();
+      setTodayDateKey(currentKey);
+      try {
+        const storedDate = localStorage.getItem('baan_steak_my_order_date');
+        if (storedDate !== currentKey) {
+          localStorage.removeItem('baan_steak_my_order_numbers');
+          localStorage.setItem('baan_steak_my_order_date', currentKey);
+          setCompletedOrderNumber(null);
+          setTrackingSearchQuery('');
+        }
+      } catch {
+        // ignore storage errors
+      }
+    };
+
+    syncAndClearIfNewDay();
+    const timer = window.setInterval(syncAndClearIfNewDay, 30000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncAndClearIfNewDay();
+      }
+    };
+    window.addEventListener('focus', syncAndClearIfNewDay);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', syncAndClearIfNewDay);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  // Active tracked orders for customer: เฉพาะออเดอร์ของวันนี้และจากเครื่องนี้เท่านั้น
   const customerTrackedOrders = React.useMemo(() => {
     if (!orders || orders.length === 0) return [];
 
@@ -105,9 +158,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       storedNumbers.push(completedOrderNumber);
     }
     try {
-      const saved = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
-      if (Array.isArray(saved)) {
-        storedNumbers = Array.from(new Set([...storedNumbers, ...saved]));
+      const storedDate = localStorage.getItem('baan_steak_my_order_date');
+      if (!storedDate || storedDate === todayDateKey) {
+        const saved = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+        if (Array.isArray(saved)) {
+          storedNumbers = Array.from(new Set([...storedNumbers, ...saved]));
+        }
       }
     } catch {
       // ignore
@@ -117,6 +173,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
     return orders
       .filter((o) => {
+        // แสดงเฉพาะออเดอร์ของวันปัจจุบัน (เคลียร์ออกเมื่อเริ่มต้นวันใหม่)
+        const orderDateKey = getThaiCalendarDateKey(o.createdAt);
+        if (orderDateKey && orderDateKey !== todayDateKey) {
+          return false;
+        }
+
         // หากลูกค้ากรอกค้นหาเองด้วยเลขออเดอร์หรือเบอร์โทร
         if (trimmedQuery) {
           const matchNum = o.orderNumber.toLowerCase().includes(trimmedQuery);
@@ -133,11 +195,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       })
       .filter((o) => !o.isCancelled && o.status !== 'ยกเลิก')
       .slice(0, 3);
-  }, [orders, completedOrderNumber, trackingSearchQuery]);
+  }, [orders, completedOrderNumber, trackingSearchQuery, todayDateKey]);
 
   const handleClearMyTrackedOrders = () => {
     try {
       localStorage.removeItem('baan_steak_my_order_numbers');
+      localStorage.setItem('baan_steak_my_order_date', todayDateKey);
     } catch {
       // ignore
     }
@@ -638,8 +701,13 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       );
       setCompletedOrderNumber(orderNum);
       try {
-        const savedList = JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]');
+        const currentDateKey = getThaiCalendarDateKey();
+        const prevDate = localStorage.getItem('baan_steak_my_order_date');
+        const savedList = prevDate === currentDateKey
+          ? JSON.parse(localStorage.getItem('baan_steak_my_order_numbers') || '[]')
+          : [];
         const updated = Array.from(new Set([orderNum, ...(Array.isArray(savedList) ? savedList : [])])).slice(0, 5);
+        localStorage.setItem('baan_steak_my_order_date', currentDateKey);
         localStorage.setItem('baan_steak_my_order_numbers', JSON.stringify(updated));
       } catch {
         // ignore
@@ -826,12 +894,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         </div>
       )}
 
-      {/* 2.3 Live Real-time Order Tracking for Customer (ติดตามสถานะออเดอร์แบบเรียลไทม์) */}
+      {/* 2.3 Live Real-time Order Tracking for Customer (ไม่ต้องแสดงรายการเมนูและยอดเงิน และเคลียร์เมื่อขึ้นวันใหม่) */}
       {customerTrackedOrders.length > 0 && (
         <div className="w-full bg-white rounded-3xl p-4 sm:p-5 border-2 border-amber-400 shadow-lg space-y-3.5 animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-stone-100 pb-2.5">
-            <div className="flex items-center gap-2">
-              <span className="flex h-3.5 w-3.5 relative">
+          <div className="flex items-center justify-between gap-2 border-b border-stone-100 pb-2.5 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="flex h-3.5 w-3.5 relative shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500"></span>
               </span>
@@ -839,7 +907,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                 <span>⚡ ติดตามสถานะออเดอร์ของท่าน (เรียลไทม์)</span>
               </h3>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
               <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
                 สถานะสดจากร้าน
               </span>
@@ -858,116 +926,106 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
             {customerTrackedOrders.map((ord) => {
               const currentStatus = ord.status;
               const isTable = Boolean(ord.deliveryType === 'มาทานที่ร้าน' || ord.tableNumber);
+              const stepIdx =
+                currentStatus === 'เช็คบิล'
+                  ? 4
+                  : currentStatus === 'ส่งแล้ว'
+                  ? 3
+                  : currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง'
+                  ? 2
+                  : currentStatus === 'กำลังทำ'
+                  ? 1
+                  : 0;
+              const orderTimeStr = (() => {
+                try {
+                  const d = new Date(ord.createdAt);
+                  if (isNaN(d.getTime())) return '';
+                  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} น.`;
+                } catch {
+                  return '';
+                }
+              })();
 
               return (
                 <div
                   key={ord.id}
                   className="bg-stone-50 rounded-2xl p-3.5 border border-stone-200 space-y-3"
                 >
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <div>
+                  {/* Header without total amount */}
+                  <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-extrabold text-stone-900 text-sm">
                         ออเดอร์ #{ord.orderNumber}
                       </span>
-                      <span className="text-stone-500 ml-2">
-                        ({isTable ? `โต๊ะ ${ord.tableNumber || 1}` : ord.deliveryType})
+                      <span className="px-2 py-0.5 rounded-full bg-stone-200/80 text-stone-700 font-bold text-[11px]">
+                        {isTable ? `🍽️ โต๊ะ ${ord.tableNumber || 1}` : ord.deliveryType || 'สั่งอาหาร'}
                       </span>
                     </div>
-                    <div className="font-black text-red-600 text-sm sm:text-base">
-                      ฿{ord.totalAmount.toLocaleString()}
+                    <div className="flex items-center gap-1.5">
+                      {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
+                        <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                          🎉 มีของแถม
+                        </span>
+                      )}
+                      {orderTimeStr && (
+                        <span className="text-[11px] font-bold text-stone-500">
+                          ⏰ สั่ง {orderTimeStr}
+                        </span>
+                      )}
                     </div>
                   </div>
 
-                  {/* 4-Step Animated Progress Stepper */}
-                  <div className="grid grid-cols-4 gap-1.5 text-center text-[10px] sm:text-xs font-bold">
-                    {/* Step 1: รับออเดอร์ */}
-                    <div
-                      className={`p-2 rounded-xl transition ${
-                        currentStatus === 'รับออเดอร์'
-                          ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300 animate-pulse'
-                          : 'bg-emerald-100 text-emerald-900'
-                      }`}
-                    >
-                      <div className="text-xs mb-0.5">🟡</div>
-                      <div>1. รับออเดอร์</div>
-                    </div>
-
-                    {/* Step 2: กำลังทำ */}
-                    <div
-                      className={`p-2 rounded-xl transition ${
-                        currentStatus === 'กำลังทำ'
-                          ? 'bg-blue-600 text-white font-black shadow-xs ring-2 ring-blue-300 animate-pulse'
-                          : (currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง' || currentStatus === 'ส่งแล้ว')
-                          ? 'bg-emerald-100 text-emerald-900'
-                          : 'bg-stone-200/70 text-stone-400'
-                      }`}
-                    >
-                      <div className="text-xs mb-0.5">🍳</div>
-                      <div>2. กำลังทำ</div>
-                    </div>
-
-                    {/* Step 3: ส่งออเดอร์ */}
-                    <div
-                      className={`p-2 rounded-xl transition ${
-                        currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง'
-                          ? 'bg-orange-500 text-white font-black shadow-xs ring-2 ring-orange-300 animate-pulse'
-                          : currentStatus === 'ส่งแล้ว'
-                          ? 'bg-emerald-100 text-emerald-900'
-                          : 'bg-stone-200/70 text-stone-400'
-                      }`}
-                    >
-                      <div className="text-xs mb-0.5">🚚</div>
-                      <div>3. ส่งออเดอร์</div>
-                    </div>
-
-                    {/* Step 4: ส่งแล้ว / เช็คบิล */}
-                    <div
-                      className={`p-2 rounded-xl transition ${
-                        currentStatus === 'ส่งแล้ว' || currentStatus === 'เช็คบิล'
-                          ? 'bg-emerald-600 text-white font-black shadow-xs'
-                          : 'bg-stone-200/70 text-stone-400'
-                      }`}
-                    >
-                      <div className="text-xs mb-0.5">{currentStatus === 'เช็คบิล' ? '💰' : '✅'}</div>
-                      <div>{currentStatus === 'เช็คบิล' ? '4. เช็คบิลแล้ว' : '4. ส่งแล้ว'}</div>
-                    </div>
-                  </div>
-
-                  {/* รายการอาหารในออเดอร์นี้ */}
-                  {ord.items && ord.items.length > 0 && (
-                    <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-[11px] text-stone-600 space-y-1.5">
-                      <div className="font-bold text-stone-800 flex items-center justify-between gap-2">
-                        <span>รายการอาหาร ({ord.items.length} รายการ):</span>
-                        <div className="flex items-center gap-1.5">
-                          {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
-                            <span className="text-[10px] text-emerald-700 font-extrabold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                              🎉 มีของแถม
-                            </span>
-                          )}
-                          {currentStatus !== 'เช็คบิล' && currentStatus !== 'ยกเลิก' && (
-                            <button
-                              type="button"
-                              onClick={() => setAppendOrderTarget(ord)}
-                              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-black text-[11px] rounded-lg shadow-2xs flex items-center gap-1 active:scale-95 transition cursor-pointer shrink-0"
+                  {/* Modern Circular 4-Step Progress Stepper */}
+                  <div className="flex items-start justify-between gap-1 px-1 py-1">
+                    {[
+                      { label: 'รับออเดอร์', icon: '🔔', activeClass: 'bg-amber-400 text-stone-950 ring-4 ring-amber-200' },
+                      { label: 'กำลังทำ', icon: '🍳', activeClass: 'bg-blue-600 text-white ring-4 ring-blue-200' },
+                      { label: 'ส่งออเดอร์', icon: '🚚', activeClass: 'bg-orange-500 text-white ring-4 ring-orange-200' },
+                      { label: currentStatus === 'เช็คบิล' ? 'เช็คบิลแล้ว' : 'ส่งแล้ว', icon: currentStatus === 'เช็คบิล' ? '💰' : '✅', activeClass: 'bg-emerald-600 text-white ring-4 ring-emerald-200' },
+                    ].map((st, idx) => {
+                      const isDone = stepIdx > idx || (idx === 3 && stepIdx >= 3);
+                      const isCurrent = stepIdx === idx;
+                      return (
+                        <React.Fragment key={st.label}>
+                          <div className="flex flex-col items-center gap-1 flex-1 min-w-0">
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-black transition-all ${
+                                isCurrent
+                                  ? `${st.activeClass} shadow-sm scale-105`
+                                  : isDone
+                                  ? 'bg-emerald-500 text-white shadow-2xs'
+                                  : 'bg-stone-200 text-stone-400'
+                              }`}
                             >
-                              <Plus className="w-3 h-3 stroke-[3]" />
-                              <span>สั่งอาหารเพิ่ม</span>
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="space-y-0.5">
-                        {ord.items.map((it, idx) => (
-                          <div key={idx} className="flex justify-between items-center">
-                            <span className="truncate">• {it.name} x {it.quantity}</span>
-                            <span className="font-bold shrink-0 ml-2 tabular-nums">฿{(it.price * it.quantity).toLocaleString()}</span>
+                              {isDone && !isCurrent ? '✓' : st.icon}
+                            </div>
+                            <span
+                              className={`text-[10px] sm:text-xs text-center leading-tight ${
+                                isCurrent
+                                  ? 'font-black text-stone-900'
+                                  : isDone
+                                  ? 'font-bold text-emerald-700'
+                                  : 'font-semibold text-stone-400'
+                              }`}
+                            >
+                              {st.label}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                          {idx < 3 && (
+                            <div className="pt-4.5 flex-1 max-w-[28px]">
+                              <div
+                                className={`h-1 w-full rounded-full ${
+                                  stepIdx > idx ? 'bg-emerald-500' : 'bg-stone-200'
+                                }`}
+                              />
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
 
-                  {/* Status explanation & Action to append items */}
+                  {/* Status explanation & Action to append items (No menu items list & no total price shown) */}
                   <div className="p-2.5 rounded-xl bg-white border border-stone-200 text-xs text-stone-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5">
                       <span className="font-bold text-stone-900 shrink-0">สถานะ:</span>

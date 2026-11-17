@@ -34,6 +34,9 @@ import { NEXT_ORDER_STATUS_MAP, normalizeOrderStatus } from '../services/menuSer
 import { audioAlert } from '../utils/audioAlert';
 import { OrderReceiptModal } from './OrderReceiptModal';
 import { AdminAppendItemModal } from './AdminAppendItemModal';
+import { OrderStatusModal } from './OrderStatusModal';
+import { CheckBillModal } from './CheckBillModal';
+import { CircularStatusStepper, OrderCompletionBadge } from './CircularStatusStepper';
 
 export interface IncomingOrderModalProps {
   isOpen: boolean;
@@ -89,6 +92,17 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   const [cancelReason, setCancelReason] = useState('วัตถุดิบหมด / ร้านไม่สะดวกรับ');
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [orderToAppend, setOrderToAppend] = useState<Order | null>(null);
+  const [statusModalOrderId, setStatusModalOrderId] = useState<string | null>(null);
+  const [checkBillOrderId, setCheckBillOrderId] = useState<string | null>(null);
+
+  const liveStatusModalOrder = useMemo(
+    () => (statusModalOrderId ? allOrdersList.find((o) => o.id === statusModalOrderId) || null : null),
+    [allOrdersList, statusModalOrderId]
+  );
+  const liveCheckBillOrder = useMemo(
+    () => (checkBillOrderId ? allOrdersList.find((o) => o.id === checkBillOrderId) || null : null),
+    [allOrdersList, checkBillOrderId]
+  );
 
   // รายการที่กรองตามแท็บ
   const filteredOrders = useMemo(() => {
@@ -431,57 +445,17 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Real-time Step Progress Bar */}
-                      <div className="py-1">
-                        <div className="grid grid-cols-4 gap-1.5 text-center text-[11px] font-bold">
-                          {/* Step 1: รับออเดอร์ */}
-                          <div
-                            className={`py-1.5 px-1 rounded-xl transition ${
-                              currentStatus === 'รับออเดอร์'
-                                ? 'bg-amber-400 text-stone-950 font-black shadow-xs ring-2 ring-amber-300'
-                                : 'bg-emerald-100 text-emerald-900'
-                            }`}
-                          >
-                            <span>1. รับออเดอร์</span>
-                          </div>
-
-                          {/* Step 2: กำลังทำ */}
-                          <div
-                            className={`py-1.5 px-1 rounded-xl transition ${
-                              currentStatus === 'กำลังทำ'
-                                ? 'bg-blue-600 text-white font-black shadow-xs ring-2 ring-blue-300'
-                                : currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง' || currentStatus === 'ส่งแล้ว'
-                                ? 'bg-emerald-100 text-emerald-900'
-                                : 'bg-stone-100 text-stone-400'
-                            }`}
-                          >
-                            <span>2. กำลังทำ</span>
-                          </div>
-
-                          {/* Step 3: ส่งออเดอร์ */}
-                          <div
-                            className={`py-1.5 px-1 rounded-xl transition ${
-                              currentStatus === 'ส่งออเดอร์' || currentStatus === 'กำลังส่ง'
-                                ? 'bg-orange-500 text-white font-black shadow-xs ring-2 ring-orange-300'
-                                : currentStatus === 'ส่งแล้ว'
-                                ? 'bg-emerald-100 text-emerald-900'
-                                : 'bg-stone-100 text-stone-400'
-                            }`}
-                          >
-                            <span>3. ส่งออเดอร์</span>
-                          </div>
-
-                          {/* Step 4: ส่งแล้ว */}
-                          <div
-                            className={`py-1.5 px-1 rounded-xl transition ${
-                              currentStatus === 'ส่งแล้ว'
-                                ? 'bg-emerald-600 text-white font-black shadow-xs'
-                                : 'bg-stone-100 text-stone-400'
-                            }`}
-                          >
-                            <span>4. ส่งแล้ว</span>
-                          </div>
-                        </div>
+                      {/* Circular Icon Status Stepper + Item Completion Overview */}
+                      <div className="py-1 flex flex-wrap items-center justify-between gap-2">
+                        <CircularStatusStepper
+                          compact
+                          currentStatus={currentStatus}
+                          onOpenModal={() => setStatusModalOrderId(ord.id)}
+                        />
+                        <OrderCompletionBadge
+                          order={ord}
+                          onClick={() => setStatusModalOrderId(ord.id)}
+                        />
                       </div>
 
                       {/* Food Items Preview */}
@@ -580,10 +554,10 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => handleAdvanceStatus(ord, 'เช็คบิล')}
+                            onClick={() => setCheckBillOrderId(ord.id)}
                             disabled={isBusy}
                             className="px-3 py-2 bg-teal-600 hover:bg-teal-700 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center gap-1 cursor-pointer"
-                            title="เช็คบิลออเดอร์นี้และคืนสถานะโต๊ะว่าง"
+                            title="เปิดหน้าต่างเช็คบิล สรุปรายการ เพิ่มเมนู และแก้ไขยอดล่าสุด"
                           >
                             <Wallet className="w-3.5 h-3.5" />
                             <span>💰 เช็คบิล</span>
@@ -827,7 +801,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
 
             <button
               type="button"
-              onClick={() => handleAdvanceStatus(activeOrder, 'เช็คบิล')}
+              onClick={() => setCheckBillOrderId(activeOrder.id)}
               disabled={processingOrderId === activeOrder.id}
               className="py-3 px-4 bg-teal-600 hover:bg-teal-700 text-white rounded-2xl text-xs font-black transition flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
             >
@@ -883,6 +857,32 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
         order={orderToAppend}
         menus={menus}
         onNotify={(msg, type) => onNotify?.(msg, type)}
+      />
+
+      {/* Circular Order & Item Status Popup Modal */}
+      <OrderStatusModal
+        isOpen={Boolean(liveStatusModalOrder)}
+        order={liveStatusModalOrder}
+        onClose={() => setStatusModalOrderId(null)}
+        onOpenCheckBill={(ord) => {
+          setStatusModalOrderId(null);
+          setCheckBillOrderId(ord.id);
+        }}
+        onOpenAppendItem={(ord) => {
+          setStatusModalOrderId(null);
+          setOrderToAppend(ord);
+        }}
+        onNotify={(msg, type) => onNotify?.(msg, type)}
+      />
+
+      {/* Check-Bill Summary & Editable Total Popup Modal */}
+      <CheckBillModal
+        isOpen={Boolean(liveCheckBillOrder)}
+        order={liveCheckBillOrder}
+        menus={menus}
+        onClose={() => setCheckBillOrderId(null)}
+        onNotify={(msg, type) => onNotify?.(msg, type)}
+        onPrintAfterCheckout={(checkedOutOrd) => setReceiptOrder(checkedOutOrd)}
       />
     </div>
   );

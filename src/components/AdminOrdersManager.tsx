@@ -28,6 +28,9 @@ import {
   cancelOrder,
   clearOrdersHistory,
   deleteOrder,
+  extractOrderTableIdentifier,
+  getOrderCompletionSummary,
+  isOrderHoldingTable,
   NEXT_ORDER_STATUS_MAP,
   normalizeOrderStatus,
   updateOrderStatus,
@@ -37,6 +40,10 @@ import { audioAlert } from '../utils/audioAlert';
 import { OrderReceiptModal } from './OrderReceiptModal';
 import { AdminCreateOrderModal } from './AdminCreateOrderModal';
 import { AdminAppendItemModal } from './AdminAppendItemModal';
+import { CircularStatusStepper, OrderCompletionBadge } from './CircularStatusStepper';
+import { OrderStatusModal } from './OrderStatusModal';
+import { CheckBillModal } from './CheckBillModal';
+import { TableDetailModal } from './TableDetailModal';
 
 interface AdminOrdersManagerProps {
   orders: Order[];
@@ -203,7 +210,13 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
 
   // New order modal & append order modal states
   const [isCreateOrderModalOpen, setIsCreateOrderModalOpen] = useState(false);
+  const [createOrderPresetTable, setCreateOrderPresetTable] = useState<string | undefined>(undefined);
   const [orderToAppend, setOrderToAppend] = useState<Order | null>(null);
+
+  // Dedicated Popups: Circular Status Popup, Check-Bill Summary Popup, Real-time Table Popup
+  const [statusModalOrderId, setStatusModalOrderId] = useState<string | null>(null);
+  const [checkBillOrderId, setCheckBillOrderId] = useState<string | null>(null);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
 
   // Audio alert state (global audio alert is managed in App.tsx)
   const [isAudioEnabled, setIsAudioEnabled] = useState(() => audioAlert.isEnabled());
@@ -357,6 +370,48 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
     };
   }, [activeOrders, archivedOrders, checkedOutOrders, cancelledOrders]);
 
+  // Live Real-time Map of active orders per table number
+  const ordersByTableKey = useMemo(() => {
+    const map = new Map<string, Order[]>();
+    for (const ord of normalizedOrders) {
+      if (!isOrderHoldingTable(ord)) continue;
+      const key = extractOrderTableIdentifier(ord);
+      if (!key) continue;
+      const parsed = parseInt(key, 10);
+      const normKey = !isNaN(parsed) ? String(parsed) : key;
+      const existing = map.get(normKey) || [];
+      existing.push(ord);
+      map.set(normKey, existing);
+    }
+    return map;
+  }, [normalizedOrders]);
+
+  // Live synced references for modals
+  const liveStatusModalOrder = useMemo(
+    () => (statusModalOrderId ? normalizedOrders.find((o) => o.id === statusModalOrderId) || null : null),
+    [normalizedOrders, statusModalOrderId]
+  );
+
+  const liveCheckBillOrder = useMemo(
+    () => (checkBillOrderId ? normalizedOrders.find((o) => o.id === checkBillOrderId) || null : null),
+    [normalizedOrders, checkBillOrderId]
+  );
+
+  const liveSelectedTable = useMemo(
+    () => (selectedTableId ? tables.find((t) => t.id === selectedTableId) || null : null),
+    [tables, selectedTableId]
+  );
+
+  const liveSelectedTableOrders = useMemo(() => {
+    if (!liveSelectedTable) return [];
+    return ordersByTableKey.get(String(liveSelectedTable.number)) || [];
+  }, [liveSelectedTable, ordersByTableKey]);
+
+  const availableTablesCount = useMemo(
+    () => tables.filter((t) => !t.isOccupied && !(ordersByTableKey.get(String(t.number))?.length)).length,
+    [tables, ordersByTableKey]
+  );
+
   // Handle strictly 1-way status change with voice alert
   const handleNextStatus = async (order: Order, nextStatus: OrderStatus) => {
     try {
@@ -442,106 +497,111 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   };
 
   return (
-    <div className="space-y-4 text-stone-900 w-full">
-      {/* 1. Header & Active Orders Count */}
-      <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg sm:text-xl font-black text-stone-900 flex items-center gap-2">
-              <ShoppingBag className="w-5 h-5 text-red-600" />
-              <span>รายการออเดอร์</span>
-            </h2>
-            <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-black rounded-full">
-              Active: {activeOrders.length}
-            </span>
+    <div className="space-y-4 text-stone-900 w-full max-w-full min-w-0">
+      {/* 1. Header & Active Orders Count (Mobile-safe wrapping) */}
+      <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs flex flex-col gap-3 w-full max-w-full min-w-0 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base sm:text-xl font-black text-stone-900 flex items-center gap-1.5">
+                <ShoppingBag className="w-5 h-5 text-red-600 shrink-0" />
+                <span>รายการออเดอร์</span>
+              </h2>
+              <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-black rounded-full shrink-0">
+                Active: {activeOrders.length}
+              </span>
+            </div>
+            <p className="text-[11px] sm:text-xs text-stone-500 mt-0.5 leading-relaxed">
+              แตะไอคอนวงกลมหรือโต๊ะเพื่ออัปเดตสถานะรายเมนู • กดเช็คบิลเพื่อสรุปยอดล่าสุด
+            </p>
           </div>
-          <p className="text-xs text-stone-500 mt-0.5">
-            ตารางแสดง 1 ออเดอร์ต่อ 1 แถว เลื่อนซ้าย-ขวาได้บนมือถือ • สถานะเดินหน้าทางเดียว (รับออเดอร์ → กำลังทำ → กำลังส่ง → ส่งแล้ว)
-          </p>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* ปุ่ม ➕ คีย์ออเดอร์ใหม่ (POS) */}
+            <button
+              type="button"
+              onClick={() => {
+                setCreateOrderPresetTable(undefined);
+                setIsCreateOrderModalOpen(true);
+              }}
+              className="px-3 py-2 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-sm cursor-pointer"
+              title="แอดมินคีย์ออเดอร์ใหม่ สั่งหน้าร้าน โต๊ะ หรือทางโทรศัพท์"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <span>คีย์ออเดอร์ (POS)</span>
+            </button>
+
+            {/* ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง (Admin Only) */}
+            <button
+              type="button"
+              onClick={() => setShowClearModal(true)}
+              className="px-2.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer"
+              title="ลบประวัติออเดอร์ หรือเคลียร์ออเดอร์ทดลองเพื่อเปิดร้านจริง"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>ลบประวัติ</span>
+            </button>
+          </div>
         </div>
 
-        {/* Action Buttons: Create Order POS / View Switcher / Clear History */}
-        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-          {/* ปุ่ม ➕ คีย์ออเดอร์ใหม่ (POS) */}
+        {/* View Switcher Tabs - Wraps cleanly on all mobile widths */}
+        <div className="flex flex-wrap items-center gap-1.5 w-full min-w-0 pt-2 border-t border-stone-100">
           <button
             type="button"
-            onClick={() => setIsCreateOrderModalOpen(true)}
-            className="px-3.5 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1.5 whitespace-nowrap active:scale-95 shadow-md ring-2 ring-red-300 cursor-pointer"
-            title="แอดมินคีย์ออเดอร์ใหม่ สั่งหน้าร้าน โต๊ะ หรือทางโทรศัพท์"
+            onClick={() => setViewTab('active')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+              viewTab === 'active'
+                ? 'bg-red-600 text-white shadow-xs'
+                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+            }`}
           >
-            <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            <span>➕ คีย์ออเดอร์ใหม่ (POS)</span>
+            <span>⚡ รอจัดการ ({activeOrders.length})</span>
           </button>
-
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            <button
-              type="button"
-              onClick={() => setViewTab('active')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                viewTab === 'active'
-                  ? 'bg-red-600 text-white shadow-xs'
-                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-              }`}
-            >
-              <span>⚡ รอจัดการ ({activeOrders.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewTab('archived')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                viewTab === 'archived'
-                  ? 'bg-emerald-700 text-white shadow-xs'
-                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-              }`}
-              title="ออเดอร์ที่จัดส่งแล้ว รอเช็คบิล"
-            >
-              <Archive className="w-3.5 h-3.5" />
-              <span>ส่งแล้ว ({archivedOrders.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewTab('checkedout')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                viewTab === 'checkedout'
-                  ? 'bg-teal-700 text-white shadow-xs'
-                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-              }`}
-              title="ออเดอร์ที่เช็คบิลและคืนสถานะโต๊ะว่างเรียบร้อยแล้ว"
-            >
-              <Wallet className="w-3.5 h-3.5" />
-              <span>เช็คบิลแล้ว ({checkedOutOrders.length})</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewTab('cancelled')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                viewTab === 'cancelled'
-                  ? 'bg-stone-800 text-white shadow-xs'
-                  : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
-              }`}
-              title="ออเดอร์ที่ยกเลิก บันทึกประวัติเมนูขายดีโดยไม่สะสมแต้ม"
-            >
-              <Ban className="w-3.5 h-3.5 text-rose-400" />
-              <span>ยกเลิกแล้ว ({cancelledOrders.length})</span>
-            </button>
-          </div>
-
-          {/* ปุ่มลบประวัติ / เคลียร์ออเดอร์ทดลอง (Admin Only) */}
           <button
             type="button"
-            onClick={() => setShowClearModal(true)}
-            className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap active:scale-95 shadow-2xs cursor-pointer ml-auto"
-            title="ลบประวัติออเดอร์ หรือเคลียร์ออเดอร์ทดลองเพื่อเปิดร้านจริง"
+            onClick={() => setViewTab('archived')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+              viewTab === 'archived'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+            }`}
+            title="ออเดอร์ที่จัดส่งแล้ว รอเช็คบิล"
           >
-            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-            <span>ลบประวัติ / เคลียร์ออเดอร์</span>
+            <Archive className="w-3.5 h-3.5" />
+            <span>ส่งแล้ว ({archivedOrders.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewTab('checkedout')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+              viewTab === 'checkedout'
+                ? 'bg-teal-700 text-white shadow-xs'
+                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+            }`}
+            title="ออเดอร์ที่เช็คบิลและคืนสถานะโต๊ะว่างเรียบร้อยแล้ว"
+          >
+            <Wallet className="w-3.5 h-3.5" />
+            <span>เช็คบิลแล้ว ({checkedOutOrders.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewTab('cancelled')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 whitespace-nowrap cursor-pointer ${
+              viewTab === 'cancelled'
+                ? 'bg-stone-800 text-white shadow-xs'
+                : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+            }`}
+            title="ออเดอร์ที่ยกเลิก บันทึกประวัติเมนูขายดีโดยไม่สะสมแต้ม"
+          >
+            <Ban className="w-3.5 h-3.5 text-rose-400" />
+            <span>ยกเลิกแล้ว ({cancelledOrders.length})</span>
           </button>
         </div>
       </div>
 
-      {/* 2. เสียงเตือนเวลาออเดอร์เข้า "มีออเดอร์เข้า" & ปุ่มทดสอบเสียง */}
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-2.5 px-3.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2">
+      {/* 2. เสียงเตือนเวลาออเดอร์เข้า & ปุ่มทดสอบเสียง */}
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-2.5 px-3 flex flex-wrap items-center justify-between gap-2 text-xs w-full max-w-full min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={toggleAudio}
@@ -576,13 +636,98 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
           title="กดเพื่อทดสอบเสียงเตือน 'มีออเดอร์เข้า' และปลดล็อกเสียงบนเบราว์เซอร์"
         >
           <Bell className="w-3.5 h-3.5 text-red-600" />
-          <span>🔊 ทดสอบเสียง "มีออเดอร์เข้า"</span>
+          <span>🔊 ทดสอบเสียง</span>
         </button>
       </div>
 
+      {/* 2.5 REAL-TIME TABLE STATUS BOARD IN ADMIN (Requirement 4) */}
+      {tables.length > 0 && (
+        <div className="bg-white rounded-2xl p-3.5 sm:p-4 border border-stone-200 shadow-xs space-y-2.5 w-full max-w-full min-w-0 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+              <h3 className="text-xs sm:text-sm font-black text-stone-900 truncate">
+                🍽️ สถานะโต๊ะแบบเรียลไทม์ (แตะโต๊ะเพื่อเพิ่มเมนู / อัปเดตสถานะ)
+              </h3>
+            </div>
+            <span
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-black border shrink-0 ${
+                availableTablesCount === 0
+                  ? 'bg-rose-100 text-rose-800 border-rose-300'
+                  : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+              }`}
+            >
+              ว่าง {availableTablesCount}/{tables.length} โต๊ะ
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+            {tables.map((tbl) => {
+              const tblOrders = ordersByTableKey.get(String(tbl.number)) || [];
+              const primaryOrd = tblOrders[0];
+              const isBusy = tbl.isOccupied || tblOrders.length > 0;
+              const ordSummary = primaryOrd ? getOrderCompletionSummary(primaryOrd) : null;
+
+              return (
+                <button
+                  key={tbl.id}
+                  type="button"
+                  onClick={() => setSelectedTableId(tbl.id)}
+                  className={`p-2.5 rounded-2xl border-2 text-left transition active:scale-[0.97] cursor-pointer flex flex-col justify-between gap-1.5 min-h-[76px] ${
+                    isBusy
+                      ? 'bg-rose-50/80 border-rose-300 hover:border-rose-500 shadow-2xs'
+                      : 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-400'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1 w-full">
+                    <span className="font-black text-xs sm:text-sm text-stone-900 truncate">
+                      {tbl.name}
+                    </span>
+                    <span
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                        isBusy ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'
+                      }`}
+                    />
+                  </div>
+
+                  {primaryOrd ? (
+                    <div className="space-y-0.5 w-full">
+                      <div className="text-[11px] font-black text-red-600 tabular-nums truncate">
+                        ฿{primaryOrd.totalAmount.toLocaleString()}
+                      </div>
+                      {ordSummary && (
+                        <div
+                          className={`text-[9px] font-black px-1.5 py-0.5 rounded-full inline-block ${
+                            ordSummary.isAllCompleted
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-900'
+                          }`}
+                        >
+                          {ordSummary.isAllCompleted
+                            ? `✓ ครบ ${ordSummary.completedLines}/${ordSummary.totalLines}`
+                            : `ได้ ${ordSummary.completedLines}/${ordSummary.totalLines}`}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div
+                      className={`text-[10px] font-bold ${
+                        tbl.isOccupied ? 'text-rose-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {tbl.isOccupied ? '🔴 ล็อคเต็ม' : '🟢 ว่าง'}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 3. Status Filters (Only for Active Orders) */}
       {viewTab === 'active' && (
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        <div className="flex flex-wrap items-center gap-1.5 w-full min-w-0">
           {ACTIVE_STATUS_FILTERS.map((st) => {
             const count = counts[st];
             const isActive = selectedFilter === st;
@@ -591,7 +736,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
               <button
                 key={st}
                 onClick={() => setSelectedFilter(st)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition flex items-center gap-1.5 cursor-pointer ${
                   isActive
                     ? 'bg-red-600 text-white shadow-xs'
                     : 'bg-white text-stone-700 border border-stone-200 hover:bg-stone-50'
@@ -614,7 +759,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 4. ORDERS HORIZONTAL SCROLLING TABLE (1 ออเดอร์ต่อ 1 แถว) */}
       {viewTab === 'active' && (
         displayedActiveOrders.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2">
+          <div className="p-10 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2 w-full">
             <Clock className="w-10 h-10 mx-auto text-stone-300" />
             <div className="text-sm font-bold text-stone-700">ไม่มีออเดอร์ในสถานะนี้</div>
             <p className="text-xs text-stone-400">
@@ -622,9 +767,9 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
             </p>
           </div>
         ) : (
-          <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden">
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden w-full max-w-full min-w-0">
             {/* Scrollable table container */}
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-w-full">
               <table className="w-full text-left text-xs border-collapse min-w-[980px]">
                 <thead>
                   <tr className="bg-stone-50 border-b border-stone-200 text-stone-700 font-extrabold text-[11px] uppercase tracking-wide">
@@ -742,14 +887,25 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                           </strong>
                         </td>
 
-                        {/* Status Badge & Warnings */}
+                        {/* Status Circular Stepper & Warnings */}
                         <td className="py-3.5 px-3 text-center">
-                          <div className="flex flex-col items-center gap-1">
-                            <span
-                              className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-black border ${statusStyle.bg} ${statusStyle.text} ${statusStyle.border} whitespace-nowrap`}
-                            >
-                              {statusStyle.label}
-                            </span>
+                          <div className="flex flex-col items-center gap-1.5">
+                            <CircularStatusStepper
+                              compact
+                              currentStatus={order.status}
+                              onOpenModal={() => setStatusModalOrderId(order.id)}
+                            />
+                            <div className="flex items-center gap-1 flex-wrap justify-center">
+                              <span
+                                className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black border ${statusStyle.bg} ${statusStyle.text} ${statusStyle.border} whitespace-nowrap`}
+                              >
+                                {statusStyle.label}
+                              </span>
+                              <OrderCompletionBadge
+                                order={order}
+                                onClick={() => setStatusModalOrderId(order.id)}
+                              />
+                            </div>
 
                             {/* เกิน 12 กม. Warning badge */}
                             {isOutOfZone && (
@@ -777,26 +933,27 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
 
                         {/* Management Actions */}
                         <td className="py-3.5 px-3">
-                          <div className="flex flex-col gap-1.5 min-w-[150px]">
-                            {/* ปุ่ม ยกเลิก ออเดอร์ บน ปุ่มสถานะออเดอร์ */}
+                          <div className="flex flex-col gap-1.5 min-w-[155px]">
+                            {/* ปุ่มเปิดหน้าต่างอัปเดตสถานะออเดอร์ & รายการอาหาร */}
                             <button
                               type="button"
-                              onClick={() => {
-                                setOrderToCancel(order);
-                                setCancelReasonInput('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
-                              }}
-                              className="w-full py-1 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 active:scale-98 rounded-lg font-bold text-[11px] transition flex items-center justify-center gap-1 shadow-2xs cursor-pointer"
-                              title="ยกเลิกออเดอร์นี้ (ลบออกจากรายการออเดอร์ และบันทึกประวัติเมนูขายดี)"
+                              onClick={() => setStatusModalOrderId(order.id)}
+                              className="w-full py-1.5 px-2.5 bg-stone-900 hover:bg-black text-white rounded-lg font-black text-[11px] transition flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
+                              title="เปิดหน้าต่างอัปเดตสถานะออเดอร์และติ๊กสถานะแต่ละรายการอาหาร"
                             >
-                              <Ban className="w-3 h-3 text-rose-600" />
-                              <span>ยกเลิกออเดอร์</span>
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                              <span>อัปเดตสถานะ (รายเมนู)</span>
                             </button>
 
-                            {/* ปุ่มเปลี่ยนเป็นสถานะถัดไป / กดรับออเดอร์ */}
+                            {/* ปุ่มเปลี่ยนเป็นสถานะถัดไปด่วน */}
                             {nextStatus && (
                               <button
                                 type="button"
-                                onClick={() => handleNextStatus(order, nextStatus)}
+                                onClick={() =>
+                                  nextStatus === 'เช็คบิล'
+                                    ? setCheckBillOrderId(order.id)
+                                    : handleNextStatus(order, nextStatus)
+                                }
                                 disabled={updatingId === order.id}
                                 className={`w-full py-1.5 px-2.5 active:scale-98 disabled:bg-stone-300 text-white text-[11px] font-bold rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer ${
                                   order.status === 'รับออเดอร์'
@@ -812,21 +969,35 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                                   <ChevronRight className="w-3 h-3" />
                                 )}
                                 <span className="whitespace-nowrap">
-                                  {order.status === 'รับออเดอร์' ? '✅ กดรับออเดอร์ (เริ่มทำ)' : `เปลี่ยนเป็น ${nextStatus}`}
+                                  {order.status === 'รับออเดอร์' ? '✅ กดรับออเดอร์' : `เป็น ${nextStatus}`}
                                 </span>
                               </button>
                             )}
 
-                            {/* ปุ่ม เช็คบิล (มีเสียงเตือน & คืนสถานะโต๊ะว่างเรียลไทม์) */}
+                            {/* ปุ่ม เช็คบิล (เปิด Pop up สรุปรายการ & แก้ไขยอดล่าสุด) */}
                             <button
                               type="button"
-                              onClick={() => handleNextStatus(order, 'เช็คบิล')}
+                              onClick={() => setCheckBillOrderId(order.id)}
                               disabled={updatingId === order.id}
                               className="w-full py-1.5 px-2.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 active:scale-98 disabled:bg-stone-300 text-white text-[11px] font-black rounded-lg shadow-2xs transition flex items-center justify-center gap-1 cursor-pointer"
-                              title="เช็คบิลออเดอร์นี้ แจ้งเตือนด้วยเสียง และอัปเดตสถานะโต๊ะว่างอัตโนมัติ"
+                              title="เปิดหน้าต่างเช็คบิล สรุปรายการ เพิ่มเมนู และแก้ไขยอดล่าสุด"
                             >
                               <Wallet className="w-3.5 h-3.5" />
-                              <span>💰 เช็คบิล</span>
+                              <span>💰 เช็คบิล (สรุปยอด)</span>
+                            </button>
+
+                            {/* ปุ่ม ยกเลิก ออเดอร์ */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setOrderToCancel(order);
+                                setCancelReasonInput('ลูกค้ายกเลิก / ร้านพิจารณาไม่รับ');
+                              }}
+                              className="w-full py-1 px-2.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 active:scale-98 rounded-lg font-bold text-[11px] transition flex items-center justify-center gap-1 shadow-2xs cursor-pointer"
+                              title="ยกเลิกออเดอร์นี้ (ลบออกจากรายการออเดอร์ และบันทึกประวัติเมนูขายดี)"
+                            >
+                              <Ban className="w-3 h-3 text-rose-600" />
+                              <span>ยกเลิกออเดอร์</span>
                             </button>
 
                             {/* ปุ่มคืนสถานะโต๊ะว่าง (สำหรับออเดอร์ทานที่ร้าน) */}
@@ -972,10 +1143,10 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                           <div className="flex items-center justify-center gap-1 flex-wrap">
                             <button
                               type="button"
-                              onClick={() => handleNextStatus(order, 'เช็คบิล')}
+                              onClick={() => setCheckBillOrderId(order.id)}
                               disabled={updatingId === order.id}
                               className="px-2.5 py-1 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-[11px] font-black flex items-center gap-1 cursor-pointer transition shadow-2xs"
-                              title="เช็คบิลและคืนสถานะโต๊ะว่างอัตโนมัติ"
+                              title="เปิดหน้าต่างเช็คบิล สรุปรายการ เพิ่มเมนู และแก้ไขยอดล่าสุด"
                             >
                               <Wallet className="w-3 h-3" />
                               <span>เช็คบิล</span>
@@ -1524,7 +1695,11 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                     {NEXT_ORDER_STATUS_MAP[detailOrder.status] && (
                       <button
                         type="button"
-                        onClick={() => handleNextStatus(detailOrder, NEXT_ORDER_STATUS_MAP[detailOrder.status]!)}
+                        onClick={() =>
+                          NEXT_ORDER_STATUS_MAP[detailOrder.status] === 'เช็คบิล'
+                            ? setCheckBillOrderId(detailOrder.id)
+                            : handleNextStatus(detailOrder, NEXT_ORDER_STATUS_MAP[detailOrder.status]!)
+                        }
                         disabled={updatingId === detailOrder.id}
                         className={`py-2.5 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
                           detailOrder.status === 'รับออเดอร์'
@@ -1554,25 +1729,33 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                     )}
                   </div>
 
-                  {/* ปุ่มสั่งอาหารเพิ่ม & เช็คบิลทันที */}
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* ปุ่มอัปเดตสถานะรายเมนู, สั่งอาหารเพิ่ม & เช็คบิล */}
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      onClick={() => setOrderToAppend(detailOrder)}
-                      className="py-2.5 bg-stone-900 hover:bg-black text-amber-300 font-black rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      onClick={() => setStatusModalOrderId(detailOrder.id)}
+                      className="py-2.5 bg-amber-100 hover:bg-amber-200 text-amber-950 font-black rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer border border-amber-300"
                     >
-                      <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
-                      <span>สั่งอาหารเพิ่ม</span>
+                      <span>⚪ สถานะรายเมนู</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => handleNextStatus(detailOrder, 'เช็คบิล')}
+                      onClick={() => setOrderToAppend(detailOrder)}
+                      className="py-2.5 bg-stone-900 hover:bg-black text-amber-300 font-black rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-amber-400 stroke-[3]" />
+                      <span>สั่งเพิ่ม</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setCheckBillOrderId(detailOrder.id)}
                       disabled={updatingId === detailOrder.id}
-                      className="py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-black rounded-xl text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-black rounded-xl text-xs transition flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Wallet className="w-3.5 h-3.5" />
-                      <span>💰 เช็คบิล (ปิดโต๊ะ)</span>
+                      <span>💰 เช็คบิล</span>
                     </button>
                   </div>
                 </>
@@ -1837,9 +2020,14 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 10. ADMIN CREATE ORDER MODAL (POS) */}
       <AdminCreateOrderModal
         isOpen={isCreateOrderModalOpen}
-        onClose={() => setIsCreateOrderModalOpen(false)}
+        onClose={() => {
+          setIsCreateOrderModalOpen(false);
+          setCreateOrderPresetTable(undefined);
+        }}
         menus={menus}
         tables={tables}
+        initialTableNumber={createOrderPresetTable}
+        initialDiningType={createOrderPresetTable ? 'มาทานที่ร้าน' : undefined}
         onNotify={onNotify}
       />
 
@@ -1849,6 +2037,53 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         onClose={() => setOrderToAppend(null)}
         order={orderToAppend}
         menus={menus}
+        onNotify={onNotify}
+      />
+
+      {/* 12. CIRCULAR ORDER & PER-ITEM STATUS POPUP MODAL (Requirement 5) */}
+      <OrderStatusModal
+        isOpen={Boolean(liveStatusModalOrder)}
+        order={liveStatusModalOrder}
+        onClose={() => setStatusModalOrderId(null)}
+        onOpenCheckBill={(ord) => {
+          setStatusModalOrderId(null);
+          setCheckBillOrderId(ord.id);
+        }}
+        onOpenAppendItem={(ord) => {
+          setStatusModalOrderId(null);
+          setOrderToAppend(ord);
+        }}
+        onNotify={onNotify}
+      />
+
+      {/* 13. CHECK-BILL SUMMARY & EDITABLE TOTAL POPUP MODAL (Requirement 3) */}
+      <CheckBillModal
+        isOpen={Boolean(liveCheckBillOrder)}
+        order={liveCheckBillOrder}
+        menus={menus}
+        onClose={() => {
+          setCheckBillOrderId(null);
+          if (detailOrder && liveCheckBillOrder?.id === detailOrder.id) {
+            setDetailOrder(null);
+          }
+        }}
+        onNotify={onNotify}
+        onPrintAfterCheckout={(checkedOutOrd) => setReceiptOrder(checkedOutOrd)}
+      />
+
+      {/* 14. INTERACTIVE REAL-TIME TABLE DETAIL POPUP MODAL (Requirement 4) */}
+      <TableDetailModal
+        isOpen={Boolean(liveSelectedTable)}
+        table={liveSelectedTable}
+        tableOrders={liveSelectedTableOrders}
+        menus={menus}
+        onClose={() => setSelectedTableId(null)}
+        onOpenCreateOrderForTable={(tblNum) => {
+          setCreateOrderPresetTable(String(tblNum));
+          setIsCreateOrderModalOpen(true);
+        }}
+        onOpenCheckBill={(ord) => setCheckBillOrderId(ord.id)}
+        onPrintOrder={(ord) => setReceiptOrder(ord)}
         onNotify={onNotify}
       />
     </div>

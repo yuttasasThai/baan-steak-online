@@ -472,7 +472,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => {
@@ -727,7 +727,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+        <div className="w-full sm:w-auto min-w-0 flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
           <button
             onClick={() => setSelectedCategory('ทั้งหมด')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${

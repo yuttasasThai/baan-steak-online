@@ -21,6 +21,8 @@ interface AdminCreateOrderModalProps {
   onClose: () => void;
   menus: MenuItem[];
   tables?: RestaurantTable[];
+  initialTableNumber?: string;
+  initialDiningType?: DiningType;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -29,10 +31,12 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
   onClose,
   menus,
   tables = [],
+  initialTableNumber,
+  initialDiningType,
   onNotify,
 }) => {
-  const [diningType, setDiningType] = useState<DiningType>('มาทานที่ร้าน');
-  const [tableNumber, setTableNumber] = useState<string>('1');
+  const [diningType, setDiningType] = useState<DiningType>(initialDiningType || 'มาทานที่ร้าน');
+  const [tableNumber, setTableNumber] = useState<string>(initialTableNumber || '1');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [address, setAddress] = useState('');
@@ -43,6 +47,13 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
   // Selected items: menuId -> quantity
   const [selectedItems, setSelectedItems] = useState<Record<string, number>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialDiningType) setDiningType(initialDiningType);
+      if (initialTableNumber) setTableNumber(initialTableNumber);
+    }
+  }, [isOpen, initialTableNumber, initialDiningType]);
 
   if (!isOpen) return null;
 

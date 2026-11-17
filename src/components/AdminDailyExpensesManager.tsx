@@ -321,12 +321,12 @@ export const AdminDailyExpensesManager: React.FC<AdminDailyExpensesManagerProps>
 
         {/* Date Picker + Time Filter Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pt-2 border-t border-stone-100">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <input
               type="date"
               value={pickDateKey}
               onChange={(e) => setPickDateKey(e.target.value)}
-              className="px-3 py-1.5 text-xs font-mono border border-stone-300 rounded-xl bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+              className="px-3 py-1.5 text-xs font-mono border border-stone-300 rounded-xl bg-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-600 max-w-full"
             />
             <button
               type="button"
@@ -338,7 +338,7 @@ export const AdminDailyExpensesManager: React.FC<AdminDailyExpensesManagerProps>
             </button>
           </div>
 
-          <div className="flex items-center gap-1 bg-stone-100 p-1 rounded-xl self-start sm:self-auto">
+          <div className="flex flex-wrap items-center gap-1 bg-stone-100 p-1 rounded-xl self-start sm:self-auto max-w-full">
             {(
               [
                 { id: '7days', label: '7 วันล่าสุด' },

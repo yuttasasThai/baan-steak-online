@@ -255,15 +255,15 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
   };
 
   return (
-    <div className="space-y-4 text-stone-900 font-['Prompt',sans-serif]">
+    <div className="space-y-4 text-stone-900 font-['Prompt',sans-serif] w-full max-w-full min-w-0">
       {/* 1. Header Card with Feature Overview */}
-      <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-red-600 to-rose-700 text-white flex items-center justify-center text-lg font-black shadow-sm">
+      <div className="bg-white rounded-3xl p-4 sm:p-5 border border-stone-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 w-full max-w-full min-w-0 overflow-hidden">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-red-600 to-rose-700 text-white flex items-center justify-center text-lg font-black shadow-sm shrink-0">
               🍽️
             </div>
-            <h2 className="text-xl font-black text-stone-900">
+            <h2 className="text-lg sm:text-xl font-black text-stone-900">
               ระบบโต๊ะอาหาร &amp; QR Code สแกนสั่ง
             </h2>
             <span className="text-xs px-2.5 py-0.5 bg-red-100 text-red-700 font-extrabold rounded-lg">
@@ -276,7 +276,7 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
         </div>
 
         {/* Global Tab Switcher */}
-        <div className="flex items-center bg-stone-100 p-1 rounded-2xl border border-stone-200 text-xs font-bold shrink-0">
+        <div className="flex flex-wrap items-center bg-stone-100 p-1 rounded-2xl border border-stone-200 text-xs font-bold shrink-0 max-w-full gap-1">
           <button
             type="button"
             onClick={() => setActiveTab('tables')}
@@ -408,7 +408,7 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 w-full">
               <button
                 type="button"
                 onClick={handleSetAllAvailable}
