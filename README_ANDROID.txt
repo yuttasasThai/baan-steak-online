@@ -1,5 +1,5 @@
 ==========================================================
-คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.28.0)
+คู่มืออัปเดตสำหรับโทรศัพท์ Android (rev-2.28.1)
 ร้าน บ้าน สเต็กออนไลน์ (Baan Steak Online)
 Repository: https://github.com/yuttasasThai/baan-steak-online
 ==========================================================
@@ -7,11 +7,11 @@ Repository: https://github.com/yuttasasThai/baan-steak-online
 ✨ ไฟล์นี้สร้างขึ้นจากเบราว์เซอร์โดยตรง (Client-Side In-Memory ZIP)
 รับประกันว่าเป็นไฟล์ .zip แท้ 100% ไม่ใช่ .html
 
-ไฟล์ที่ได้รับการแก้ไขใน rev-2.28.0:
-1. [src/components] CircularStatusStepper.tsx - 🆕 ไฟล์ใหม่: ไอคอนสถานะออเดอร์วงกลมทรงทันสมัย (รับออเดอร์ / กำลังทำ / พร้อมเสิร์ฟ / เช็คบิล) + ป้ายสรุปภาพรวมความคืบหน้ารายเมนู
-2. [src/components] OrderStatusModal.tsx - 🆕 ไฟล์ใหม่: หน้าต่าง Popup อัปเดตสถานะออเดอร์แบบวงกลม + อัปเดตสถานะแยกแต่ละรายการอาหาร (รอทำ/กำลังทำ/พร้อมเสิร์ฟ/เสิร์ฟแล้ว) + แถบเช็กได้รับครบหรือยัง
-3. [src/components] CheckBillModal.tsx - 🆕 ไฟล์ใหม่: หน้าต่าง Popup เช็คบิลแยกเฉพาะ สรุปรายการอาหาร คีย์เพิ่มเมนู ปรับจำนวน แก้ไขยอดรวมล่าสุดได้ก่อนกดยืนยันเช็คบิล/พิมพ์ใบเสร็จ
-4. [src/components] TableDetailModal.tsx - 🆕 ไฟล์ใหม่: หน้าต่างจัดการโต๊ะแบบเรียลไทม์ กดดู/สลับว่าง-ไม่ว่าง คีย์เพิ่มเมนูเข้าโต๊ะ อัปเดตสถานะรายรายการ และเช็คบิลโต๊ะได้ทันที
+ไฟล์ที่ได้รับการแก้ไขใน rev-2.28.1:
+1. [src/components] CheckBillModal.tsx - 🔧 (อัปเดต v2.28.1) แก้ช่องแก้ไขยอดรวมสุทธิล่าสุด (฿) ไม่ให้ล้นขอบขวาบนจอมือถือ + หน้าต่าง Popup เช็คบิลคีย์เพิ่มเมนูได้
+2. [src/components] OrderStatusModal.tsx - 🎯 (อัปเดต v2.28.1) หน้าต่าง Popup อัปเดตสถานะวงกลมรายรายการอาหาร + เช็กได้รับครบหรือยัง + กันจอล้นมือถือ
+3. [src/components] TableDetailModal.tsx - 🍽️ (อัปเดต v2.28.1) หน้าต่างจัดการโต๊ะแบบเรียลไทม์ เพิ่มเมนู/อัปเดตสถานะ/เช็คบิลโต๊ะ + กันจอล้นมือถือ
+4. [src/components] CircularStatusStepper.tsx - 🆕 ไอคอนสถานะออเดอร์วงกลมทรงทันสมัย (รับออเดอร์ / กำลังทำ / พร้อมเสิร์ฟ / เช็คบิล) + ป้ายสรุปภาพรวมความคืบหน้ารายเมนู
 5. [.] index.html - 📱 ปรับสีพื้นหลังหลักและ overflow-x-clip ป้องกันขอบดำล้นจอแอดมินบนมือถือ
 6. [src] App.tsx - 📱 จัดส่วนหัว Admin ให้พับบรรทัดพอดีจอมือถือ 360px ไม่ล้นขอบขวา + ซิงก์โต๊ะว่างอัตโนมัติ
 7. [src/components] CustomerWebsite.tsx - 🔒 หน้าติดตามสถานะออเดอร์ลูกค้าซ่อนรายการเมนู/ยอดเงิน + เคลียร์รายการค้างอัตโนมัติทุกวันใหม่ 00:00 น. + สเต็ปวงกลม
@@ -24,9 +24,9 @@ Repository: https://github.com/yuttasasThai/baan-steak-online
 14. [src] types.ts - 🧬 เพิ่ม OrderItemStatus (รอทำ / กำลังทำ / พร้อมเสิร์ฟ / เสิร์ฟแล้ว) และ itemStatus รายเมนู
 15. [src/services] menuService.ts - 🛠️ เพิ่มฟังก์ชันอัปเดตสถานะรายรายการอาหาร (updateOrderItemStatus / markAllOrderItemsStatus) และ finalizeOrderCheckout คีย์เพิ่ม/แก้ยอดเช็คบิล
 16. [.] firebase-blueprint.json - 🗄️ อัปเดต Schema ข้อมูล Order (deliveryType และ items)
-17. [src] revisionInfo.ts - 🏷️ อัปเดตเลขเวอร์ชันเป็น 2.28.0 (rev-2.28.0)
+17. [src] revisionInfo.ts - 🏷️ อัปเดตเลขเวอร์ชันเป็น 2.28.1 (rev-2.28.1)
 18. [.] package.json - 📦 คงค่า "react-is": "^19.3.1" คู่กับ "recharts": "^3.10.1" ให้ Vercel Build ผ่านสมบูรณ์
-19. [src/components] AdminSourceCodeExporter.tsx - 📱 ตัวช่วยอัปเดตโค้ด GitHub & Patch ZIP ครบทุกไฟล์ (v2.28.0)
+19. [src/components] AdminSourceCodeExporter.tsx - 📱 ตัวช่วยอัปเดตโค้ด GitHub & Patch ZIP ครบทุกไฟล์ (v2.28.1)
 
 วิธีอัปเดตผ่านโทรศัพท์ Android:
 1. แตกไฟล์ ZIP นี้ในแอป "ไฟล์ (Files)" ของเครื่องมือถือ
