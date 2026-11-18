@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { MenuItem, Order, OrderItemStatus, OrderStatus, RestaurantTable } from '../types';
 import {
+  ITEM_STEP_INDEX,
   appendItemsToOrder,
   getEffectiveItemStatus,
   getOrderCompletionSummary,
@@ -127,14 +128,21 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
     itemIndex: number,
     nextStatus: OrderItemStatus
   ) => {
+    const normOrd = normalizeOrderStatus(order.status);
+    if (normOrd === 'เช็คบิล' || normOrd === 'ยกเลิก' || order.isCancelled) return;
+
     const key = `${order.id}_${itemIndex}`;
     const targetItem = order.items[itemIndex];
     if (!targetItem) return;
 
     try {
       setUpdatingItemKey(key);
-      const updatedItems = await updateOrderItemStatus(order, itemIndex, nextStatus);
-      const updatedSummary = getOrderCompletionSummary({ ...order, items: updatedItems });
+      const result = await updateOrderItemStatus(order, itemIndex, nextStatus);
+      const updatedSummary = getOrderCompletionSummary({
+        ...order,
+        items: result.items,
+        status: result.nextOrderStatus,
+      });
 
       audioAlert.playItemStatusAlert({
         order: {
@@ -142,7 +150,7 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
           tableNumber: order.tableNumber ?? table.number,
           deliveryType: order.deliveryType,
           orderNumber: order.orderNumber,
-          status: order.status,
+          status: result.nextOrderStatus,
         },
         itemName: targetItem.name,
         itemQuantity: targetItem.quantity,
@@ -152,21 +160,28 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
         totalLines: updatedSummary.totalLines,
       });
 
+      const statusLabel = nextStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextStatus;
       onNotify(
-        `อัปเดต "${targetItem.name}" เป็น "${nextStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextStatus}"`,
+        result.didAdvanceOrderStatus
+          ? `อัปเดต "${targetItem.name}" เป็น "${statusLabel}" • ออเดอร์หลักขยับเป็น "${result.nextOrderStatus}" แล้ว`
+          : `อัปเดต "${targetItem.name}" เป็น "${statusLabel}"`,
         'success'
       );
-    } catch {
-      onNotify('ไม่สามารถอัปเดตสถานะรายการได้', 'error');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถอัปเดตสถานะรายการได้';
+      onNotify(msg, 'error');
     } finally {
       setUpdatingItemKey(null);
     }
   };
 
   const handleMarkAllItemsServed = async (order: Order) => {
+    const normOrd = normalizeOrderStatus(order.status);
+    if (normOrd === 'เช็คบิล' || normOrd === 'ยกเลิก' || order.isCancelled) return;
+
     try {
       setUpdatingOrderId(order.id);
-      const updatedItems = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+      const result = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
 
       audioAlert.playAllItemsCompletedAlert(
         {
@@ -174,14 +189,20 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
           tableNumber: order.tableNumber ?? table.number,
           deliveryType: order.deliveryType,
           orderNumber: order.orderNumber,
-          status: order.status,
+          status: result.nextOrderStatus,
         },
-        updatedItems.length
+        result.items.length
       );
 
-      onNotify(`✅ ติ๊กเสิร์ฟครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`, 'success');
-    } catch {
-      onNotify('ไม่สามารถอัปเดตรายการทั้งหมดได้', 'error');
+      onNotify(
+        result.didAdvanceOrderStatus
+          ? `✅ ติ๊กเสิร์ฟครบทุกรายการแล้ว • ออเดอร์ #${order.orderNumber} ขยับเป็น "${result.nextOrderStatus}" อัตโนมัติ`
+          : `✅ ติ๊กเสิร์ฟครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`,
+        'success'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถอัปเดตรายการทั้งหมดได้';
+      onNotify(msg, 'error');
     } finally {
       setUpdatingOrderId(null);
     }
@@ -602,25 +623,58 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                             <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
                               {isBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600 mr-1" />}
                               {ITEM_STATUS_CIRCLES.map((opt) => {
-                                const active = effStatus === opt.status;
-                                const Icon = opt.Icon;
+                                const isOrderTerminal =
+                                  normStatus === 'เช็คบิล' || normStatus === 'ยกเลิก' || Boolean(ord.isCancelled);
+                                const effIdx = ITEM_STEP_INDEX[effStatus] ?? 0;
+                                const optIdx = ITEM_STEP_INDEX[opt.status] ?? 0;
+                                const active = optIdx === effIdx;
+                                const isPast = optIdx < effIdx;
+                                const isForward = optIdx > effIdx;
+                                const canClick = !isOrderTerminal && !isBusy && isForward;
+                                const Icon = isPast ? Check : opt.Icon;
                                 return (
                                   <button
                                     key={opt.status}
                                     type="button"
-                                    disabled={isBusy}
-                                    onClick={() => handleUpdateItemStatus(ord, idx, opt.status)}
-                                    title={opt.label}
-                                    className="flex flex-col items-center gap-0.5 min-w-[40px] py-0.5 rounded-lg cursor-pointer"
+                                    disabled={!canClick}
+                                    onClick={() => canClick && handleUpdateItemStatus(ord, idx, opt.status)}
+                                    title={
+                                      canClick
+                                        ? `เลื่อนเป็น "${opt.label}"`
+                                        : active
+                                        ? `สถานะปัจจุบัน: ${opt.label}`
+                                        : `ผ่านขั้นตอน "${opt.label}" แล้ว (ไม่ย้อนกลับ)`
+                                    }
+                                    className={`flex flex-col items-center gap-0.5 min-w-[40px] py-0.5 rounded-lg transition ${
+                                      canClick
+                                        ? 'cursor-pointer hover:scale-105 active:scale-95'
+                                        : 'cursor-default'
+                                    }`}
                                   >
                                     <span
                                       className={`w-8 h-8 rounded-full border flex items-center justify-center transition ${
-                                        active ? opt.activeClass : opt.idleClass
+                                        active
+                                          ? opt.activeClass
+                                          : isPast
+                                          ? 'bg-emerald-500 text-white border-emerald-500 opacity-80'
+                                          : canClick
+                                          ? opt.idleClass
+                                          : 'bg-stone-100 text-stone-300 border-stone-200 opacity-60'
                                       }`}
                                     >
                                       <Icon className="w-3.5 h-3.5" />
                                     </span>
-                                    <span className="text-[9px] font-bold text-stone-500">
+                                    <span
+                                      className={`text-[9px] font-bold ${
+                                        active
+                                          ? 'text-stone-900 font-black'
+                                          : isPast
+                                          ? 'text-emerald-700'
+                                          : canClick
+                                          ? 'text-stone-600'
+                                          : 'text-stone-300'
+                                      }`}
+                                    >
                                       {opt.shortLabel}
                                     </span>
                                   </button>

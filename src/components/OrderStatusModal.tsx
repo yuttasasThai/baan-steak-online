@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Order, OrderItemStatus, OrderStatus } from '../types';
 import {
+  ITEM_STEP_INDEX,
   getEffectiveItemStatus,
   getOrderCompletionSummary,
   markAllOrderItemsStatus,
@@ -84,8 +85,12 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
 
     try {
       setUpdatingItemIdx(idx);
-      const updatedItems = await updateOrderItemStatus(order, idx, nextItemStatus);
-      const updatedSummary = getOrderCompletionSummary({ ...order, items: updatedItems });
+      const result = await updateOrderItemStatus(order, idx, nextItemStatus);
+      const updatedSummary = getOrderCompletionSummary({
+        ...order,
+        items: result.items,
+        status: result.nextOrderStatus,
+      });
 
       audioAlert.playItemStatusAlert({
         order: {
@@ -93,7 +98,7 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
           tableNumber: order.tableNumber,
           deliveryType: order.deliveryType,
           orderNumber: order.orderNumber,
-          status: normStatus,
+          status: result.nextOrderStatus,
         },
         itemName: targetItem.name,
         itemQuantity: targetItem.quantity,
@@ -103,13 +108,17 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
         totalLines: updatedSummary.totalLines,
       });
 
+      const statusLabel = nextItemStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextItemStatus;
       onNotify(
-        `อัปเดตรายการ "${targetItem.name}" เป็น "${nextItemStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextItemStatus}"`,
+        result.didAdvanceOrderStatus
+          ? `อัปเดต "${targetItem.name}" เป็น "${statusLabel}" • ออเดอร์หลักขยับเป็น "${result.nextOrderStatus}" แล้ว`
+          : `อัปเดตรายการ "${targetItem.name}" เป็น "${statusLabel}"`,
         'success'
       );
     } catch (err) {
       console.error('Update item status error:', err);
-      onNotify('ไม่สามารถอัปเดตสถานะรายการอาหารได้', 'error');
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถอัปเดตสถานะรายการอาหารได้';
+      onNotify(msg, 'error');
     } finally {
       setUpdatingItemIdx(null);
     }
@@ -119,7 +128,7 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
     if (isTerminal) return;
     try {
       setMarkingAll(true);
-      const updatedItems = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+      const result = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
 
       audioAlert.playAllItemsCompletedAlert(
         {
@@ -127,15 +136,21 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
           tableNumber: order.tableNumber,
           deliveryType: order.deliveryType,
           orderNumber: order.orderNumber,
-          status: normStatus,
+          status: result.nextOrderStatus,
         },
-        updatedItems.length
+        result.items.length
       );
 
-      onNotify(`✅ ติ๊กได้รับอาหารครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`, 'success');
+      onNotify(
+        result.didAdvanceOrderStatus
+          ? `✅ ติ๊กครบทุกรายการแล้ว • ออเดอร์ #${order.orderNumber} ขยับเป็น "${result.nextOrderStatus}" อัตโนมัติ`
+          : `✅ ติ๊กได้รับอาหารครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`,
+        'success'
+      );
     } catch (err) {
       console.error('Mark all items error:', err);
-      onNotify('ไม่สามารถอัปเดตรายการทั้งหมดได้', 'error');
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถอัปเดตรายการทั้งหมดได้';
+      onNotify(msg, 'error');
     } finally {
       setMarkingAll(false);
     }
@@ -280,12 +295,12 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
 
           {/* Section 3: Per-Item Circular Status List */}
           <div className="bg-white rounded-2xl border border-stone-200 shadow-2xs overflow-hidden">
-            <div className="px-4 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between gap-2">
+            <div className="px-4 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between gap-2 flex-wrap">
               <span className="text-xs font-black text-stone-800">
                 2. สถานะแต่ละรายการอาหาร ({order.items.length} เมนู)
               </span>
               <span className="text-[10px] font-bold text-stone-500">
-                รอทำ → กำลังทำ → พร้อม → ครบแล้ว
+                อัปเดตไปข้างหน้าเท่านั้น (ไม่ย้อนกลับ)
               </span>
             </div>
 
@@ -334,31 +349,59 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
                       </div>
                     </div>
 
-                    {/* 4 Modern Circular Status Icon Buttons */}
+                    {/* 4 Modern Circular Status Icon Buttons (Strictly 1-way forward only) */}
                     <div className="flex flex-wrap items-center justify-end gap-1.5 shrink-0">
                       {isBusyItem && <Loader2 className="w-4 h-4 animate-spin text-red-600 mr-1" />}
                       {ITEM_STATUS_CIRCLES.map((opt) => {
-                        const isSelected = effStatus === opt.status;
-                        const Icon = opt.Icon;
+                        const effIdx = ITEM_STEP_INDEX[effStatus] ?? 0;
+                        const optIdx = ITEM_STEP_INDEX[opt.status] ?? 0;
+                        const isSelected = optIdx === effIdx;
+                        const isPast = optIdx < effIdx;
+                        const isForward = optIdx > effIdx;
+                        const canClick = !isTerminal && !isBusyItem && isForward;
+                        const Icon = isPast ? Check : opt.Icon;
+
                         return (
                           <button
                             key={opt.status}
                             type="button"
-                            disabled={isTerminal || isBusyItem}
-                            onClick={() => handleSelectItemStatus(idx, opt.status)}
-                            title={opt.label}
-                            className={`flex flex-col items-center gap-0.5 min-w-[44px] py-1 px-1 rounded-xl transition cursor-pointer disabled:opacity-60 disabled:cursor-default`}
+                            disabled={!canClick}
+                            onClick={() => canClick && handleSelectItemStatus(idx, opt.status)}
+                            title={
+                              canClick
+                                ? `เลื่อนเป็น "${opt.label}"`
+                                : isSelected
+                                ? `สถานะปัจจุบัน: ${opt.label}`
+                                : `ผ่านขั้นตอน "${opt.label}" แล้ว (ไม่ย้อนกลับ)`
+                            }
+                            className={`flex flex-col items-center gap-0.5 min-w-[44px] py-1 px-1 rounded-xl transition ${
+                              canClick
+                                ? 'cursor-pointer hover:scale-105 active:scale-95'
+                                : 'cursor-default'
+                            }`}
                           >
                             <span
                               className={`w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
-                                isSelected ? opt.activeClass : opt.idleClass
+                                isSelected
+                                  ? opt.activeClass
+                                  : isPast
+                                  ? 'bg-emerald-500 text-white border-emerald-500 opacity-80'
+                                  : canClick
+                                  ? opt.idleClass
+                                  : 'bg-stone-100 text-stone-300 border-stone-200 opacity-60'
                               }`}
                             >
                               <Icon className="w-4 h-4" />
                             </span>
                             <span
                               className={`text-[9px] font-bold leading-none ${
-                                isSelected ? 'text-stone-900 font-black' : 'text-stone-400'
+                                isSelected
+                                  ? 'text-stone-900 font-black'
+                                  : isPast
+                                  ? 'text-emerald-700'
+                                  : canClick
+                                  ? 'text-stone-600'
+                                  : 'text-stone-300'
                               }`}
                             >
                               {opt.shortLabel}
