@@ -16,11 +16,8 @@ export interface OrderSpeechTarget {
  * 2) เมื่อกดรับออเดอร์แล้ว (กำลังทำ / ส่งออเดอร์ / ส่งแล้ว):
  *    "ออเดอร์ของ" (โต๊ะที่.../คุณ... ทานที่ร้าน/...) + "สถานะออเดอร์" (ไม่ต้องมีเสียงรายการอาหาร)
  */
-export function formatOrderStatusSpeech(
-  order?: OrderSpeechTarget,
-  statusText: string = 'รับออเดอร์'
-): string {
-  if (!order) return `มีออเดอร์เข้า ${statusText}`;
+export function formatOrderTargetDescription(order?: OrderSpeechTarget): string {
+  if (!order) return 'ลูกค้า';
 
   // Extract table number
   let tableNum = '';
@@ -65,32 +62,58 @@ export function formatOrderStatusSpeech(
     order.deliveryType === 'ส่งอาหารที่บ้าน' ||
     (Boolean(order.deliveryType) && order.deliveryType!.includes('ส่ง'));
 
-  let targetDesc = '';
   if (isDineIn || Boolean(tableNum)) {
     if (tableNum && hasName) {
-      // ระบุทั้งโต๊ะและระบุชื่อ -> "โต๊ะที่ [X] คุณ [ชื่อ]"
-      targetDesc = `โต๊ะที่ ${tableNum} คุณ${cleanName}`;
+      return `โต๊ะที่ ${tableNum} คุณ${cleanName}`;
     } else if (tableNum) {
-      // ระบุแค่ชื่อโต๊ะ -> "โต๊ะที่ [X]"
-      targetDesc = `โต๊ะที่ ${tableNum}`;
+      return `โต๊ะที่ ${tableNum}`;
     } else if (hasName) {
-      targetDesc = `คุณ${cleanName} ทานที่ร้าน`;
-    } else {
-      targetDesc = 'ลูกค้าทานที่ร้าน';
+      return `คุณ${cleanName} ทานที่ร้าน`;
     }
-  } else if (isTakeaway) {
-    targetDesc = hasName ? `คุณ${cleanName} สั่งกลับบ้าน` : 'ลูกค้าสั่งกลับบ้าน';
-  } else if (isPickup) {
-    targetDesc = hasName ? `คุณ${cleanName} นัดรับกลับบ้าน` : 'ลูกค้านัดรับกลับบ้าน';
-  } else if (isDelivery) {
-    targetDesc = hasName ? `คุณ${cleanName} ส่งที่บ้าน` : 'ลูกค้าส่งที่บ้าน';
-  } else {
-    targetDesc = hasName
-      ? `คุณ${cleanName}`
-      : tableNum
-      ? `โต๊ะที่ ${tableNum}`
-      : 'ลูกค้า';
+    return 'ลูกค้าทานที่ร้าน';
   }
+  if (isTakeaway) {
+    return hasName ? `คุณ${cleanName} สั่งกลับบ้าน` : 'ลูกค้าสั่งกลับบ้าน';
+  }
+  if (isPickup) {
+    return hasName ? `คุณ${cleanName} นัดรับกลับบ้าน` : 'ลูกค้านัดรับกลับบ้าน';
+  }
+  if (isDelivery) {
+    return hasName ? `คุณ${cleanName} ส่งที่บ้าน` : 'ลูกค้าส่งที่บ้าน';
+  }
+  return hasName ? `คุณ${cleanName}` : tableNum ? `โต๊ะที่ ${tableNum}` : 'ลูกค้า';
+}
+
+export function formatOrderStatusSpeech(
+  order?: OrderSpeechTarget,
+  statusText: string = 'รับออเดอร์'
+): string {
+  if (!order) return `มีออเดอร์เข้า ${statusText}`;
+
+  const targetDesc = formatOrderTargetDescription(order);
+
+  // Extract table number & clean name for custom checkout sentence
+  let tableNum = '';
+  if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
+    tableNum = String(order.tableNumber).replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+  }
+  const rawName = (order.customerName || '').trim();
+  if (!tableNum) {
+    const match = rawName.match(/โต๊ะ(?:ที่)?\s*(\d+)/i);
+    if (match) tableNum = match[1];
+  }
+  let cleanName = rawName
+    .replace(/^โต๊ะ(?:ที่)?\s*\d+\s*(?:คุณ\s*)?/i, '')
+    .replace(/^ลูกค้าหน้าร้าน/i, '')
+    .replace(/^ลูกค้าทานที่ร้าน/i, '')
+    .replace(/^ลูกค้าสั่งกลับบ้าน/i, '')
+    .replace(/^คุณ\s*/i, '')
+    .trim();
+  if (/^โต๊ะ\s*\d*$/i.test(cleanName) || /^\d+$/.test(cleanName)) {
+    cleanName = '';
+  }
+  const hasName = Boolean(cleanName);
+  const isTakeaway = order.deliveryType === 'สั่งกลับบ้าน';
 
   // ปรับเสียงคำอ่านสถานะออเดอร์ให้เป็นธรรมชาติ ชัดเจน
   let statusPhrase = statusText;
@@ -130,6 +153,63 @@ export function formatOrderStatusSpeech(
   }
 
   return result;
+}
+
+export interface ItemStatusSpeechParams {
+  order?: OrderSpeechTarget;
+  itemName: string;
+  itemQuantity?: number;
+  itemStatus: string;
+  isAllCompleted?: boolean;
+  completedLines?: number;
+  totalLines?: number;
+}
+
+export function formatOrderItemStatusSpeech({
+  order,
+  itemName,
+  itemQuantity,
+  itemStatus,
+  isAllCompleted,
+  completedLines,
+  totalLines,
+}: ItemStatusSpeechParams): string {
+  const targetDesc = order ? formatOrderTargetDescription(order) : '';
+  const isDrink = /น้ำ|โค้ก|เป๊ปซี่|ชา|กาแฟ|นม|โซดา/i.test(itemName);
+  const unit = isDrink ? 'แก้ว' : 'จาน';
+  const qtyText = itemQuantity && itemQuantity > 1 ? ` ${itemQuantity} ${unit}` : '';
+
+  let statusPhrase = itemStatus;
+  if (itemStatus === 'รอทำ') statusPhrase = 'รอทำ';
+  else if (itemStatus === 'กำลังทำ') statusPhrase = 'กำลังทำ';
+  else if (itemStatus === 'พร้อมเสิร์ฟ') statusPhrase = 'พร้อมเสิร์ฟแล้ว';
+  else if (itemStatus === 'เสิร์ฟแล้ว') statusPhrase = 'เสิร์ฟแล้ว';
+
+  let sentence = `${targetDesc ? `${targetDesc} ` : ''}${itemName}${qtyText} ${statusPhrase}`;
+
+  if (itemStatus === 'เสิร์ฟแล้ว' && totalLines && totalLines > 1) {
+    if (isAllCompleted) {
+      sentence += `, ครบทั้ง ${totalLines} รายการแล้ว`;
+    } else if (completedLines !== undefined) {
+      const remaining = Math.max(0, totalLines - completedLines);
+      if (remaining > 0) {
+        sentence += `, เหลืออีก ${remaining} รายการ`;
+      }
+    }
+  }
+
+  return sentence;
+}
+
+export function formatAllItemsCompletedSpeech(
+  order?: OrderSpeechTarget,
+  totalLines?: number
+): string {
+  const targetDesc = order ? formatOrderTargetDescription(order) : 'ออเดอร์นี้';
+  if (totalLines && totalLines > 1) {
+    return `${targetDesc} ได้รับอาหารครบทั้ง ${totalLines} รายการแล้ว`;
+  }
+  return `${targetDesc} ได้รับอาหารครบทุกรายการแล้ว`;
 }
 
 export function getTableAvailableSpeechOnCheckout(order?: OrderSpeechTarget): string | null {
@@ -293,9 +373,9 @@ class AudioAlertService {
   }
 
   /**
-   * Play alert tone: two-tone doorbell chime
+   * Play alert tone: two-tone doorbell chime ('order') or snappy confirmation chime ('item')
    */
-  public playChime(): void {
+  public playChime(variant: 'order' | 'item' = 'order'): void {
     const ctx = this.getAudioContext();
     if (!ctx) return;
 
@@ -305,6 +385,33 @@ class AudioAlertService {
       }
 
       const now = ctx.currentTime;
+
+      if (variant === 'item') {
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(783.99, now); // G5
+        gain1.gain.setValueAtTime(0, now);
+        gain1.gain.linearRampToValueAtTime(0.28, now + 0.02);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.2);
+
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1046.5, now + 0.09); // C6
+        gain2.gain.setValueAtTime(0, now + 0.09);
+        gain2.gain.linearRampToValueAtTime(0.32, now + 0.11);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start(now + 0.09);
+        osc2.stop(now + 0.36);
+        return;
+      }
 
       // Note 1: E5 (659.25 Hz)
       const osc1 = ctx.createOscillator();
@@ -400,10 +507,13 @@ class AudioAlertService {
   /**
    * Speak supplementary text using Web Speech API (e.g. "โต๊ะ 1" or "รับกลับบ้าน")
    */
-  public speakText(text: string): void {
+  public speakText(text: string, cancelPrevious = false): void {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
     try {
+      if (cancelPrevious) {
+        window.speechSynthesis.cancel();
+      }
       if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       }
@@ -509,7 +619,7 @@ class AudioAlertService {
   public playOrderStatusAlert(order?: OrderSpeechTarget, status: string = 'รับออเดอร์'): void {
     if (!this.isAudioEnabled) return;
     this.unlock();
-    this.playChime();
+    this.playChime('order');
 
     const speechText = formatOrderStatusSpeech(order, status);
     const tableFreeSpeech = status === 'เช็คบิล' ? getTableAvailableSpeechOnCheckout(order) : null;
@@ -522,6 +632,35 @@ class AudioAlertService {
         this.speakText(tableFreeSpeech);
       }
     }, 280);
+  }
+
+  /**
+   * Trigger immediate voice alert when a single menu item's status inside an order is updated
+   * e.g. "โต๊ะที่ 1 สเต็กหมู กำลังทำ" / "โต๊ะที่ 1 สเต็กหมู เสิร์ฟแล้ว, เหลืออีก 1 รายการ"
+   */
+  public playItemStatusAlert(params: ItemStatusSpeechParams): void {
+    if (!this.isAudioEnabled) return;
+    this.unlock();
+    this.playChime('item');
+
+    const speechText = formatOrderItemStatusSpeech(params);
+    setTimeout(() => {
+      this.speakText(speechText, true);
+    }, 180);
+  }
+
+  /**
+   * Trigger voice alert when tapping "ติ๊กครบทุกรายการ"
+   */
+  public playAllItemsCompletedAlert(order?: OrderSpeechTarget, totalLines?: number): void {
+    if (!this.isAudioEnabled) return;
+    this.unlock();
+    this.playChime('item');
+
+    const speechText = formatAllItemsCompletedSpeech(order, totalLines);
+    setTimeout(() => {
+      this.speakText(speechText, true);
+    }, 180);
   }
 
   /**
