@@ -403,8 +403,13 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
 
                   {/* Circular Order Status Stepper */}
                   <div className="bg-stone-50 rounded-2xl p-3 border border-stone-200">
-                    <div className="text-[11px] font-black text-stone-600 mb-2">
-                      สถานะออเดอร์รวม (แตะวงกลมเพื่อเลื่อนขั้นตอน):
+                    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                      <span className="text-[11px] font-black text-stone-600">
+                        สถานะออเดอร์รวม (ขยับตามรายเมนูอัตโนมัติ):
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-white text-stone-700 border border-stone-200 text-[10px] font-black">
+                        {normStatus}
+                      </span>
                     </div>
                     <CircularStatusStepper
                       currentStatus={normStatus}
@@ -630,7 +635,11 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                                 const active = optIdx === effIdx;
                                 const isPast = optIdx < effIdx;
                                 const isForward = optIdx > effIdx;
-                                const canClick = !isOrderTerminal && !isBusy && isForward;
+                                const canClick =
+                                  !isOrderTerminal &&
+                                  !isBusy &&
+                                  updatingOrderId !== ord.id &&
+                                  isForward;
                                 const Icon = isPast ? Check : opt.Icon;
                                 return (
                                   <button
@@ -643,12 +652,12 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                                         ? `เลื่อนเป็น "${opt.label}"`
                                         : active
                                         ? `สถานะปัจจุบัน: ${opt.label}`
-                                        : `ผ่านขั้นตอน "${opt.label}" แล้ว (ไม่ย้อนกลับ)`
+                                        : `ผ่านขั้นตอน "${opt.label}" แล้ว (ห้ามย้อนกลับ)`
                                     }
                                     className={`flex flex-col items-center gap-0.5 min-w-[40px] py-0.5 rounded-lg transition ${
                                       canClick
                                         ? 'cursor-pointer hover:scale-105 active:scale-95'
-                                        : 'cursor-default'
+                                        : 'cursor-not-allowed pointer-events-none'
                                     }`}
                                   >
                                     <span

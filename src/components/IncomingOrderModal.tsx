@@ -95,13 +95,21 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   const [statusModalOrderId, setStatusModalOrderId] = useState<string | null>(null);
   const [checkBillOrderId, setCheckBillOrderId] = useState<string | null>(null);
 
+  const allRawNormalizedOrders = useMemo(() => {
+    const raw = orders && orders.length > 0 ? orders : pendingOrders || [];
+    return raw.map((o) => ({
+      ...o,
+      status: normalizeOrderStatus(o.status),
+    }));
+  }, [orders, pendingOrders]);
+
   const liveStatusModalOrder = useMemo(
-    () => (statusModalOrderId ? allOrdersList.find((o) => o.id === statusModalOrderId) || null : null),
-    [allOrdersList, statusModalOrderId]
+    () => (statusModalOrderId ? allRawNormalizedOrders.find((o) => o.id === statusModalOrderId) || null : null),
+    [allRawNormalizedOrders, statusModalOrderId]
   );
   const liveCheckBillOrder = useMemo(
-    () => (checkBillOrderId ? allOrdersList.find((o) => o.id === checkBillOrderId) || null : null),
-    [allOrdersList, checkBillOrderId]
+    () => (checkBillOrderId ? allRawNormalizedOrders.find((o) => o.id === checkBillOrderId) || null : null),
+    [allRawNormalizedOrders, checkBillOrderId]
   );
 
   // รายการที่กรองตามแท็บ

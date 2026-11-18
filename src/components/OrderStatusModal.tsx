@@ -210,9 +210,12 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
 
           {/* Section 1: Circular Order Status Stepper */}
           <div className="bg-white rounded-2xl p-4 border border-stone-200 shadow-2xs space-y-3">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <span className="text-xs font-black text-stone-800 uppercase tracking-wide">
-                1. สถานะออเดอร์หลัก (แตะไอคอนวงกลมเพื่อเปลี่ยน)
+                1. สถานะออเดอร์หลัก (ขยับตามรายเมนูอัตโนมัติ)
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-stone-100 text-stone-700 border border-stone-200 text-[10px] font-black">
+                ตอนนี้: {normStatus}
               </span>
               {updatingOrder && <Loader2 className="w-4 h-4 animate-spin text-red-600" />}
             </div>
@@ -358,7 +361,8 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
                         const isSelected = optIdx === effIdx;
                         const isPast = optIdx < effIdx;
                         const isForward = optIdx > effIdx;
-                        const canClick = !isTerminal && !isBusyItem && isForward;
+                        const canClick =
+                          !isTerminal && !isBusyItem && !markingAll && !updatingOrder && isForward;
                         const Icon = isPast ? Check : opt.Icon;
 
                         return (
@@ -372,12 +376,12 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
                                 ? `เลื่อนเป็น "${opt.label}"`
                                 : isSelected
                                 ? `สถานะปัจจุบัน: ${opt.label}`
-                                : `ผ่านขั้นตอน "${opt.label}" แล้ว (ไม่ย้อนกลับ)`
+                                : `ผ่านขั้นตอน "${opt.label}" แล้ว (ห้ามย้อนกลับ)`
                             }
                             className={`flex flex-col items-center gap-0.5 min-w-[44px] py-1 px-1 rounded-xl transition ${
                               canClick
                                 ? 'cursor-pointer hover:scale-105 active:scale-95'
-                                : 'cursor-default'
+                                : 'cursor-not-allowed pointer-events-none'
                             }`}
                           >
                             <span
