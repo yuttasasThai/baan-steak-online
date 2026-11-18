@@ -128,11 +128,32 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
     nextStatus: OrderItemStatus
   ) => {
     const key = `${order.id}_${itemIndex}`;
+    const targetItem = order.items[itemIndex];
+    if (!targetItem) return;
+
     try {
       setUpdatingItemKey(key);
-      await updateOrderItemStatus(order, itemIndex, nextStatus);
+      const updatedItems = await updateOrderItemStatus(order, itemIndex, nextStatus);
+      const updatedSummary = getOrderCompletionSummary({ ...order, items: updatedItems });
+
+      audioAlert.playItemStatusAlert({
+        order: {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber ?? table.number,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: order.status,
+        },
+        itemName: targetItem.name,
+        itemQuantity: targetItem.quantity,
+        itemStatus: nextStatus,
+        isAllCompleted: updatedSummary.isAllCompleted,
+        completedLines: updatedSummary.completedLines,
+        totalLines: updatedSummary.totalLines,
+      });
+
       onNotify(
-        `อัปเดต "${order.items[itemIndex]?.name}" เป็น "${nextStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextStatus}"`,
+        `อัปเดต "${targetItem.name}" เป็น "${nextStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextStatus}"`,
         'success'
       );
     } catch {
@@ -145,7 +166,19 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
   const handleMarkAllItemsServed = async (order: Order) => {
     try {
       setUpdatingOrderId(order.id);
-      await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+      const updatedItems = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+
+      audioAlert.playAllItemsCompletedAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber ?? table.number,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: order.status,
+        },
+        updatedItems.length
+      );
+
       onNotify(`✅ ติ๊กเสิร์ฟครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`, 'success');
     } catch {
       onNotify('ไม่สามารถอัปเดตรายการทั้งหมดได้', 'error');

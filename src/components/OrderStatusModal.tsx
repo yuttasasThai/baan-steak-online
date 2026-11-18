@@ -79,11 +79,32 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
 
   const handleSelectItemStatus = async (idx: number, nextItemStatus: OrderItemStatus) => {
     if (isTerminal) return;
+    const targetItem = order.items[idx];
+    if (!targetItem) return;
+
     try {
       setUpdatingItemIdx(idx);
-      await updateOrderItemStatus(order, idx, nextItemStatus);
+      const updatedItems = await updateOrderItemStatus(order, idx, nextItemStatus);
+      const updatedSummary = getOrderCompletionSummary({ ...order, items: updatedItems });
+
+      audioAlert.playItemStatusAlert({
+        order: {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: normStatus,
+        },
+        itemName: targetItem.name,
+        itemQuantity: targetItem.quantity,
+        itemStatus: nextItemStatus,
+        isAllCompleted: updatedSummary.isAllCompleted,
+        completedLines: updatedSummary.completedLines,
+        totalLines: updatedSummary.totalLines,
+      });
+
       onNotify(
-        `อัปเดตรายการ "${order.items[idx]?.name}" เป็น "${nextItemStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextItemStatus}"`,
+        `อัปเดตรายการ "${targetItem.name}" เป็น "${nextItemStatus === 'เสิร์ฟแล้ว' ? 'ได้รับครบแล้ว' : nextItemStatus}"`,
         'success'
       );
     } catch (err) {
@@ -98,7 +119,19 @@ export const OrderStatusModal: React.FC<OrderStatusModalProps> = ({
     if (isTerminal) return;
     try {
       setMarkingAll(true);
-      await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+      const updatedItems = await markAllOrderItemsStatus(order, 'เสิร์ฟแล้ว');
+
+      audioAlert.playAllItemsCompletedAlert(
+        {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: normStatus,
+        },
+        updatedItems.length
+      );
+
       onNotify(`✅ ติ๊กได้รับอาหารครบทุกรายการในออเดอร์ #${order.orderNumber} แล้ว`, 'success');
     } catch (err) {
       console.error('Mark all items error:', err);
