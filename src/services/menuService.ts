@@ -1222,6 +1222,7 @@ export async function appendItemsToOrder(
         name: it.name,
         price: Number(it.price) || 0,
         quantity: it.quantity,
+        itemStatus: 'รอทำ',
       });
     }
   }
@@ -1594,12 +1595,66 @@ export const ORDER_ITEM_STATUS_OPTIONS: OrderItemStatus[] = [
   'เสิร์ฟแล้ว',
 ];
 
+export const ITEM_STEP_INDEX: Record<OrderItemStatus, number> = {
+  'รอทำ': 0,
+  'กำลังทำ': 1,
+  'พร้อมเสิร์ฟ': 2,
+  'เสิร์ฟแล้ว': 3,
+};
+
+export interface OrderItemUpdateResult {
+  items: OrderItem[];
+  previousOrderStatus: OrderStatus;
+  nextOrderStatus: OrderStatus;
+  didAdvanceOrderStatus: boolean;
+}
+
 export function getEffectiveItemStatus(item: OrderItem, orderStatus: OrderStatus): OrderItemStatus {
   const norm = normalizeOrderStatus(orderStatus);
   if (norm === 'ส่งแล้ว' || norm === 'เช็คบิล') {
-    return item.itemStatus || 'เสิร์ฟแล้ว';
+    return 'เสิร์ฟแล้ว';
   }
   return item.itemStatus || 'รอทำ';
+}
+
+function computeNextOrderStatusFromItems(
+  items: OrderItem[],
+  currentOrderStatus: OrderStatus
+): OrderStatus {
+  const normCurrent = normalizeOrderStatus(currentOrderStatus);
+  const currentIdx = ORDER_STEP_INDEX[normCurrent] ?? 0;
+
+  if (
+    items.length === 0 ||
+    normCurrent === 'เช็คบิล' ||
+    normCurrent === 'ยกเลิก' ||
+    currentIdx >= 3
+  ) {
+    return normCurrent;
+  }
+
+  let minItemIdx = 3;
+  for (const it of items) {
+    const eff = getEffectiveItemStatus(it, normCurrent);
+    const idx = ITEM_STEP_INDEX[eff] ?? 0;
+    if (idx < minItemIdx) {
+      minItemIdx = idx;
+    }
+  }
+
+  // Strictly forward-only auto-advance for the main order:
+  // All items >= กำลังทำ (1) -> กำลังทำ
+  // All items >= พร้อมเสิร์ฟ (2) -> ส่งออเดอร์
+  // All items == เสิร์ฟแล้ว (3) -> ส่งแล้ว
+  const targetStep = Math.max(currentIdx, Math.min(3, minItemIdx));
+  if (targetStep <= currentIdx) {
+    return normCurrent;
+  }
+
+  if (targetStep >= 3) return 'ส่งแล้ว';
+  if (targetStep === 2) return 'ส่งออเดอร์';
+  if (targetStep === 1) return 'กำลังทำ';
+  return normCurrent;
 }
 
 export function getOrderCompletionSummary(order: Pick<Order, 'items' | 'status'>): {
@@ -1699,15 +1754,34 @@ async function upsertCustomerStatsForOrder(
   );
 }
 
-// Update individual item status inside an order (รอทำ / กำลังทำ / พร้อมเสิร์ฟ / เสิร์ฟแล้ว)
+// Update individual item status inside an order (Strictly 1-way forward: รอทำ -> กำลังทำ -> พร้อมเสิร์ฟ -> เสิร์ฟแล้ว)
+// Also automatically advances the main order status forward when all items in the order reach a higher stage
 export async function updateOrderItemStatus(
   order: Order,
   itemIndex: number,
   nextItemStatus: OrderItemStatus
-): Promise<OrderItem[]> {
+): Promise<OrderItemUpdateResult> {
+  const currentOrderStatus = normalizeOrderStatus(order.status);
+  if (currentOrderStatus === 'ยกเลิก' || order.isCancelled) {
+    throw new Error('ออเดอร์นี้ถูกยกเลิกแล้ว ไม่สามารถเปลี่ยนสถานะรายการได้');
+  }
+  if (currentOrderStatus === 'เช็คบิล') {
+    throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
+  }
+
   const currentItems = Array.isArray(order.items) ? [...order.items] : [];
   if (itemIndex < 0 || itemIndex >= currentItems.length) {
     throw new Error('ไม่พบรายการอาหารที่ต้องการอัปเดต');
+  }
+
+  const currentItemStatus = getEffectiveItemStatus(currentItems[itemIndex], currentOrderStatus);
+  const currentItemIdx = ITEM_STEP_INDEX[currentItemStatus] ?? 0;
+  const targetItemIdx = ITEM_STEP_INDEX[nextItemStatus] ?? 0;
+
+  if (targetItemIdx <= currentItemIdx) {
+    throw new Error(
+      `ไม่อนุญาตให้ย้อนสถานะหรือเลือกสถานะเดิมของรายการอาหาร (จาก "${currentItemStatus}" ไป "${nextItemStatus}")`
+    );
   }
 
   currentItems[itemIndex] = {
@@ -1715,40 +1789,125 @@ export async function updateOrderItemStatus(
     itemStatus: nextItemStatus,
   };
 
+  const nextOrderStatus = computeNextOrderStatusFromItems(currentItems, currentOrderStatus);
+  const didAdvanceOrderStatus = nextOrderStatus !== currentOrderStatus;
+  const nowIso = new Date().toISOString();
+
+  const updatePayload: Record<string, any> = {
+    items: currentItems,
+    updatedAt: nowIso,
+  };
+
+  if (didAdvanceOrderStatus) {
+    updatePayload.status = nextOrderStatus;
+    if (nextOrderStatus === 'ส่งแล้ว') {
+      updatePayload.isArchived = true;
+    }
+  }
+
   const orderRef = doc(db, 'orders', order.id);
   try {
-    await updateDoc(orderRef, {
+    await updateDoc(orderRef, updatePayload);
+
+    if (didAdvanceOrderStatus && nextOrderStatus === 'ส่งแล้ว' && currentOrderStatus !== 'ส่งแล้ว') {
+      await upsertCustomerStatsForOrder(
+        {
+          customerPhone: order.customerPhone,
+          customerName: order.customerName,
+          address: order.address,
+          items: currentItems,
+        },
+        nowIso
+      );
+    }
+
+    return {
       items: currentItems,
-      updatedAt: new Date().toISOString(),
-    });
-    return currentItems;
+      previousOrderStatus: currentOrderStatus,
+      nextOrderStatus,
+      didAdvanceOrderStatus,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
-    return currentItems;
+    return {
+      items: currentItems,
+      previousOrderStatus: currentOrderStatus,
+      nextOrderStatus: currentOrderStatus,
+      didAdvanceOrderStatus: false,
+    };
   }
 }
 
-// Mark all items inside an order with a single status (e.g. 'เสิร์ฟแล้ว')
+// Mark all items inside an order forward to a target status (e.g. 'เสิร์ฟแล้ว') & advance main order status
 export async function markAllOrderItemsStatus(
   order: Order,
   targetItemStatus: OrderItemStatus = 'เสิร์ฟแล้ว'
-): Promise<OrderItem[]> {
+): Promise<OrderItemUpdateResult> {
+  const currentOrderStatus = normalizeOrderStatus(order.status);
+  if (currentOrderStatus === 'ยกเลิก' || order.isCancelled) {
+    throw new Error('ออเดอร์นี้ถูกยกเลิกแล้ว ไม่สามารถเปลี่ยนสถานะรายการได้');
+  }
+  if (currentOrderStatus === 'เช็คบิล') {
+    throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
+  }
+
+  const targetIdx = ITEM_STEP_INDEX[targetItemStatus] ?? 3;
   const currentItems = Array.isArray(order.items) ? order.items : [];
-  const updatedItems: OrderItem[] = currentItems.map((it) => ({
-    ...it,
-    itemStatus: targetItemStatus,
-  }));
+  const updatedItems: OrderItem[] = currentItems.map((it) => {
+    const eff = getEffectiveItemStatus(it, currentOrderStatus);
+    const curIdx = ITEM_STEP_INDEX[eff] ?? 0;
+    if (curIdx >= targetIdx) {
+      return { ...it, itemStatus: eff };
+    }
+    return { ...it, itemStatus: targetItemStatus };
+  });
+
+  const nextOrderStatus = computeNextOrderStatusFromItems(updatedItems, currentOrderStatus);
+  const didAdvanceOrderStatus = nextOrderStatus !== currentOrderStatus;
+  const nowIso = new Date().toISOString();
+
+  const updatePayload: Record<string, any> = {
+    items: updatedItems,
+    updatedAt: nowIso,
+  };
+
+  if (didAdvanceOrderStatus) {
+    updatePayload.status = nextOrderStatus;
+    if (nextOrderStatus === 'ส่งแล้ว') {
+      updatePayload.isArchived = true;
+    }
+  }
 
   const orderRef = doc(db, 'orders', order.id);
   try {
-    await updateDoc(orderRef, {
+    await updateDoc(orderRef, updatePayload);
+
+    if (didAdvanceOrderStatus && nextOrderStatus === 'ส่งแล้ว' && currentOrderStatus !== 'ส่งแล้ว') {
+      await upsertCustomerStatsForOrder(
+        {
+          customerPhone: order.customerPhone,
+          customerName: order.customerName,
+          address: order.address,
+          items: updatedItems,
+        },
+        nowIso
+      );
+    }
+
+    return {
       items: updatedItems,
-      updatedAt: new Date().toISOString(),
-    });
-    return updatedItems;
+      previousOrderStatus: currentOrderStatus,
+      nextOrderStatus,
+      didAdvanceOrderStatus,
+    };
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
-    return updatedItems;
+    return {
+      items: updatedItems,
+      previousOrderStatus: currentOrderStatus,
+      nextOrderStatus: currentOrderStatus,
+      didAdvanceOrderStatus: false,
+    };
   }
 }
 
@@ -1861,6 +2020,12 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
       isArchived,
       updatedAt: nowIso,
     };
+    if (targetStatus === 'ส่งแล้ว' || targetStatus === 'เช็คบิล') {
+      updatePayload.items = (order.items || []).map((it) => ({
+        ...it,
+        itemStatus: 'เสิร์ฟแล้ว' as OrderItemStatus,
+      }));
+    }
     if (targetStatus === 'เช็คบิล') {
       updatePayload.checkedOutAt = nowIso;
     }
