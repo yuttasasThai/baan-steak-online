@@ -8,6 +8,7 @@ import {
   ShoppingBag,
   Utensils,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { MenuItem, Order } from '../types';
 import { appendItemsToOrder, normalizeMenuImageUrl } from '../services/menuService';
@@ -32,6 +33,7 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
   const [searchQuery, setSearchQuery] = useState('');
   const [customNote, setCustomNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [zoomedMenu, setZoomedMenu] = useState<MenuItem | null>(null);
 
   if (!isOpen || !order) return null;
 
@@ -190,11 +192,25 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
                   }`}
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
-                    <img
-                      src={normalizeMenuImageUrl(m.imageUrl, m.name)}
-                      alt={m.name}
-                      className="w-10 h-10 rounded-lg object-cover bg-stone-100 shrink-0"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setZoomedMenu(m)}
+                      aria-label={`ขยายรูป ${m.name}`}
+                      className="relative group w-11 h-11 rounded-lg overflow-hidden bg-stone-100 shrink-0 border border-stone-200 cursor-pointer"
+                    >
+                      <img
+                        src={normalizeMenuImageUrl(m.imageUrl, m.name)}
+                        alt={m.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.onerror = null;
+                          (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', m.name);
+                        }}
+                      />
+                      <span className="absolute bottom-0.5 right-0.5 w-4 h-4 rounded bg-black/60 text-white flex items-center justify-center">
+                        <ZoomIn className="w-2.5 h-2.5" />
+                      </span>
+                    </button>
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-stone-900 truncate">{m.name}</div>
                       <div className="text-[11px] font-extrabold text-red-600">฿{m.price}</div>
@@ -304,6 +320,63 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
           </div>
         </form>
       </div>
+
+      {/* Quick Image Zoom Overlay */}
+      {zoomedMenu && (
+        <div
+          onClick={() => setZoomedMenu(null)}
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xs animate-fadeIn"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`รูปภาพเมนู ${zoomedMenu.name}`}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white rounded-3xl overflow-hidden shadow-2xl border border-stone-200"
+          >
+            <div className="relative bg-stone-950 flex items-center justify-center">
+              <img
+                src={normalizeMenuImageUrl(zoomedMenu.imageUrl, zoomedMenu.name)}
+                alt={zoomedMenu.name}
+                className="w-full max-h-[60vh] object-contain mx-auto"
+                onError={(e) => {
+                  e.currentTarget.onerror = null;
+                  (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', zoomedMenu.name);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setZoomedMenu(null)}
+                aria-label="ปิดรูปภาพ"
+                className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/65 hover:bg-black/85 text-white border border-white/25 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h4 className="font-black text-sm sm:text-base text-stone-900 truncate">
+                  {zoomedMenu.name}
+                </h4>
+                <div className="text-sm font-black text-red-600 tabular-nums">
+                  ฿{zoomedMenu.price.toLocaleString()}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  handleQuantityChange(zoomedMenu.id, 1);
+                  setZoomedMenu(null);
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                <span>เพิ่มรายการนี้</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

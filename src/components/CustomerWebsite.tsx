@@ -26,6 +26,7 @@ import {
   Truck,
   Utensils,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { CartItem, CategoryItem, DiningType, MenuItem, Order, RestaurantTable, ShopSettings } from '../types';
 import {
@@ -95,6 +96,20 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   const [trackingSearchQuery, setTrackingSearchQuery] = useState('');
   const [showManualTracker, setShowManualTracker] = useState(false);
   const [appendOrderTarget, setAppendOrderTarget] = useState<Order | null>(null);
+
+  // Menu image zoom lightbox state
+  const [zoomedMenuItem, setZoomedMenuItem] = useState<MenuItem | null>(null);
+
+  React.useEffect(() => {
+    if (!zoomedMenuItem) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setZoomedMenuItem(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [zoomedMenuItem]);
 
   const getThaiCalendarDateKey = (dateInput?: string | Date): string => {
     try {
@@ -1267,20 +1282,29 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                     isBest ? 'border-rose-200/90' : 'border-emerald-200/90'
                   }`}
                 >
-                  {/* Thumbnail */}
-                  <div className="w-16 h-16 rounded-lg overflow-hidden bg-stone-100 border border-stone-200 shrink-0">
+                  {/* Thumbnail (Tap to Zoom) */}
+                  <button
+                    type="button"
+                    onClick={() => setZoomedMenuItem(item)}
+                    aria-label={`ขยายรูป ${item.name}`}
+                    title={`แตะเพื่อดูรูป ${item.name} ขนาดใหญ่`}
+                    className="relative group w-16 h-16 rounded-lg overflow-hidden bg-stone-100 border border-stone-200 shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-500"
+                  >
                     <img
                       src={normalizeMenuImageUrl(item.imageUrl, item.name)}
                       alt={item.name}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                       onError={(e) => {
                         e.currentTarget.onerror = null;
                         (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', item.name);
                       }}
                       loading="lazy"
                     />
-                  </div>
+                    <span className="absolute bottom-0.5 right-0.5 w-5 h-5 rounded-md bg-black/60 text-white flex items-center justify-center shadow-2xs group-hover:bg-red-600 transition">
+                      <ZoomIn className="w-3 h-3" />
+                    </span>
+                  </button>
 
                   {/* Content */}
                   <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch">
@@ -1459,14 +1483,20 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                     isSoldOut ? 'border-rose-200 bg-rose-50/20' : 'border-stone-200'
                   }`}
                 >
-                {/* Food Photo */}
-                <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-stone-100 shrink-0 border border-stone-200">
+                {/* Food Photo (Tap to Zoom) */}
+                <button
+                  type="button"
+                  onClick={() => setZoomedMenuItem(item)}
+                  aria-label={`ขยายรูป ${item.name}`}
+                  title={`แตะเพื่อดูรูป ${item.name} ขนาดใหญ่`}
+                  className="relative group w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-stone-100 shrink-0 border border-stone-200 cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-500"
+                >
                   {item.imageUrl ? (
                     <img
                       src={normalizeMenuImageUrl(item.imageUrl, item.name)}
                       alt={item.name}
                       referrerPolicy="no-referrer"
-                      className={`w-full h-full object-cover ${
+                      className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
                         isSoldOut ? 'grayscale brightness-75' : ''
                       }`}
                       onError={(e) => {
@@ -1481,6 +1511,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                     </div>
                   )}
 
+                  {!isSoldOut && (
+                    <span className="absolute bottom-1 right-1 w-6 h-6 rounded-lg bg-black/60 backdrop-blur-2xs text-white flex items-center justify-center shadow-xs group-hover:bg-red-600 transition">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </span>
+                  )}
+
                   {/* Requirement: สินค้าหมด: แสดง “สินค้าหมด” และห้ามเพิ่มลงตะกร้า */}
                   {isSoldOut && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-1">
@@ -1489,7 +1525,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       </span>
                     </div>
                   )}
-                </div>
+                </button>
 
                 {/* Info & Order Controls (Clean & Minimal: Photo, Name, Price, Status, Add Button) */}
                 <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.5">
@@ -2349,6 +2385,138 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           </div>
         </div>
       )}
+
+      {/* Menu Image Zoom Lightbox Modal */}
+      {zoomedMenuItem && (() => {
+        const liveMenu = menus.find((m) => m.id === zoomedMenuItem.id) || zoomedMenuItem;
+        const zoomedCartItem = cart.find((c) => c.menuItem.id === liveMenu.id);
+        const isZoomedSoldOut = !liveMenu.isAvailable;
+
+        return (
+          <div
+            onClick={() => setZoomedMenuItem(null)}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-xs animate-fadeIn text-stone-900"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`รูปภาพเมนู ${liveMenu.name}`}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md sm:max-w-lg bg-white rounded-3xl overflow-hidden shadow-2xl border border-stone-200 flex flex-col max-h-[92vh]"
+            >
+              {/* Enlarged Image Stage */}
+              <div className="relative bg-stone-950 flex items-center justify-center overflow-hidden min-h-[220px]">
+                <img
+                  src={normalizeMenuImageUrl(liveMenu.imageUrl, liveMenu.name)}
+                  alt={liveMenu.name}
+                  referrerPolicy="no-referrer"
+                  className={`w-full max-h-[58vh] sm:max-h-[62vh] object-contain mx-auto ${
+                    isZoomedSoldOut ? 'grayscale brightness-75' : ''
+                  }`}
+                  onError={(e) => {
+                    e.currentTarget.onerror = null;
+                    (e.currentTarget as HTMLImageElement).src = normalizeMenuImageUrl('', liveMenu.name);
+                  }}
+                />
+
+                {/* Close button */}
+                <button
+                  type="button"
+                  onClick={() => setZoomedMenuItem(null)}
+                  aria-label="ปิดรูปภาพ"
+                  className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/65 hover:bg-black/85 text-white border border-white/25 flex items-center justify-center shadow-lg transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                {/* Category badge */}
+                {liveMenu.category && (
+                  <span className="absolute bottom-3 left-3 px-2.5 py-1 rounded-lg bg-black/65 backdrop-blur-xs text-white text-[11px] font-bold border border-white/15">
+                    {liveMenu.category}
+                  </span>
+                )}
+
+                {/* Sold-out badge */}
+                {isZoomedSoldOut && (
+                  <div className="absolute inset-0 bg-black/45 flex items-center justify-center pointer-events-none">
+                    <span className="px-4 py-1.5 rounded-xl bg-rose-600 text-white font-black text-sm tracking-wide shadow-lg">
+                      สินค้าหมดชั่วคราว
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Menu Info & Quick Cart Actions */}
+              <div className="p-4 sm:p-5 bg-white space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="font-black text-base sm:text-lg text-stone-900 leading-snug break-words">
+                      {liveMenu.name}
+                    </h3>
+                    {liveMenu.description && (
+                      <p className="text-xs text-stone-500 mt-1 leading-relaxed">
+                        {liveMenu.description}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-black text-xl text-red-600 tabular-nums leading-none">
+                      {liveMenu.price} <span className="text-xs font-semibold text-stone-500">บ.</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-3 border-t border-stone-100">
+                  <button
+                    type="button"
+                    onClick={() => setZoomedMenuItem(null)}
+                    className="px-4 py-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs transition cursor-pointer"
+                  >
+                    ปิดหน้าต่าง
+                  </button>
+
+                  {isZoomedSoldOut ? (
+                    <span className="px-4 py-2.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-extrabold">
+                      สินค้าหมดชั่วคราว
+                    </span>
+                  ) : zoomedCartItem ? (
+                    <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl p-1">
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQuantity(liveMenu.id, -1)}
+                        className="w-8 h-8 flex items-center justify-center bg-white text-red-600 rounded-lg shadow-xs hover:bg-red-50 active:scale-90 font-bold cursor-pointer"
+                        aria-label={`ลด ${liveMenu.name}`}
+                      >
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <span className="w-7 text-center font-black text-sm text-red-700 tabular-nums">
+                        {zoomedCartItem.quantity}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateQuantity(liveMenu.id, 1)}
+                        className="w-8 h-8 flex items-center justify-center bg-red-600 text-white rounded-lg shadow-xs hover:bg-red-700 active:scale-90 font-bold cursor-pointer"
+                        aria-label={`เพิ่ม ${liveMenu.name}`}
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleAddToCart(liveMenu)}
+                      className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-extrabold text-xs sm:text-sm rounded-xl shadow-md transition cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4 stroke-[3]" />
+                      <span>เพิ่มลงตะกร้า</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Customer Footer Note & Admin Access */}
       <div className="text-center pt-8 pb-4 text-xs text-stone-400 font-medium flex flex-col items-center gap-2">
