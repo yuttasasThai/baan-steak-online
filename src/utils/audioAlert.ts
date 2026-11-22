@@ -6,7 +6,7 @@ export interface OrderSpeechTarget {
   deliveryType?: string;
   orderNumber?: string;
   status?: string;
-  items?: Array<{ name: string; quantity: number }>;
+  items?: Array<{ name: string; quantity: number; isCancelled?: boolean; itemStatus?: string }>;
 }
 
 /**
@@ -142,14 +142,19 @@ export function formatOrderStatusSpeech(
   // หากเป็นสถานะ "รับออเดอร์" (ออเดอร์ใหม่เข้าค้างรับ) ให้ไล่รายการอาหารทั้งหมดด้วย
   // เมื่อกดรับแล้ว (สถานะอื่น เช่น กำลังทำ, ส่งออเดอร์, ส่งแล้ว) ไม่ต้องพูดรายการอาหาร
   if (statusText === 'รับออเดอร์' && order.items && order.items.length > 0) {
-    const itemsPhrase = order.items
-      .map((it) => {
-        const isDrink = /น้ำ|โค้ก|เป๊ปซี่|ชา|กาแฟ|นม|โซดา/i.test(it.name);
-        const unit = isDrink ? 'แก้ว' : 'จาน';
-        return `${it.name} ${it.quantity} ${unit}`;
-      })
-      .join(', ');
-    result += ` มีรายการดังนี้ ${itemsPhrase}`;
+    const activeItems = order.items.filter(
+      (it) => !it.isCancelled && it.itemStatus !== 'ยกเลิก'
+    );
+    if (activeItems.length > 0) {
+      const itemsPhrase = activeItems
+        .map((it) => {
+          const isDrink = /น้ำ|โค้ก|เป๊ปซี่|ชา|กาแฟ|นม|โซดา/i.test(it.name);
+          const unit = isDrink ? 'แก้ว' : 'จาน';
+          return `${it.name} ${it.quantity} ${unit}`;
+        })
+        .join(', ');
+      result += ` มีรายการดังนี้ ${itemsPhrase}`;
+    }
   }
 
   return result;
@@ -184,6 +189,7 @@ export function formatOrderItemStatusSpeech({
   else if (itemStatus === 'กำลังทำ') statusPhrase = 'กำลังทำ';
   else if (itemStatus === 'พร้อมเสิร์ฟ') statusPhrase = 'พร้อมเสิร์ฟแล้ว';
   else if (itemStatus === 'เสิร์ฟแล้ว') statusPhrase = 'เสิร์ฟแล้ว';
+  else if (itemStatus === 'ยกเลิก') statusPhrase = 'ถูกยกเลิกแล้ว';
 
   let sentence = `${targetDesc ? `${targetDesc} ` : ''}${itemName}${qtyText} ${statusPhrase}`;
 
@@ -199,6 +205,20 @@ export function formatOrderItemStatusSpeech({
   }
 
   return sentence;
+}
+
+export function formatItemCancelledSpeech(params: {
+  order?: OrderSpeechTarget;
+  itemName: string;
+  reason?: string;
+  isWholeOrderCancelled?: boolean;
+}): string {
+  const targetDesc = params.order ? formatOrderTargetDescription(params.order) : 'ออเดอร์นี้';
+  const reasonText = (params.reason || '').trim();
+  if (params.isWholeOrderCancelled) {
+    return `${targetDesc} ยกเลิกรายการ ${params.itemName}${reasonText ? ` เนื่องจาก${reasonText}` : ''} ออเดอร์ถูกยกเลิกทั้งหมดแล้ว`;
+  }
+  return `${targetDesc} ยกเลิกรายการ ${params.itemName}${reasonText ? ` เนื่องจาก${reasonText}` : ''}`;
 }
 
 export function formatAllItemsCompletedSpeech(
@@ -658,6 +678,22 @@ class AudioAlertService {
     this.playChime('item');
 
     const speechText = formatAllItemsCompletedSpeech(order, totalLines);
+    setTimeout(() => {
+      this.speakText(speechText, true);
+    }, 180);
+  }
+
+  public playItemCancelledAlert(params: {
+    order?: OrderSpeechTarget;
+    itemName: string;
+    reason?: string;
+    isWholeOrderCancelled?: boolean;
+  }): void {
+    if (!this.isAudioEnabled) return;
+    this.unlock();
+    this.playChime('item');
+
+    const speechText = formatItemCancelledSpeech(params);
     setTimeout(() => {
       this.speakText(speechText, true);
     }, 180);
