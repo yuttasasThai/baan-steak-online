@@ -1,6 +1,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -16,6 +17,11 @@ import { CategoryItem, CustomerRecord, DailyExpenseItem, DailyExpenseRecord, Din
 import { resolveMenuImageUrl, DEFAULT_FALLBACK_IMAGE } from '../utils/menuImages';
 import { sendOrderNotification } from './notificationService';
 import { CURRENT_REVISION } from '../revisionInfo';
+import {
+  DEFAULT_SHOP_PREP_MINUTES,
+  estimateOrderPrepMinutes,
+  isOrderItemCancelled,
+} from '../utils/orderPrepUtils';
 
 export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   name: 'บ้าน สเต็กออนไลน์',
@@ -40,6 +46,7 @@ export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
   lineNotifySendOnCreate: true,
   recommendedMenuMode: 'auto',
   recommendedMenuIds: [],
+  defaultPrepTimeMinutes: DEFAULT_SHOP_PREP_MINUTES,
 };
 
 export const SHOP_INFO = {
@@ -142,6 +149,10 @@ export function subscribeShopSettings(
           recommendedMenuIds: Array.isArray(data.recommendedMenuIds)
             ? data.recommendedMenuIds.filter((id: unknown): id is string => typeof id === 'string')
             : [],
+          defaultPrepTimeMinutes:
+            typeof data.defaultPrepTimeMinutes === 'number' && data.defaultPrepTimeMinutes > 0
+              ? Math.max(1, Math.min(120, Math.round(data.defaultPrepTimeMinutes)))
+              : DEFAULT_SHOP_PREP_MINUTES,
         });
       } else {
         onUpdate(DEFAULT_SHOP_SETTINGS);
@@ -160,15 +171,15 @@ export async function updateShopSettings(settings: Partial<ShopSettings>): Promi
   await setDoc(settingsDocRef, settings, { merge: true });
 }
 
-// Initial default tables (8 โต๊ะ)
-export const INITIAL_TABLES: RestaurantTable[] = Array.from({ length: 8 }, (_, i) => ({
+// Default UI-only fallback tables (6 โต๊ะ) — NEVER auto-written to Firestore
+export const INITIAL_TABLES: RestaurantTable[] = Array.from({ length: 6 }, (_, i) => ({
   id: `table_${i + 1}`,
   number: i + 1,
   name: `โต๊ะ ${i + 1}`,
   isOccupied: false,
 }));
 
-// Subscribe to Tables Real-Time
+// Subscribe to Tables Real-Time (strictly read-only: NEVER overwrites settings/tables on cache miss)
 export function subscribeTables(
   onUpdate: (tables: RestaurantTable[]) => void
 ): () => void {
@@ -183,113 +194,153 @@ export function subscribeTables(
           return;
         }
       }
-      // Initialize if empty
-      setDoc(
-        tableDocRef,
-        { tables: INITIAL_TABLES, updatedAt: new Date().toISOString() },
-        { merge: true }
-      ).catch(() => {});
-      onUpdate(INITIAL_TABLES);
+      // In-memory UI fallback only when server confirms document does not exist (never write INITIAL_TABLES)
+      if (!docSnap.metadata.fromCache) {
+        onUpdate(INITIAL_TABLES);
+      }
     },
     (err) => {
       console.warn('Error subscribing tables:', err);
-      onUpdate(INITIAL_TABLES);
     }
   );
 }
 
-// Toggle or update single table status (ว่าง / เต็ม)
+// Toggle or update single table status (ว่าง / เต็ม) using atomic Firestore Transaction
 export async function updateTableStatus(
   tableId: string,
   isOccupied: boolean,
   source: 'order' | 'manual' = 'manual'
 ): Promise<void> {
   const tableDocRef = doc(db, 'settings', 'tables');
-  const snap = await getDoc(tableDocRef);
-  let currentTables: RestaurantTable[] = INITIAL_TABLES;
-  if (snap.exists() && Array.isArray(snap.data().tables)) {
-    currentTables = snap.data().tables;
-  }
-  const updated = currentTables.map((t) => {
-    if (t.id !== tableId) return t;
-    const { occupiedSource: _prev, ...rest } = t;
-    return isOccupied
-      ? { ...rest, isOccupied: true, occupiedSource: source, updatedAt: new Date().toISOString() }
-      : { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(tableDocRef);
+    if (!snap.exists() || !Array.isArray(snap.data().tables) || snap.data().tables.length === 0) {
+      return;
+    }
+    const currentTables = snap.data().tables as RestaurantTable[];
+    const nowIso = new Date().toISOString();
+    const updated = currentTables.map((t) => {
+      if (t.id !== tableId) return t;
+      const { occupiedSource: _prev, ...rest } = t;
+      return isOccupied
+        ? { ...rest, isOccupied: true, occupiedSource: source, updatedAt: nowIso }
+        : { ...rest, isOccupied: false, updatedAt: nowIso };
+    });
+    tx.set(tableDocRef, { tables: updated, updatedAt: nowIso }, { merge: true });
   });
-  await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
-// Set total table count (e.g. 1 to 30 โต๊ะ)
+// Set total table count (explicit Admin action only, e.g. 6 โต๊ะ)
 export async function setTotalTableCount(count: number): Promise<void> {
   const validCount = Math.max(1, Math.min(50, count));
   const tableDocRef = doc(db, 'settings', 'tables');
-  const snap = await getDoc(tableDocRef);
-  let currentTables: RestaurantTable[] = [];
-  if (snap.exists() && Array.isArray(snap.data().tables)) {
-    currentTables = snap.data().tables;
-  }
-
-  const newTables: RestaurantTable[] = [];
-  for (let i = 1; i <= validCount; i++) {
-    const existing = currentTables.find((t) => t.number === i || t.id === `table_${i}`);
-    if (existing) {
-      newTables.push(existing);
-    } else {
-      newTables.push({
-        id: `table_${i}`,
-        number: i,
-        name: `โต๊ะ ${i}`,
-        isOccupied: false,
-      });
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(tableDocRef);
+    let currentTables: RestaurantTable[] = [];
+    if (snap.exists() && Array.isArray(snap.data().tables)) {
+      currentTables = snap.data().tables as RestaurantTable[];
     }
-  }
 
-  await setDoc(tableDocRef, { tables: newTables, updatedAt: new Date().toISOString() }, { merge: true });
+    const nowIso = new Date().toISOString();
+    const newTables: RestaurantTable[] = [];
+    for (let i = 1; i <= validCount; i++) {
+      const existing = currentTables.find((t) => t.number === i || t.id === `table_${i}`);
+      if (existing) {
+        newTables.push(existing);
+      } else {
+        newTables.push({
+          id: `table_${i}`,
+          number: i,
+          name: `โต๊ะ ${i}`,
+          isOccupied: false,
+        });
+      }
+    }
+
+    tx.set(
+      tableDocRef,
+      {
+        tables: newTables,
+        tableCount: validCount,
+        updatedBy: 'admin-table-config',
+        updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    );
+  });
 }
 
-// Set all tables status (ว่างทั้งหมด หรือ เต็มทั้งหมด)
+// Set all tables status (ว่างทั้งหมด หรือ เต็มทั้งหมด) using Transaction
 export async function setAllTablesStatus(isOccupied: boolean): Promise<void> {
   const tableDocRef = doc(db, 'settings', 'tables');
-  const snap = await getDoc(tableDocRef);
-  let currentTables: RestaurantTable[] = INITIAL_TABLES;
-  if (snap.exists() && Array.isArray(snap.data().tables)) {
-    currentTables = snap.data().tables;
-  }
-  const updated = currentTables.map((t) => {
-    const { occupiedSource: _prev, ...rest } = t;
-    return isOccupied
-      ? { ...rest, isOccupied: true, occupiedSource: 'manual' as const, updatedAt: new Date().toISOString() }
-      : { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(tableDocRef);
+    if (!snap.exists() || !Array.isArray(snap.data().tables) || snap.data().tables.length === 0) {
+      return;
+    }
+    const currentTables = snap.data().tables as RestaurantTable[];
+    const nowIso = new Date().toISOString();
+    const updated = currentTables.map((t) => {
+      const { occupiedSource: _prev, ...rest } = t;
+      return isOccupied
+        ? { ...rest, isOccupied: true, occupiedSource: 'manual' as const, updatedAt: nowIso }
+        : { ...rest, isOccupied: false, updatedAt: nowIso };
+    });
+    tx.set(tableDocRef, { tables: updated, updatedAt: nowIso }, { merge: true });
   });
-  await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
-// Add custom table name
+// Add custom table name (explicit Admin action)
 export async function addCustomTable(name: string): Promise<void> {
   const tableDocRef = doc(db, 'settings', 'tables');
-  const snap = await getDoc(tableDocRef);
-  let currentTables: RestaurantTable[] = INITIAL_TABLES;
-  if (snap.exists() && Array.isArray(snap.data().tables)) {
-    currentTables = snap.data().tables;
-  }
-  const nextNum = currentTables.length + 1;
-  const newTable: RestaurantTable = {
-    id: `table_${Date.now()}`,
-    number: nextNum,
-    name: name.trim() || `โต๊ะ ${nextNum}`,
-    isOccupied: false,
-  };
-  await setDoc(tableDocRef, { tables: [...currentTables, newTable], updatedAt: new Date().toISOString() }, { merge: true });
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(tableDocRef);
+    const currentTables: RestaurantTable[] =
+      snap.exists() && Array.isArray(snap.data().tables) && snap.data().tables.length > 0
+        ? (snap.data().tables as RestaurantTable[])
+        : INITIAL_TABLES;
+    const nextNum = currentTables.length + 1;
+    const newTable: RestaurantTable = {
+      id: `table_${Date.now()}`,
+      number: nextNum,
+      name: name.trim() || `โต๊ะ ${nextNum}`,
+      isOccupied: false,
+    };
+    const nextTables = [...currentTables, newTable];
+    tx.set(
+      tableDocRef,
+      {
+        tables: nextTables,
+        tableCount: nextTables.length,
+        updatedBy: 'admin-table-config',
+        updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  });
 }
 
-// Delete custom table
+// Delete table (explicit Admin action)
 export async function deleteTable(tableId: string): Promise<void> {
   const tableDocRef = doc(db, 'settings', 'tables');
-  const snap = await getDoc(tableDocRef);
-  if (!snap.exists() || !Array.isArray(snap.data().tables)) return;
-  const filtered = snap.data().tables.filter((t: RestaurantTable) => t.id !== tableId);
-  await setDoc(tableDocRef, { tables: filtered, updatedAt: new Date().toISOString() }, { merge: true });
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(tableDocRef);
+    if (!snap.exists() || !Array.isArray(snap.data().tables)) return;
+    const filtered = (snap.data().tables as RestaurantTable[]).filter((t) => t.id !== tableId);
+    tx.set(
+      tableDocRef,
+      {
+        tables: filtered,
+        tableCount: filtered.length,
+        updatedBy: 'admin-table-config',
+        updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  });
 }
 
 export const INITIAL_CATEGORIES: CategoryItem[] = [
@@ -708,6 +759,10 @@ export function subscribeMenus(
           name: data.name || '',
           price: Number(data.price) || 0,
           cost: Number(data.cost) || 0,
+          prepTimeMinutes:
+            typeof data.prepTimeMinutes === 'number' && data.prepTimeMinutes > 0
+              ? Math.max(1, Math.min(180, Math.round(data.prepTimeMinutes)))
+              : undefined,
           category: data.category || 'สเต็ก',
           imageUrl: normalizeMenuImageUrl(data.imageUrl),
           description: data.description || '',
@@ -954,6 +1009,18 @@ export function subscribeOrders(
               (typeof data.distanceKm === 'number' && data.distanceKm > 12)
           ),
           earnedRewardsNotice: Array.isArray(data.earnedRewardsNotice) ? data.earnedRewardsNotice : [],
+          estimatedPrepMinutes:
+            typeof data.estimatedPrepMinutes === 'number' && data.estimatedPrepMinutes > 0
+              ? Math.round(data.estimatedPrepMinutes)
+              : undefined,
+          cookingStartedAt: typeof data.cookingStartedAt === 'string' ? data.cookingStartedAt : undefined,
+          readyAt: typeof data.readyAt === 'string' ? data.readyAt : undefined,
+          cancelledItemsCount:
+            typeof data.cancelledItemsCount === 'number'
+              ? data.cancelledItemsCount
+              : Array.isArray(data.items)
+              ? data.items.filter((it: OrderItem) => isOrderItemCancelled(it)).length
+              : 0,
         });
       });
       onUpdate(orders);
@@ -1014,19 +1081,22 @@ export async function createOrder(data: {
   deliveryType?: DiningType;
   gps?: { lat: number; lng: number } | null;
   distanceKm?: number;
-  items: { menuId: string; name: string; price: number; quantity: number }[];
+  items: { menuId: string; name: string; price: number; quantity: number; prepTimeMinutes?: number }[];
   subtotal: number;
   deliveryArea: string;
   deliveryFee: number;
   totalAmount: number;
   earnedRewardsNotice?: string[];
   tableNumber?: number | string;
+  estimatedPrepMinutes?: number;
 }): Promise<string> {
   const orderNumber = `BSO-${Date.now().toString().slice(-6)}`;
   const orderId = `order_${Date.now()}`;
   const orderRef = doc(db, 'orders', orderId);
 
-  // Check whether the shop is open in Firestore
+  let shopDefaultPrep = DEFAULT_SHOP_PREP_MINUTES;
+
+  // Check whether the shop is open in Firestore and read default prep time
   try {
     const settingsDocRef = doc(db, 'settings', 'shop');
     const settingsSnap = await getDoc(settingsDocRef);
@@ -1034,6 +1104,9 @@ export async function createOrder(data: {
       const sData = settingsSnap.data();
       if (sData.isOpen === false) {
         throw new Error('ขณะนี้ร้านปิด ยังไม่สามารถสั่งอาหารได้');
+      }
+      if (typeof sData.defaultPrepTimeMinutes === 'number' && sData.defaultPrepTimeMinutes > 0) {
+        shopDefaultPrep = Math.max(1, Math.min(120, Math.round(sData.defaultPrepTimeMinutes)));
       }
     }
   } catch (err: unknown) {
@@ -1045,6 +1118,25 @@ export async function createOrder(data: {
   const isOutOfZone = Boolean(
     typeof data.distanceKm === 'number' && data.distanceKm > 12
   );
+
+  const sanitizedItems: OrderItem[] = (data.items || []).map((it) => {
+    const base: OrderItem = {
+      menuId: it.menuId,
+      name: it.name,
+      price: Number(it.price) || 0,
+      quantity: Math.max(1, Number(it.quantity) || 1),
+      itemStatus: 'รอทำ',
+    };
+    if (typeof it.prepTimeMinutes === 'number' && it.prepTimeMinutes > 0) {
+      base.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(it.prepTimeMinutes)));
+    }
+    return base;
+  });
+
+  const computedPrepMinutes =
+    typeof data.estimatedPrepMinutes === 'number' && data.estimatedPrepMinutes > 0
+      ? Math.max(1, Math.min(180, Math.round(data.estimatedPrepMinutes)))
+      : estimateOrderPrepMinutes(sanitizedItems, [], shopDefaultPrep);
 
   const payload = {
     orderNumber,
@@ -1059,11 +1151,13 @@ export async function createOrder(data: {
     distanceKm: typeof data.distanceKm === 'number' ? data.distanceKm : null,
     isOutOfDeliveryZone: isOutOfZone,
     earnedRewardsNotice: data.earnedRewardsNotice || [],
-    items: data.items,
+    items: sanitizedItems,
     subtotal: data.subtotal,
     deliveryArea: data.deliveryArea,
     deliveryFee: data.deliveryFee,
     totalAmount: data.totalAmount,
+    estimatedPrepMinutes: computedPrepMinutes,
+    cancelledItemsCount: 0,
     status: 'รับออเดอร์' as OrderStatus,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1072,47 +1166,42 @@ export async function createOrder(data: {
   try {
     await setDoc(orderRef, payload);
 
-    // Auto update table status to occupied (ไม่ว่าง) if diningType is "มาทานที่ร้าน" and tableNumber is specified
+    // Auto update table status to occupied (ไม่ว่าง) via transaction — never reset/expand table count
     if (data.deliveryType === 'มาทานที่ร้าน' && data.tableNumber !== undefined && data.tableNumber !== null) {
       try {
         const rawNum = String(data.tableNumber).trim();
         const parsedNum = parseInt(rawNum, 10);
         const tableDocRef = doc(db, 'settings', 'tables');
-        const snap = await getDoc(tableDocRef);
-        let currentTables: RestaurantTable[] = INITIAL_TABLES;
-        if (snap.exists() && Array.isArray(snap.data().tables)) {
-          currentTables = snap.data().tables;
-        }
-        let found = false;
-        const updated = currentTables.map((t) => {
-          if (
-            (!isNaN(parsedNum) && t.number === parsedNum) ||
-            t.name === `โต๊ะ ${rawNum}` ||
-            t.name === rawNum ||
-            t.id === `table_${rawNum}` ||
-            t.id === `table_${parsedNum}`
-          ) {
-            found = true;
-            return {
-              ...t,
-              isOccupied: true,
-              occupiedSource: 'order' as const,
-              updatedAt: new Date().toISOString(),
-            };
+        await runTransaction(db, async (tx) => {
+          const snap = await tx.get(tableDocRef);
+          if (!snap.exists() || !Array.isArray(snap.data().tables) || snap.data().tables.length === 0) {
+            return;
           }
-          return t;
-        });
-        if (!found && !isNaN(parsedNum) && parsedNum > 0) {
-          updated.push({
-            id: `table_${parsedNum}`,
-            number: parsedNum,
-            name: `โต๊ะ ${parsedNum}`,
-            isOccupied: true,
-            occupiedSource: 'order',
-            updatedAt: new Date().toISOString(),
+          const currentTables = snap.data().tables as RestaurantTable[];
+          const nowIso = new Date().toISOString();
+          let found = false;
+          const updated = currentTables.map((t) => {
+            if (
+              (!isNaN(parsedNum) && t.number === parsedNum) ||
+              t.name === `โต๊ะ ${rawNum}` ||
+              t.name === rawNum ||
+              t.id === `table_${rawNum}` ||
+              t.id === `table_${parsedNum}`
+            ) {
+              found = true;
+              return {
+                ...t,
+                isOccupied: true,
+                occupiedSource: 'order' as const,
+                updatedAt: nowIso,
+              };
+            }
+            return t;
           });
-        }
-        await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+          if (found) {
+            tx.set(tableDocRef, { tables: updated, updatedAt: nowIso }, { merge: true });
+          }
+        });
       } catch (tblErr) {
         console.warn('Auto set table occupied error:', tblErr);
       }
@@ -1192,7 +1281,7 @@ export async function createOrder(data: {
 // Append / Add extra items to an existing active order (ทั้งฝั่งลูกค้า และฝั่งแอดมิน)
 export async function appendItemsToOrder(
   orderId: string,
-  newItems: Array<{ menuId: string; name: string; price: number; quantity: number }>,
+  newItems: Array<{ menuId: string; name: string; price: number; quantity: number; prepTimeMinutes?: number }>,
   customNote?: string
 ): Promise<{ newSubtotal: number; newTotal: number }> {
   if (!newItems || newItems.length === 0) {
@@ -1208,34 +1297,49 @@ export async function appendItemsToOrder(
   const orderData = snap.data();
   const currentItems = (orderData.items || []) as OrderItem[];
 
-  // Merge items: only merge into an unserved line of the same menuId; if already served, keep as a fresh 'รอทำ' line
+  // Merge items: only merge into an active (non-cancelled) unserved line of the same menuId
   const merged: OrderItem[] = [...currentItems];
   for (const it of newItems) {
     const existingIdx = merged.findIndex(
-      (m) => m.menuId === it.menuId && normalizeOrderItemStatus(m.itemStatus) !== 'เสิร์ฟแล้ว'
+      (m) =>
+        !isOrderItemCancelled(m) &&
+        m.menuId === it.menuId &&
+        normalizeOrderItemStatus(m.itemStatus) !== 'เสิร์ฟแล้ว'
     );
     if (existingIdx >= 0) {
       merged[existingIdx] = {
         ...merged[existingIdx],
         quantity: (merged[existingIdx].quantity || 1) + it.quantity,
+        ...(typeof it.prepTimeMinutes === 'number' && it.prepTimeMinutes > 0
+          ? { prepTimeMinutes: Math.max(1, Math.min(180, Math.round(it.prepTimeMinutes))) }
+          : {}),
       };
     } else {
-      merged.push({
+      const freshItem: OrderItem = {
         menuId: it.menuId,
         name: it.name,
         price: Number(it.price) || 0,
-        quantity: it.quantity,
+        quantity: Math.max(1, Number(it.quantity) || 1),
         itemStatus: 'รอทำ',
-      });
+      };
+      if (typeof it.prepTimeMinutes === 'number' && it.prepTimeMinutes > 0) {
+        freshItem.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(it.prepTimeMinutes)));
+      }
+      merged.push(freshItem);
     }
   }
 
-  const addedSubtotal = newItems.reduce(
-    (sum, it) => sum + (Number(it.price) || 0) * (Number(it.quantity) || 1),
+  const activeItems = merged.filter((m) => !isOrderItemCancelled(m));
+  const newSubtotal = activeItems.reduce(
+    (sum, it) => sum + (Number(it.price) || 0) * Math.max(1, Number(it.quantity) || 1),
     0
   );
-  const newSubtotal = (Number(orderData.subtotal) || 0) + addedSubtotal;
-  const newTotal = (Number(orderData.totalAmount) || 0) + addedSubtotal;
+  const deliveryFee = Math.max(0, Number(orderData.deliveryFee) || 0);
+  const newTotal = newSubtotal + deliveryFee;
+
+  const estimatedPrepMinutes = estimateOrderPrepMinutes(activeItems);
+  const existingEstimated = Number(orderData.estimatedPrepMinutes) || 0;
+  const nextEstimatedPrep = Math.max(existingEstimated, estimatedPrepMinutes);
 
   const currentNotes = orderData.notes || '';
   const newNoteText = customNote
@@ -1246,6 +1350,8 @@ export async function appendItemsToOrder(
     items: merged,
     subtotal: newSubtotal,
     totalAmount: newTotal,
+    estimatedPrepMinutes: nextEstimatedPrep,
+    cancelledItemsCount: merged.length - activeItems.length,
     hasAddition: true,
     lastAdditionAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1468,13 +1574,11 @@ export function isOrderHoldingTable(order: Order): boolean {
   return hasTable && (order.deliveryType === 'มาทานที่ร้าน' || order.tableNumber !== undefined && order.tableNumber !== null);
 }
 
-// Reconcile occupied tables with live orders so phantom/stale occupied flags clear automatically
+// Reconcile occupied tables with live orders atomically via Transaction so table count is never overwritten
 export async function reconcileTablesWithOrders(
-  tables: RestaurantTable[],
+  _tables: RestaurantTable[],
   orders: Order[]
 ): Promise<boolean> {
-  if (!Array.isArray(tables) || tables.length === 0) return false;
-
   const activeTableKeys = new Set<string>();
   for (const ord of orders) {
     if (!isOrderHoldingTable(ord)) continue;
@@ -1488,30 +1592,38 @@ export async function reconcileTablesWithOrders(
     }
   }
 
-  let hasChanges = false;
-  const updated = tables.map((t) => {
-    if (!t.isOccupied) return t;
-    // Respect explicit manual locks toggled by Admin
-    if (t.occupiedSource === 'manual') return t;
-
-    const numKey = String(t.number);
-    const nameKey = t.name.replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
-    const hasActiveOrder = activeTableKeys.has(numKey) || (nameKey && activeTableKeys.has(nameKey));
-
-    if (!hasActiveOrder) {
-      hasChanges = true;
-      const { occupiedSource: _prev, ...rest } = t;
-      return { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
-    }
-    return t;
-  });
-
-  if (!hasChanges) return false;
-
   try {
     const tableDocRef = doc(db, 'settings', 'tables');
-    await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
-    return true;
+    return await runTransaction(db, async (tx) => {
+      const snap = await tx.get(tableDocRef);
+      if (!snap.exists() || !Array.isArray(snap.data().tables) || snap.data().tables.length === 0) {
+        return false;
+      }
+      const currentTables = snap.data().tables as RestaurantTable[];
+      const nowIso = new Date().toISOString();
+      let hasChanges = false;
+
+      const updated = currentTables.map((t) => {
+        if (!t.isOccupied) return t;
+        // Respect explicit manual locks toggled by Admin
+        if (t.occupiedSource === 'manual') return t;
+
+        const numKey = String(t.number);
+        const nameKey = t.name.replace(/^โต๊ะ(?:ที่)?\s*/i, '').trim();
+        const hasActiveOrder = activeTableKeys.has(numKey) || (nameKey && activeTableKeys.has(nameKey));
+
+        if (!hasActiveOrder) {
+          hasChanges = true;
+          const { occupiedSource: _prev, ...rest } = t;
+          return { ...rest, isOccupied: false, updatedAt: nowIso };
+        }
+        return t;
+      });
+
+      if (!hasChanges) return false;
+      tx.set(tableDocRef, { tables: updated, updatedAt: nowIso }, { merge: true });
+      return true;
+    });
   } catch (err) {
     console.warn('Reconcile stale tables warning:', err);
     return false;
@@ -1546,7 +1658,7 @@ async function freeTableIfNoOtherActiveOrders(order: Order): Promise<void> {
   }
 }
 
-// Helper: Extract table number from order & set table status to available (false) in real-time
+// Helper: Extract table number from order & set table status to available (false) via Transaction
 async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
   const rawNum = extractOrderTableIdentifier(order);
   if (!rawNum) return;
@@ -1554,27 +1666,34 @@ async function freeTableForCheckedOutOrder(order: Order): Promise<void> {
   try {
     const parsedNum = parseInt(rawNum, 10);
     const tableDocRef = doc(db, 'settings', 'tables');
-    const snap = await getDoc(tableDocRef);
-    let currentTables: RestaurantTable[] = INITIAL_TABLES;
-    if (snap.exists() && Array.isArray(snap.data().tables)) {
-      currentTables = snap.data().tables;
-    }
-
-    const updated = currentTables.map((t) => {
-      if (
-        (!isNaN(parsedNum) && t.number === parsedNum) ||
-        t.name === `โต๊ะ ${rawNum}` ||
-        t.name === rawNum ||
-        t.id === `table_${rawNum}` ||
-        t.id === `table_${parsedNum}`
-      ) {
-        const { occupiedSource: _prev, ...rest } = t;
-        return { ...rest, isOccupied: false, updatedAt: new Date().toISOString() };
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(tableDocRef);
+      if (!snap.exists() || !Array.isArray(snap.data().tables) || snap.data().tables.length === 0) {
+        return;
       }
-      return t;
-    });
+      const currentTables = snap.data().tables as RestaurantTable[];
+      const nowIso = new Date().toISOString();
+      let changed = false;
 
-    await setDoc(tableDocRef, { tables: updated, updatedAt: new Date().toISOString() }, { merge: true });
+      const updated = currentTables.map((t) => {
+        if (
+          (!isNaN(parsedNum) && t.number === parsedNum) ||
+          t.name === `โต๊ะ ${rawNum}` ||
+          t.name === rawNum ||
+          t.id === `table_${rawNum}` ||
+          t.id === `table_${parsedNum}`
+        ) {
+          changed = true;
+          const { occupiedSource: _prev, ...rest } = t;
+          return { ...rest, isOccupied: false, updatedAt: nowIso };
+        }
+        return t;
+      });
+
+      if (changed) {
+        tx.set(tableDocRef, { tables: updated, updatedAt: nowIso }, { merge: true });
+      }
+    });
   } catch (err) {
     console.warn('Auto free table on checkout error:', err);
   }
@@ -1603,6 +1722,7 @@ export const ITEM_STEP_INDEX: Record<OrderItemStatus, number> = {
   'กำลังทำ': 1,
   'พร้อมเสิร์ฟ': 2,
   'เสิร์ฟแล้ว': 3,
+  'ยกเลิก': 99,
 };
 
 export interface OrderItemUpdateResult {
@@ -1612,7 +1732,20 @@ export interface OrderItemUpdateResult {
   didAdvanceOrderStatus: boolean;
 }
 
+export interface CancelOrderItemResult {
+  items: OrderItem[];
+  cancelledItemName: string;
+  newSubtotal: number;
+  newTotal: number;
+  isWholeOrderCancelled: boolean;
+  previousOrderStatus: OrderStatus;
+  nextOrderStatus: OrderStatus;
+  didAdvanceOrderStatus: boolean;
+  didDisableMenu: boolean;
+}
+
 export function normalizeOrderItemStatus(raw?: string): OrderItemStatus {
+  if (raw === 'ยกเลิก') return 'ยกเลิก';
   if (raw === 'กำลังทำ') return 'กำลังทำ';
   if (raw === 'พร้อมเสิร์ฟ') return 'พร้อมเสิร์ฟ';
   if (raw === 'เสิร์ฟแล้ว') return 'เสิร์ฟแล้ว';
@@ -1620,6 +1753,9 @@ export function normalizeOrderItemStatus(raw?: string): OrderItemStatus {
 }
 
 export function getEffectiveItemStatus(item: OrderItem, orderStatus: OrderStatus): OrderItemStatus {
+  if (isOrderItemCancelled(item)) {
+    return 'ยกเลิก';
+  }
   const norm = normalizeOrderStatus(orderStatus);
   if (norm === 'ส่งแล้ว' || norm === 'เช็คบิล') {
     return 'เสิร์ฟแล้ว';
@@ -1627,15 +1763,16 @@ export function getEffectiveItemStatus(item: OrderItem, orderStatus: OrderStatus
   return normalizeOrderItemStatus(item.itemStatus);
 }
 
-function computeNextOrderStatusFromItems(
+export function computeNextOrderStatusFromItems(
   items: OrderItem[],
   currentOrderStatus: OrderStatus
 ): OrderStatus {
   const normCurrent = normalizeOrderStatus(currentOrderStatus);
   const currentIdx = ORDER_STEP_INDEX[normCurrent] ?? 0;
+  const activeItems = (items || []).filter((it) => !isOrderItemCancelled(it));
 
   if (
-    items.length === 0 ||
+    activeItems.length === 0 ||
     normCurrent === 'เช็คบิล' ||
     normCurrent === 'ยกเลิก' ||
     currentIdx >= 3
@@ -1645,7 +1782,7 @@ function computeNextOrderStatusFromItems(
 
   let minItemIdx = 3;
   let maxItemIdx = 0;
-  for (const it of items) {
+  for (const it of activeItems) {
     const eff = getEffectiveItemStatus(it, normCurrent);
     const idx = ITEM_STEP_INDEX[eff] ?? 0;
     if (idx < minItemIdx) {
@@ -1656,10 +1793,10 @@ function computeNextOrderStatusFromItems(
     }
   }
 
-  // Strictly forward-only auto-advance for the main order based on item progress:
-  // - If all items == 'เสิร์ฟแล้ว' (min === 3) -> 'ส่งแล้ว' (step 3)
-  // - Else if all items >= 'พร้อมเสิร์ฟ' (min >= 2) -> 'ส่งออเดอร์' (step 2)
-  // - Else if at least 1 item started (max >= 1) -> 'กำลังทำ' (step 1)
+  // Strictly forward-only auto-advance for the main order based on active item progress:
+  // - If all active items == 'เสิร์ฟแล้ว' (min === 3) -> 'ส่งแล้ว' (step 3)
+  // - Else if all active items >= 'พร้อมเสิร์ฟ' (min >= 2) -> 'ส่งออเดอร์' (step 2)
+  // - Else if at least 1 active item started (max >= 1) -> 'กำลังทำ' (step 1)
   // - Else -> 'รับออเดอร์' (step 0)
   let derivedStep = 0;
   if (minItemIdx >= 3) {
@@ -1687,21 +1824,33 @@ export function getOrderCompletionSummary(order: Pick<Order, 'items' | 'status'>
   readyLines: number;
   cookingLines: number;
   pendingLines: number;
+  cancelledLines: number;
   totalDishes: number;
   completedDishes: number;
+  cancelledDishes: number;
   isAllCompleted: boolean;
   progressPercent: number;
 } {
   const items = Array.isArray(order.items) ? order.items : [];
+  let activeLines = 0;
   let completedLines = 0;
   let readyLines = 0;
   let cookingLines = 0;
   let pendingLines = 0;
+  let cancelledLines = 0;
   let totalDishes = 0;
   let completedDishes = 0;
+  let cancelledDishes = 0;
 
   for (const item of items) {
     const qty = Math.max(1, Number(item.quantity) || 1);
+    if (isOrderItemCancelled(item)) {
+      cancelledLines += 1;
+      cancelledDishes += qty;
+      continue;
+    }
+
+    activeLines += 1;
     totalDishes += qty;
     const effective = getEffectiveItemStatus(item, order.status);
     if (effective === 'เสิร์ฟแล้ว') {
@@ -1716,7 +1865,7 @@ export function getOrderCompletionSummary(order: Pick<Order, 'items' | 'status'>
     }
   }
 
-  const totalLines = items.length;
+  const totalLines = activeLines;
   const isAllCompleted = totalLines > 0 && completedLines === totalLines;
   const progressPercent = totalLines > 0 ? Math.round((completedLines / totalLines) * 100) : 0;
 
@@ -1726,8 +1875,10 @@ export function getOrderCompletionSummary(order: Pick<Order, 'items' | 'status'>
     readyLines,
     cookingLines,
     pendingLines,
+    cancelledLines,
     totalDishes,
     completedDishes,
+    cancelledDishes,
     isAllCompleted,
     progressPercent,
   };
@@ -1754,6 +1905,7 @@ async function upsertCustomerStatsForOrder(
   const currentItemCounts: Record<string, number> = { ...(existingData.itemCounts || {}) };
   if (Array.isArray(order.items)) {
     for (const itm of order.items) {
+      if (isOrderItemCancelled(itm)) continue;
       if (itm.name) {
         const q = Number(itm.quantity) || 1;
         currentItemCounts[itm.name] = (currentItemCounts[itm.name] || 0) + q;
@@ -1786,6 +1938,9 @@ export async function updateOrderItemStatus(
   itemIndex: number,
   nextItemStatus: OrderItemStatus
 ): Promise<OrderItemUpdateResult> {
+  if (nextItemStatus === 'ยกเลิก') {
+    throw new Error('กรุณาใช้ปุ่มยกเลิกรายการอาหาร (ของหมด) เพื่อคำนวณยอดใหม่');
+  }
   const normalizedTargetItemStatus = normalizeOrderItemStatus(nextItemStatus);
   const targetItemIdx = ITEM_STEP_INDEX[normalizedTargetItemStatus] ?? 0;
   const orderRef = doc(db, 'orders', order.id);
@@ -1826,6 +1981,10 @@ export async function updateOrderItemStatus(
         throw new Error('ไม่พบรายการอาหารที่ต้องการอัปเดต');
       }
 
+      if (isOrderItemCancelled(currentItems[itemIndex])) {
+        throw new Error('รายการนี้ถูกยกเลิกแล้ว ไม่สามารถเปลี่ยนสถานะได้');
+      }
+
       const currentItemStatus = getEffectiveItemStatus(currentItems[itemIndex], currentOrderStatus);
       const currentItemIdx = ITEM_STEP_INDEX[currentItemStatus] ?? 0;
 
@@ -1847,6 +2006,22 @@ export async function updateOrderItemStatus(
         items: currentItems,
         updatedAt: nowIso,
       };
+
+      if (
+        (normalizedTargetItemStatus === 'กำลังทำ' || nextOrderStatus === 'กำลังทำ') &&
+        !liveData?.cookingStartedAt &&
+        !order.cookingStartedAt
+      ) {
+        updatePayload.cookingStartedAt = nowIso;
+      }
+
+      if (
+        (nextOrderStatus === 'ส่งออเดอร์' || nextOrderStatus === 'ส่งแล้ว') &&
+        !liveData?.readyAt &&
+        !order.readyAt
+      ) {
+        updatePayload.readyAt = nowIso;
+      }
 
       if (didAdvanceOrderStatus) {
         updatePayload.status = nextOrderStatus;
@@ -1910,11 +2085,14 @@ export async function updateOrderItemStatus(
   }
 }
 
-// Mark all items inside an order forward to a target status (e.g. 'เสิร์ฟแล้ว') & advance main order status atomically
+// Mark all active items inside an order forward to a target status (e.g. 'เสิร์ฟแล้ว') & advance main order status atomically
 export async function markAllOrderItemsStatus(
   order: Order,
   targetItemStatus: OrderItemStatus = 'เสิร์ฟแล้ว'
 ): Promise<OrderItemUpdateResult> {
+  if (targetItemStatus === 'ยกเลิก') {
+    throw new Error('ไม่รองรับการยกเลิกทุกรายการผ่านคำสั่งนี้');
+  }
   const normalizedTarget = normalizeOrderItemStatus(targetItemStatus);
   const targetIdx = ITEM_STEP_INDEX[normalizedTarget] ?? 3;
   const orderRef = doc(db, 'orders', order.id);
@@ -1949,6 +2127,9 @@ export async function markAllOrderItemsStatus(
       const rawItems = Array.isArray(liveData?.items) ? liveData.items : order.items;
       const currentItems: OrderItem[] = Array.isArray(rawItems) ? rawItems : [];
       const updatedItems: OrderItem[] = currentItems.map((it) => {
+        if (isOrderItemCancelled(it)) {
+          return it;
+        }
         const eff = getEffectiveItemStatus(it, currentOrderStatus);
         const curIdx = ITEM_STEP_INDEX[eff] ?? 0;
         if (curIdx >= targetIdx) {
@@ -1964,6 +2145,22 @@ export async function markAllOrderItemsStatus(
         items: updatedItems,
         updatedAt: nowIso,
       };
+
+      if (
+        (normalizedTarget === 'กำลังทำ' || nextOrderStatus === 'กำลังทำ') &&
+        !liveData?.cookingStartedAt &&
+        !order.cookingStartedAt
+      ) {
+        updatePayload.cookingStartedAt = nowIso;
+      }
+
+      if (
+        (nextOrderStatus === 'ส่งออเดอร์' || nextOrderStatus === 'ส่งแล้ว') &&
+        !liveData?.readyAt &&
+        !order.readyAt
+      ) {
+        updatePayload.readyAt = nowIso;
+      }
 
       if (didAdvanceOrderStatus) {
         updatePayload.status = nextOrderStatus;
@@ -2024,6 +2221,207 @@ export async function markAllOrderItemsStatus(
   }
 }
 
+// Cancel a single item inside an active order (e.g. sudden ingredient stock-out)
+// Automatically recalculates subtotal/totalAmount/estimatedPrepMinutes, optionally marks menu sold-out,
+// and either auto-cancels the whole order if no active items remain or advances main order status.
+export async function cancelOrderItem(params: {
+  order: Order;
+  itemIndex: number;
+  reason?: string;
+  markMenuUnavailable?: boolean;
+}): Promise<CancelOrderItemResult> {
+  const { order, itemIndex, reason = 'ของหมดกระทันหัน', markMenuUnavailable = false } = params;
+  const cleanReason = (reason || 'ของหมดกระทันหัน').trim().slice(0, 120);
+  const orderRef = doc(db, 'orders', order.id);
+  const nowIso = new Date().toISOString();
+
+  const txResult = await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(orderRef);
+    const liveData = snap.exists() ? snap.data() : null;
+
+    const currentOrderStatus = normalizeOrderStatus(
+      (liveData?.status as string | undefined) || order.status
+    );
+    if (Boolean(liveData?.isCancelled || order.isCancelled || currentOrderStatus === 'ยกเลิก')) {
+      throw new Error('ออเดอร์นี้ถูกยกเลิกแล้ว');
+    }
+    if (currentOrderStatus === 'เช็คบิล') {
+      throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว ไม่สามารถยกเลิกรายการได้');
+    }
+
+    const rawItems = Array.isArray(liveData?.items) ? liveData.items : order.items;
+    const currentItems: OrderItem[] = Array.isArray(rawItems)
+      ? rawItems.map((it: OrderItem) => ({ ...it }))
+      : [];
+
+    if (itemIndex < 0 || itemIndex >= currentItems.length) {
+      throw new Error('ไม่พบรายการอาหารที่ต้องการยกเลิก');
+    }
+    if (isOrderItemCancelled(currentItems[itemIndex])) {
+      throw new Error('รายการอาหารนี้ถูกยกเลิกไปแล้ว');
+    }
+
+    const targetItem = currentItems[itemIndex];
+    currentItems[itemIndex] = {
+      ...targetItem,
+      itemStatus: 'ยกเลิก',
+      isCancelled: true,
+      cancelledAt: nowIso,
+      cancelReason: cleanReason,
+    };
+
+    const activeItems = currentItems.filter((it) => !isOrderItemCancelled(it));
+    const cancelledItemsCount = currentItems.length - activeItems.length;
+    const deliveryFee = Math.max(0, Number(liveData?.deliveryFee ?? order.deliveryFee) || 0);
+
+    if (activeItems.length === 0) {
+      transaction.update(orderRef, {
+        items: currentItems,
+        subtotal: 0,
+        totalAmount: 0,
+        estimatedPrepMinutes: 0,
+        cancelledItemsCount,
+        status: 'ยกเลิก' as OrderStatus,
+        isCancelled: true,
+        isArchived: true,
+        cancelledAt: nowIso,
+        cancelReason: `ยกเลิกรายการทั้งหมด (${cleanReason})`,
+        updatedAt: nowIso,
+      });
+
+      return {
+        items: currentItems,
+        targetMenuId: targetItem.menuId,
+        cancelledItemName: targetItem.name,
+        newSubtotal: 0,
+        newTotal: 0,
+        isWholeOrderCancelled: true,
+        previousOrderStatus: currentOrderStatus,
+        nextOrderStatus: 'ยกเลิก' as OrderStatus,
+        didAdvanceOrderStatus: true,
+        customerPhone: String(liveData?.customerPhone ?? order.customerPhone ?? ''),
+        customerName: String(liveData?.customerName ?? order.customerName ?? ''),
+        address: String(liveData?.address ?? order.address ?? ''),
+      };
+    }
+
+    const newSubtotal = activeItems.reduce(
+      (sum, it) => sum + (Number(it.price) || 0) * Math.max(1, Number(it.quantity) || 1),
+      0
+    );
+    const newTotal = newSubtotal + deliveryFee;
+    const nextEstimatedPrep = estimateOrderPrepMinutes(activeItems);
+    const nextOrderStatus = computeNextOrderStatusFromItems(currentItems, currentOrderStatus);
+    const didAdvanceOrderStatus = nextOrderStatus !== currentOrderStatus;
+
+    const updatePayload: Record<string, any> = {
+      items: currentItems,
+      subtotal: newSubtotal,
+      totalAmount: newTotal,
+      estimatedPrepMinutes: nextEstimatedPrep,
+      cancelledItemsCount,
+      updatedAt: nowIso,
+    };
+
+    if (
+      (nextOrderStatus === 'ส่งออเดอร์' || nextOrderStatus === 'ส่งแล้ว') &&
+      !liveData?.readyAt &&
+      !order.readyAt
+    ) {
+      updatePayload.readyAt = nowIso;
+    }
+
+    if (didAdvanceOrderStatus) {
+      updatePayload.status = nextOrderStatus;
+      if (nextOrderStatus === 'ส่งแล้ว') {
+        updatePayload.isArchived = true;
+      }
+    }
+
+    transaction.update(orderRef, updatePayload);
+
+    return {
+      items: currentItems,
+      targetMenuId: targetItem.menuId,
+      cancelledItemName: targetItem.name,
+      newSubtotal,
+      newTotal,
+      isWholeOrderCancelled: false,
+      previousOrderStatus: currentOrderStatus,
+      nextOrderStatus,
+      didAdvanceOrderStatus,
+      customerPhone: String(liveData?.customerPhone ?? order.customerPhone ?? ''),
+      customerName: String(liveData?.customerName ?? order.customerName ?? ''),
+      address: String(liveData?.address ?? order.address ?? ''),
+    };
+  });
+
+  let didDisableMenu = false;
+  if (markMenuUnavailable && txResult.targetMenuId && !txResult.targetMenuId.startsWith('custom_')) {
+    try {
+      const menuSnap = await getDoc(doc(db, 'menus', txResult.targetMenuId));
+      if (menuSnap.exists() && menuSnap.data()?.isAvailable !== false) {
+        await updateMenuItem(txResult.targetMenuId, {
+          isAvailable: false,
+          updatedBy: 'admin-stockout-cancel',
+        });
+        didDisableMenu = true;
+      }
+    } catch (menuErr) {
+      console.warn('Could not mark menu unavailable after item cancellation:', menuErr);
+    }
+  }
+
+  if (txResult.isWholeOrderCancelled) {
+    await freeTableIfNoOtherActiveOrders(order);
+  } else if (
+    txResult.didAdvanceOrderStatus &&
+    txResult.nextOrderStatus === 'ส่งแล้ว' &&
+    txResult.previousOrderStatus !== 'ส่งแล้ว'
+  ) {
+    await upsertCustomerStatsForOrder(
+      {
+        customerPhone: txResult.customerPhone,
+        customerName: txResult.customerName,
+        address: txResult.address,
+        items: txResult.items,
+      },
+      nowIso
+    );
+  }
+
+  return {
+    items: txResult.items,
+    cancelledItemName: txResult.cancelledItemName,
+    newSubtotal: txResult.newSubtotal,
+    newTotal: txResult.newTotal,
+    isWholeOrderCancelled: txResult.isWholeOrderCancelled,
+    previousOrderStatus: txResult.previousOrderStatus,
+    nextOrderStatus: txResult.nextOrderStatus,
+    didAdvanceOrderStatus: txResult.didAdvanceOrderStatus,
+    didDisableMenu,
+  };
+}
+
+// Adjust target prep time (minutes) on an active order for kitchen pacing
+export async function adjustOrderPrepTime(
+  orderId: string,
+  nextMinutes: number
+): Promise<number> {
+  const safeMinutes = Math.max(1, Math.min(180, Math.round(Number(nextMinutes) || DEFAULT_SHOP_PREP_MINUTES)));
+  const orderRef = doc(db, 'orders', orderId);
+  try {
+    await updateDoc(orderRef, {
+      estimatedPrepMinutes: safeMinutes,
+      updatedAt: new Date().toISOString(),
+    });
+    return safeMinutes;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
+    throw error;
+  }
+}
+
 // Finalize check-bill with summarized / added items and latest edited total amount
 export async function finalizeOrderCheckout(params: {
   order: Order;
@@ -2042,17 +2440,34 @@ export async function finalizeOrderCheckout(params: {
     throw new Error('ออเดอร์นี้เช็คบิลเรียบร้อยแล้ว');
   }
 
-  const sanitizedItems: OrderItem[] = finalItems
-    .filter((it) => Number(it.quantity) > 0)
+  const sanitizedActiveItems: OrderItem[] = finalItems
+    .filter((it) => !isOrderItemCancelled(it) && Number(it.quantity) > 0)
+    .map((it) => {
+      const clean: OrderItem = {
+        menuId: it.menuId,
+        name: it.name,
+        price: Math.max(0, Number(it.price) || 0),
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        itemStatus: markAllItemsServed ? 'เสิร์ฟแล้ว' : it.itemStatus || 'เสิร์ฟแล้ว',
+      };
+      if (typeof it.prepTimeMinutes === 'number' && it.prepTimeMinutes > 0) {
+        clean.prepTimeMinutes = Math.round(it.prepTimeMinutes);
+      }
+      return clean;
+    });
+
+  // Preserve previously cancelled items for audit/receipt display without billing them
+  const preservedCancelledItems: OrderItem[] = (order.items || [])
+    .filter((it) => isOrderItemCancelled(it))
     .map((it) => ({
-      menuId: it.menuId,
-      name: it.name,
-      price: Math.max(0, Number(it.price) || 0),
-      quantity: Math.max(1, Number(it.quantity) || 1),
-      itemStatus: markAllItemsServed ? 'เสิร์ฟแล้ว' : it.itemStatus || 'เสิร์ฟแล้ว',
+      ...it,
+      itemStatus: 'ยกเลิก' as OrderItemStatus,
+      isCancelled: true,
     }));
 
-  const computedSubtotal = sanitizedItems.reduce(
+  const mergedItems: OrderItem[] = [...sanitizedActiveItems, ...preservedCancelledItems];
+
+  const computedSubtotal = sanitizedActiveItems.reduce(
     (sum, it) => sum + it.price * it.quantity,
     0
   );
@@ -2062,16 +2477,22 @@ export async function finalizeOrderCheckout(params: {
 
   const orderRef = doc(db, 'orders', order.id);
   try {
-    await updateDoc(orderRef, {
-      items: sanitizedItems,
+    const updatePayload: Record<string, any> = {
+      items: mergedItems,
       subtotal: computedSubtotal,
       deliveryFee: safeDeliveryFee,
       totalAmount: safeTotal,
+      cancelledItemsCount: preservedCancelledItems.length,
       status: 'เช็คบิล' as OrderStatus,
       isArchived: true,
       checkedOutAt: nowIso,
       updatedAt: nowIso,
-    });
+    };
+    if (!order.readyAt) {
+      updatePayload.readyAt = nowIso;
+    }
+
+    await updateDoc(orderRef, updatePayload);
 
     await freeTableForCheckedOutOrder(order);
 
@@ -2081,7 +2502,7 @@ export async function finalizeOrderCheckout(params: {
           customerPhone: order.customerPhone,
           customerName: order.customerName,
           address: order.address,
-          items: sanitizedItems,
+          items: sanitizedActiveItems,
         },
         nowIso
       );
@@ -2089,12 +2510,14 @@ export async function finalizeOrderCheckout(params: {
 
     return {
       ...order,
-      items: sanitizedItems,
+      items: mergedItems,
       subtotal: computedSubtotal,
       deliveryFee: safeDeliveryFee,
       totalAmount: safeTotal,
+      cancelledItemsCount: preservedCancelledItems.length,
       status: 'เช็คบิล',
       isArchived: true,
+      readyAt: order.readyAt || nowIso,
       checkedOutAt: nowIso,
       updatedAt: nowIso,
     };
@@ -2141,11 +2564,28 @@ export async function updateOrderStatus(order: Order, newStatus: OrderStatus): P
         isArchived,
         updatedAt: nowIso,
       };
+      if (targetStatus === 'กำลังทำ' && !liveData?.cookingStartedAt && !order.cookingStartedAt) {
+        updatePayload.cookingStartedAt = nowIso;
+      }
+      if (
+        (targetStatus === 'ส่งออเดอร์' || targetStatus === 'ส่งแล้ว' || targetStatus === 'เช็คบิล') &&
+        !liveData?.readyAt &&
+        !order.readyAt
+      ) {
+        if (!liveData?.cookingStartedAt && !order.cookingStartedAt) {
+          updatePayload.cookingStartedAt = String(liveData?.createdAt || order.createdAt || nowIso);
+        }
+        updatePayload.readyAt = nowIso;
+      }
       if (targetStatus === 'ส่งแล้ว' || targetStatus === 'เช็คบิล') {
-        updatePayload.items = liveItems.map((it) => ({
-          ...it,
-          itemStatus: 'เสิร์ฟแล้ว' as OrderItemStatus,
-        }));
+        updatePayload.items = liveItems.map((it) =>
+          isOrderItemCancelled(it)
+            ? it
+            : {
+                ...it,
+                itemStatus: 'เสิร์ฟแล้ว' as OrderItemStatus,
+              }
+        );
       }
       if (targetStatus === 'เช็คบิล') {
         updatePayload.checkedOutAt = nowIso;
@@ -2236,7 +2676,7 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
   const nowIso = new Date().toISOString();
   const runtimeHost = getRuntimeHost();
 
-  const payload = {
+  const payload: Record<string, any> = {
     name: data.name.trim().slice(0, 120),
     price: Math.max(0, Number(data.price) || 0),
     cost: Math.max(0, Number(data.cost) || 0),
@@ -2253,6 +2693,10 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
     createdSourceAppVersion: CURRENT_REVISION.revisionCode,
     createdHost: runtimeHost,
   };
+
+  if (typeof data.prepTimeMinutes === 'number' && data.prepTimeMinutes > 0) {
+    payload.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(data.prepTimeMinutes)));
+  }
 
   try {
     await setDoc(menuRef, payload);
@@ -2275,6 +2719,13 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
   if (data.name !== undefined) payload.name = data.name.trim().slice(0, 120);
   if (data.price !== undefined) payload.price = Math.max(0, Number(data.price) || 0);
   if (data.cost !== undefined) payload.cost = Math.max(0, Number(data.cost) || 0);
+  if ('prepTimeMinutes' in data) {
+    if (typeof data.prepTimeMinutes === 'number' && data.prepTimeMinutes > 0) {
+      payload.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(data.prepTimeMinutes)));
+    } else {
+      payload.prepTimeMinutes = deleteField();
+    }
+  }
   if (data.category !== undefined) payload.category = data.category.trim().slice(0, 60);
   if (data.imageUrl !== undefined) payload.imageUrl = data.imageUrl ? data.imageUrl.trim() : '';
   if (data.description !== undefined) payload.description = data.description.slice(0, 800);
@@ -2429,96 +2880,40 @@ export async function deleteCategory(id: string): Promise<void> {
   }
 }
 
-// Initialize shop settings once & ONLY seed initial menus on first-ever setup or explicit admin forceReset
-export async function initializeBaanSteakMenu(forceReset: boolean = false): Promise<void> {
+// Strict manual-only reset helper (NEVER runs automatically on startup or visitor load)
+export async function initializeBaanSteakMenu(
+  forceReset: boolean = false,
+  confirmToken?: string
+): Promise<void> {
+  if (!forceReset || confirmToken !== 'CONFIRM_ADMIN_FORCE_RESET') {
+    return;
+  }
+
   try {
-    let menusAlreadyInitialized = false;
-
-    // 1. Ensure settings/shop uses the latest cover image, updated shop GPS pin, and read menusInitialized lock
-    try {
-      const shopRef = doc(db, 'settings', 'shop');
-      const shopSnap = await getDoc(shopRef);
-      if (!shopSnap.exists()) {
-        await setDoc(
-          shopRef,
-          {
-            heroBannerUrl: '/IMG_20261007_161813.jpg',
-            isOpen: true,
-            shopLatitude: DEFAULT_SHOP_SETTINGS.shopLatitude,
-            shopLongitude: DEFAULT_SHOP_SETTINGS.shopLongitude,
-          },
-          { merge: true }
-        );
-      } else {
-        const data = shopSnap.data();
-        menusAlreadyInitialized = Boolean(data.menusInitialized);
-        const updates: Record<string, any> = {};
-        if (
-          !data.heroBannerUrl ||
-          data.heroBannerUrl.includes('file_00000000322c8230a99655a0452e2494')
-        ) {
-          updates.heroBannerUrl = '/IMG_20261007_161813.jpg';
-        }
-        const isLegacyPin =
-          data.shopLatitude === undefined ||
-          data.shopLongitude === undefined ||
-          (Math.abs(Number(data.shopLatitude) - 16.5447) < 0.0001 &&
-            Math.abs(Number(data.shopLongitude) - 102.1005) < 0.0001);
-        if (isLegacyPin) {
-          updates.shopLatitude = DEFAULT_SHOP_SETTINGS.shopLatitude;
-          updates.shopLongitude = DEFAULT_SHOP_SETTINGS.shopLongitude;
-        }
-        if (Object.keys(updates).length > 0) {
-          await setDoc(shopRef, updates, { merge: true });
-        }
-      }
-    } catch {
-      // ignore non-fatal settings sync
-    }
-
-    // 2. STRICT GUARD: Never modify, inject, or overwrite menus during normal startup!
-    // Once menus have been initialized or any menu exists, never auto-seed again even if menus are later deleted.
-    if (!forceReset && menusAlreadyInitialized) {
-      return;
-    }
-
     const menusSnap = await getDocs(collection(db, 'menus'));
-    if (!forceReset && !menusSnap.empty) {
-      await markMenusInitializedFlag();
-      return;
+    for (const docSnap of menusSnap.docs) {
+      await deleteDoc(doc(db, 'menus', docSnap.id));
     }
 
-    // 3. Only runs when database has NEVER been initialized and is completely empty,
-    // OR when Admin explicitly confirms a full forceReset.
-    if (forceReset) {
-      for (const docSnap of menusSnap.docs) {
-        await deleteDoc(doc(db, 'menus', docSnap.id));
-      }
-
-      const catSnap = await getDocs(collection(db, 'categories'));
-      for (const docSnap of catSnap.docs) {
-        await deleteDoc(doc(db, 'categories', docSnap.id));
-      }
+    const catSnap = await getDocs(collection(db, 'categories'));
+    for (const docSnap of catSnap.docs) {
+      await deleteDoc(doc(db, 'categories', docSnap.id));
     }
 
-    const existingCatsSnap = await getDocs(collection(db, 'categories'));
-    if (forceReset || existingCatsSnap.empty) {
-      for (const cat of INITIAL_CATEGORIES) {
-        await setDoc(doc(db, 'categories', cat.id), cat);
-      }
+    for (const cat of INITIAL_CATEGORIES) {
+      await setDoc(doc(db, 'categories', cat.id), cat);
     }
 
     const seedBatchTs = Date.now();
-    const seedCreator = forceReset ? 'admin-force-reset' : 'initial-empty-seed';
     const runtimeHost = getRuntimeHost();
     for (let i = 0; i < EXACT_INITIAL_MENUS.length; i++) {
       const item = EXACT_INITIAL_MENUS[i];
-      const menuId = `menu_seed_${seedBatchTs}_${i + 1}`;
+      const menuId = `menu_${seedBatchTs}_${i + 1}`;
       await setDoc(doc(db, 'menus', menuId), {
         ...item,
         orderIndex: i,
-        createdBy: seedCreator,
-        updatedBy: seedCreator,
+        createdBy: 'admin-manual',
+        updatedBy: 'admin-force-reset',
         createdSourceAppVersion: CURRENT_REVISION.revisionCode,
         createdHost: runtimeHost,
       });
@@ -2568,14 +2963,18 @@ export async function updateShopHeroBanner(dataUrl: string): Promise<void> {
   }
 }
 
-// Reset Shop Hero Banner
+// Reset Shop Hero Banner (never deletes settings/shop — merges default hero URL only)
 export async function resetShopHeroBanner(): Promise<void> {
   localStorage.removeItem('baan_steak_custom_hero');
   try {
     const settingsDocRef = doc(db, 'settings', 'shop');
-    await deleteDoc(settingsDocRef);
+    await setDoc(
+      settingsDocRef,
+      { heroBannerUrl: '/IMG_20261007_161813.jpg', updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
   } catch (err) {
-    console.warn('Failed to delete settings doc:', err);
+    console.warn('Failed to reset hero banner in Firestore:', err);
   }
 }
 
