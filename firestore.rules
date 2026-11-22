@@ -1,33 +1,140 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidMenuPayload(data) {
+      return data.keys().hasAll(['name', 'price', 'category', 'isAvailable', 'isPublished', 'orderIndex']) &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 120 &&
+        data.price is number && data.price >= 0 &&
+        data.category is string && data.category.size() > 0 && data.category.size() <= 60 &&
+        data.isAvailable is bool &&
+        data.isPublished is bool &&
+        data.orderIndex is number && data.orderIndex >= 0 &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 800)) &&
+        (!('imageUrl' in data) || data.imageUrl is string);
+    }
+
+    function isValidCategoryPayload(data) {
+      return data.keys().hasAll(['name', 'orderIndex']) &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 60 &&
+        data.orderIndex is number;
+    }
+
+    function isValidOrderPayload(data) {
+      return data.keys().hasAll(['orderNumber', 'totalAmount', 'status']) &&
+        data.orderNumber is string && data.orderNumber.size() > 0 && data.orderNumber.size() <= 40 &&
+        data.totalAmount is number && data.totalAmount >= 0 &&
+        data.status is string && data.status.size() > 0 && data.status.size() <= 50;
+    }
+
+    function isValidCustomerPayload(data) {
+      return data.keys().hasAll(['phone', 'orderCount']) &&
+        data.phone is string && data.phone.size() > 0 && data.phone.size() <= 30 &&
+        data.orderCount is number && data.orderCount >= 0;
+    }
+
+    function isValidDailyExpensePayload(data) {
+      return data.keys().hasAll(['dateKey', 'totalExpense']) &&
+        data.dateKey is string && data.dateKey.size() > 0 && data.dateKey.size() <= 20 &&
+        data.totalExpense is number && data.totalExpense >= 0;
+    }
+
+    function isProtectedSeedMenuId(menuId) {
+      return menuId.matches('^menu_drink_[0-9]+$') ||
+        menuId.matches('^menu_00[0-9]+$') ||
+        menuId.matches('^menu_seed_.*$');
+    }
+
     match /menus/{menuId} {
-      allow read, update, delete: if true;
-      allow create: if !(menuId.matches('^menu_drink_[0-9]+$') || menuId.matches('^menu_00[0-9]+$'));
+      allow read: if true;
+      allow create: if isValidId(menuId) &&
+        !isProtectedSeedMenuId(menuId) &&
+        isValidMenuPayload(incoming()) &&
+        incoming().get('createdBy', '') == 'admin-manual';
+      allow update: if isValidId(menuId) && isValidMenuPayload(incoming());
+      allow delete: if isValidId(menuId);
     }
 
     match /categories/{categoryId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidId(categoryId) && isValidCategoryPayload(incoming());
+      allow delete: if isValidId(categoryId);
     }
 
     match /orders/{orderId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidId(orderId) && isValidOrderPayload(incoming());
+      allow delete: if isValidId(orderId);
     }
 
     match /customers/{customerId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidId(customerId) && isValidCustomerPayload(incoming());
+      allow delete: if isValidId(customerId);
     }
 
     match /settings/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow delete: if !(docId in ['shop', 'tables']) && isValidId(docId);
+
+      allow create: if isValidId(docId) && (
+        (docId != 'tables') ||
+        (incoming().tables is list && incoming().tables.size() >= 1 && incoming().tables.size() <= 50)
+      );
+
+      allow update: if isValidId(docId) && (
+        (
+          docId == 'tables' &&
+          incoming().tables is list &&
+          incoming().tables.size() >= 1 &&
+          incoming().tables.size() <= 50 &&
+          (
+            incoming().get('updatedBy', '') == 'admin-table-config' ||
+            (
+              existing().tables is list &&
+              incoming().tables.size() == existing().tables.size() &&
+              !(
+                incoming().tables.size() == 8 &&
+                existing().tables.size() == 8 &&
+                !('updatedAt' in incoming().tables[0]) &&
+                ('updatedAt' in existing().tables[0] || 'updatedAt' in existing().tables[5])
+              )
+            ) ||
+            (existing().tables is list && existing().tables.size() == 8 && incoming().tables.size() != 8)
+          )
+        ) ||
+        (
+          docId == 'shop' &&
+          (existing().get('menusInitialized', false) == false || incoming().get('menusInitialized', false) == true)
+        ) ||
+        (docId != 'tables' && docId != 'shop')
+      );
     }
 
     match /daily_expenses/{expenseId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create, update: if isValidId(expenseId) && isValidDailyExpensePayload(incoming());
+      allow delete: if isValidId(expenseId);
     }
 
     match /test/{docId} {
-      allow read, write: if true;
+      allow read: if docId == 'connection';
     }
   }
 }
