@@ -48,10 +48,10 @@ const AdminSourceCodeExporter: React.FC<{ onNotify: (msg: string, type?: 'succes
 
 import { IncomingOrderModal } from './components/IncomingOrderModal';
 import { audioAlert } from './utils/audioAlert';
+import { isOrderItemCancelled } from './utils/orderPrepUtils';
 import {
   cancelOrder,
   DEFAULT_SHOP_SETTINGS,
-  initializeBaanSteakMenu,
   reconcileTablesWithOrders,
   SHOP_INFO,
   subscribeCategories,
@@ -143,12 +143,7 @@ export function App() {
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Ensure Firestore has the exact 5 items for "บ้าน สเต็กออนไลน์"
-    initializeBaanSteakMenu(false).catch((err) => {
-      console.warn('Initialization error:', err);
-    });
-
-    // 2. Subscribe to menus
+    // 1. Subscribe to menus (read-only listener — never auto-seed on startup)
     const unsubMenus = subscribeMenus(
       (items) => {
         if (!isMounted) return;
@@ -302,7 +297,7 @@ export function App() {
           deliveryType: o.deliveryType,
           orderNumber: o.orderNumber,
           status: o.status || 'รับออเดอร์',
-          items: o.items,
+          items: (o.items || []).filter((it) => !isOrderItemCancelled(it)),
         }))
       );
     } else {
@@ -331,7 +326,7 @@ export function App() {
             deliveryType: o.deliveryType,
             orderNumber: o.orderNumber,
             status: o.status || 'รับออเดอร์',
-            items: o.items,
+            items: (o.items || []).filter((it) => !isOrderItemCancelled(it)),
           }))
         );
       }
@@ -886,6 +881,7 @@ export function App() {
                 orders={orders}
                 menus={menus}
                 tables={tables}
+                defaultPrepTimeMinutes={settings.defaultPrepTimeMinutes}
                 onNotify={notify}
               />
             )}
@@ -974,6 +970,7 @@ export function App() {
         orders={allActiveOrders}
         pendingOrders={pendingIncomingOrders}
         menus={menus}
+        defaultPrepTimeMinutes={settings.defaultPrepTimeMinutes}
         onAcceptOrder={handleAcceptOrder}
         onUpdateStatus={handleUpdateOrderStatus}
         onAcceptAllOrders={handleAcceptAllOrders}

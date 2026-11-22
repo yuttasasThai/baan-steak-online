@@ -3,6 +3,7 @@ export interface MenuItem {
   name: string;
   price: number;
   cost?: number; // ต้นทุนต่อหน่วย (บาท) สำหรับคำนวณกำไร
+  prepTimeMinutes?: number; // เวลาทำอาหารโดยประมาณของเมนูนี้ (นาที)
   imageUrl?: string;
   description?: string;
   category: string;
@@ -34,7 +35,7 @@ export type OrderStatus =
 
 export type DiningType = 'มาทานที่ร้าน' | 'สั่งกลับบ้าน' | 'ส่งอาหารที่บ้าน' | 'นัดรับอาหาร';
 
-export type OrderItemStatus = 'รอทำ' | 'กำลังทำ' | 'พร้อมเสิร์ฟ' | 'เสิร์ฟแล้ว';
+export type OrderItemStatus = 'รอทำ' | 'กำลังทำ' | 'พร้อมเสิร์ฟ' | 'เสิร์ฟแล้ว' | 'ยกเลิก';
 
 export interface OrderItem {
   menuId: string;
@@ -42,6 +43,10 @@ export interface OrderItem {
   price: number;
   quantity: number;
   itemStatus?: OrderItemStatus;
+  prepTimeMinutes?: number;
+  isCancelled?: boolean;
+  cancelledAt?: string;
+  cancelReason?: string;
 }
 
 export interface Order {
@@ -72,6 +77,10 @@ export interface Order {
   isOutOfDeliveryZone?: boolean;
   earnedRewardsNotice?: string[];
   tableNumber?: number | string;
+  estimatedPrepMinutes?: number;
+  cookingStartedAt?: string;
+  readyAt?: string;
+  cancelledItemsCount?: number;
 }
 
 export interface DailyExpenseItem {
@@ -116,6 +125,7 @@ export interface ShopSettings {
   lineNotifySendOnCreate?: boolean; // ส่งการแจ้งเตือนทันทีเมื่อมีออเดอร์ใหม่เข้า (ค่าเริ่มต้น true)
   recommendedMenuMode?: 'auto' | 'manual'; // โหมดเมนูแนะนำประจำสัปดาห์: auto = สุ่มขายดี/ใหม่ล่าสุด, manual = ร้านค้าเลือกเอง
   recommendedMenuIds?: string[]; // รายการ ID เมนูแนะนำประจำสัปดาห์ที่ร้านค้ากำหนดเอง
+  defaultPrepTimeMinutes?: number; // เวลาทำอาหารมาตรฐานของร้านต่อออเดอร์ (นาที) ค่าเริ่มต้น 12
 }
 
 export interface CustomerRecord {
