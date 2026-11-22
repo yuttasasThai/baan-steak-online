@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Ban,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -17,11 +18,13 @@ import { MenuItem, Order, OrderItem } from '../types';
 import { finalizeOrderCheckout, normalizeMenuImageUrl } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
 import { renderDeliveryTypeBadge } from './AdminOrdersManager';
+import { isOrderItemCancelled, resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface CheckBillModalProps {
   isOpen: boolean;
   order: Order | null;
   menus: MenuItem[];
+  defaultPrepTimeMinutes?: number;
   onClose: () => void;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
   onPrintAfterCheckout?: (checkedOutOrder: Order) => void;
@@ -31,6 +34,7 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
   isOpen,
   order,
   menus,
+  defaultPrepTimeMinutes,
   onClose,
   onNotify,
   onPrintAfterCheckout,
@@ -47,14 +51,25 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('ทั้งหมด');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const cancelledItems = useMemo(
+    () => (order?.items || []).filter((it) => isOrderItemCancelled(it)),
+    [order?.items]
+  );
+
   // Sync draft state whenever opening modal with an order
   useEffect(() => {
     if (!isOpen || !order) return;
-    const clonedItems: OrderItem[] = (order.items || []).map((it) => ({ ...it }));
-    setItems(clonedItems);
+    const clonedActiveItems: OrderItem[] = (order.items || [])
+      .filter((it) => !isOrderItemCancelled(it))
+      .map((it) => ({ ...it }));
+    setItems(clonedActiveItems);
     const fee = Number(order.deliveryFee) || 0;
     setDeliveryFee(fee);
-    const initialTotal = Number(order.totalAmount) || 0;
+    const activeSubtotal = clonedActiveItems.reduce(
+      (sum, it) => sum + (Number(it.price) || 0) * Math.max(1, Number(it.quantity) || 1),
+      0
+    );
+    const initialTotal = activeSubtotal + fee;
     setManualTotalStr(String(initialTotal));
     setIsTotalManuallyEdited(false);
     setMarkAllServed(true);
@@ -126,6 +141,7 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
           price: Number(menu.price) || 0,
           quantity: 1,
           itemStatus: 'เสิร์ฟแล้ว',
+          prepTimeMinutes: resolveMenuPrepTimeMinutes(menu, defaultPrepTimeMinutes),
         },
       ];
     });
@@ -371,6 +387,27 @@ export const CheckBillModal: React.FC<CheckBillModalProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {cancelledItems.length > 0 && (
+              <div className="px-3.5 py-2.5 bg-rose-50/70 border-t border-rose-200 space-y-1 text-[11px]">
+                <div className="flex items-center gap-1.5 font-black text-rose-800">
+                  <Ban className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span>รายการที่ยกเลิก / ของหมด ({cancelledItems.length} รายการ — ไม่คิดเงิน)</span>
+                </div>
+                {cancelledItems.map((cit, cidx) => (
+                  <div
+                    key={`cancelled_${cidx}`}
+                    className="flex items-center justify-between gap-2 text-stone-500"
+                  >
+                    <span className="line-through truncate">
+                      {cit.name} ×{cit.quantity}
+                      {cit.cancelReason ? ` (${cit.cancelReason})` : ''}
+                    </span>
+                    <span className="font-bold text-rose-600 shrink-0">฿0</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>

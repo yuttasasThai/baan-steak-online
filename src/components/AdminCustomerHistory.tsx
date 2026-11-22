@@ -23,6 +23,7 @@ import {
   formatThaiDateTime,
   redeemCustomerReward,
 } from '../services/menuService';
+import { isOrderItemCancelled } from '../utils/orderPrepUtils';
 
 interface AdminCustomerHistoryProps {
   customers: CustomerRecord[];
@@ -54,8 +55,9 @@ export const AdminCustomerHistory: React.FC<AdminCustomerHistoryProps> = ({
       customerMap.set(key, { ...cust });
     });
 
-    // B. Supplement from all orders (active, archived, cancelled)
+    // B. Supplement from active/completed orders (skip cancelled orders and cancelled items)
     orders.forEach((ord) => {
+      if (ord.isCancelled || ord.status === 'ยกเลิก') return;
       const rawPhone = ord.customerPhone || '';
       const cleanPhone = rawPhone.replace(/[^0-9]/g, '');
       const key = cleanPhone || rawPhone;
@@ -66,10 +68,11 @@ export const AdminCustomerHistory: React.FC<AdminCustomerHistoryProps> = ({
       const ordTime = ordDate ? new Date(ordDate).getTime() : 0;
 
       if (!existing) {
-        // Collect items from this order
+        // Collect active items from this order
         const itemMap: Record<string, number> = {};
         if (Array.isArray(ord.items)) {
           ord.items.forEach((it) => {
+            if (isOrderItemCancelled(it)) return;
             if (it.name) {
               itemMap[it.name] = (itemMap[it.name] || 0) + (Number(it.quantity) || 1);
             }
@@ -120,11 +123,13 @@ export const AdminCustomerHistory: React.FC<AdminCustomerHistoryProps> = ({
       let matchingOrdersCount = 0;
       if (orders.length > 0) {
         orders.forEach((ord) => {
+          if (ord.isCancelled || ord.status === 'ยกเลิก') return;
           const ordPhone = (ord.customerPhone || '').replace(/[^0-9]/g, '');
           if (ordPhone === cleanPhone) {
             matchingOrdersCount++;
             if (Array.isArray(ord.items)) {
               ord.items.forEach((item) => {
+                if (isOrderItemCancelled(item)) return;
                 if (item.name) {
                   const qty = Number(item.quantity) || 1;
                   // If item was not already counted in customer record, increment

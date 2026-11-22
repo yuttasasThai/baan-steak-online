@@ -4,6 +4,7 @@ import {
   Archive,
   Ban,
   Bell,
+  Calendar,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -16,6 +17,7 @@ import {
   Printer,
   ShoppingBag,
   Store,
+  Timer,
   Truck,
   Trash2,
   Volume2,
@@ -25,6 +27,7 @@ import {
 } from 'lucide-react';
 import { DiningType, MenuItem, Order, OrderStatus, RestaurantTable } from '../types';
 import {
+  adjustOrderPrepTime,
   cancelOrder,
   clearOrdersHistory,
   deleteOrder,
@@ -37,6 +40,12 @@ import {
   updateTableStatus,
 } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
+import {
+  DEFAULT_SHOP_PREP_MINUTES,
+  getDailyKitchenSpeedStats,
+  getOrderTimingMetrics,
+  isOrderItemCancelled,
+} from '../utils/orderPrepUtils';
 import { OrderReceiptModal } from './OrderReceiptModal';
 import { AdminCreateOrderModal } from './AdminCreateOrderModal';
 import { AdminAppendItemModal } from './AdminAppendItemModal';
@@ -49,6 +58,7 @@ interface AdminOrdersManagerProps {
   orders: Order[];
   menus?: MenuItem[];
   tables?: RestaurantTable[];
+  defaultPrepTimeMinutes?: number;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -191,16 +201,52 @@ export function formatOrderDateTime(isoString?: string): string {
   return `${formatOrderDate(isoString)} ${formatOrderTime(isoString)}`;
 }
 
+export type OrderDateRangeFilter = 'all' | 'today' | 'yesterday' | '7days';
+
+export function isOrderInDateRange(
+  isoString: string | undefined,
+  range: OrderDateRangeFilter
+): boolean {
+  if (range === 'all') return true;
+  if (!isoString) return false;
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return false;
+
+  const now = new Date();
+  const orderDayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const sevenDaysStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime();
+
+  if (range === 'today') return orderDayStart === todayStart;
+  if (range === 'yesterday') return orderDayStart === yesterdayStart;
+  if (range === '7days') return orderDayStart >= sevenDaysStart && orderDayStart <= todayStart;
+  return true;
+}
+
+const DATE_RANGE_OPTIONS: Array<{
+  id: OrderDateRangeFilter;
+  label: string;
+  shortDesc: string;
+}> = [
+  { id: 'all', label: 'ทั้งหมด', shortDesc: 'ทุกวัน' },
+  { id: 'today', label: 'วันนี้', shortDesc: 'เฉพาะวันนี้' },
+  { id: 'yesterday', label: 'เมื่อวาน', shortDesc: 'เมื่อวานนี้' },
+  { id: '7days', label: '7 วันล่าสุด', shortDesc: 'ย้อนหลัง 7 วัน' },
+];
+
 export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   orders,
   menus = [],
   tables = [],
+  defaultPrepTimeMinutes = DEFAULT_SHOP_PREP_MINUTES,
   onNotify,
 }) => {
   const [selectedFilter, setSelectedFilter] = useState<
     'ทั้งหมด' | 'รับออเดอร์' | 'กำลังทำ' | 'ส่งออเดอร์' | 'กำลังส่ง'
   >('ทั้งหมด');
   const [viewTab, setViewTab] = useState<'active' | 'archived' | 'checkedout' | 'cancelled'>('active');
+  const [dateRange, setDateRange] = useState<OrderDateRangeFilter>('all');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [receiptOrder, setReceiptOrder] = useState<Order | null>(null);
   const [orderToCancel, setOrderToCancel] = useState<Order | null>(null);
@@ -228,6 +274,27 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   const [isClearing, setIsClearing] = useState(false);
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
   const [isDeletingSingle, setIsDeletingSingle] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [adjustingPrepId, setAdjustingPrepId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const handleAdjustPrepTarget = async (order: Order, currentTarget: number, delta: number) => {
+    const nextTarget = Math.max(1, Math.min(180, currentTarget + delta));
+    if (nextTarget === currentTarget) return;
+    setAdjustingPrepId(order.id);
+    try {
+      await adjustOrderPrepTime(order.id, nextTarget);
+      onNotify(`⏱️ ปรับเวลาเป้าหมายออเดอร์ #${order.orderNumber} เป็น ${nextTarget} นาที`, 'info');
+    } catch {
+      onNotify('ไม่สามารถปรับเวลาทำอาหารได้', 'error');
+    } finally {
+      setAdjustingPrepId(null);
+    }
+  };
 
   const toggleAudio = () => {
     const next = !isAudioEnabled;
@@ -317,8 +384,18 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders]);
 
-  // 1. Active Orders: NOT 'ส่งแล้ว', NOT 'เช็คบิล', NOT 'ยกเลิก' AND NOT isArchived
-  const activeOrders = useMemo(() => {
+  const speedStats = useMemo(
+    () => getDailyKitchenSpeedStats(normalizedOrders, menus, defaultPrepTimeMinutes, nowMs),
+    [normalizedOrders, menus, defaultPrepTimeMinutes, nowMs]
+  );
+
+  // Apply date-range filter to normalized orders for review tabs while keeping live table state intact
+  const dateFilteredOrders = useMemo(() => {
+    if (dateRange === 'all') return normalizedOrders;
+    return normalizedOrders.filter((o) => isOrderInDateRange(o.createdAt, dateRange));
+  }, [normalizedOrders, dateRange]);
+
+  const totalLiveActiveCount = useMemo(() => {
     return normalizedOrders.filter(
       (o) =>
         o.status !== 'ส่งแล้ว' &&
@@ -326,29 +403,81 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         o.status !== 'ยกเลิก' &&
         !o.isArchived &&
         !o.isCancelled
-    );
+    ).length;
   }, [normalizedOrders]);
+
+  // 1. Active Orders: NOT 'ส่งแล้ว', NOT 'เช็คบิล', NOT 'ยกเลิก' AND NOT isArchived
+  const activeOrders = useMemo(() => {
+    return dateFilteredOrders.filter(
+      (o) =>
+        o.status !== 'ส่งแล้ว' &&
+        o.status !== 'เช็คบิล' &&
+        o.status !== 'ยกเลิก' &&
+        !o.isArchived &&
+        !o.isCancelled
+    );
+  }, [dateFilteredOrders]);
 
   // 2. Archived / Delivered Orders awaiting checkout: status is 'ส่งแล้ว'
   const archivedOrders = useMemo(() => {
-    return normalizedOrders.filter(
+    return dateFilteredOrders.filter(
       (o) => o.status === 'ส่งแล้ว' && !o.isCancelled
     );
-  }, [normalizedOrders]);
+  }, [dateFilteredOrders]);
 
   // 2.5 Checked-out Orders: status is 'เช็คบิล'
   const checkedOutOrders = useMemo(() => {
-    return normalizedOrders.filter(
+    return dateFilteredOrders.filter(
       (o) => o.status === 'เช็คบิล' && !o.isCancelled
     );
-  }, [normalizedOrders]);
+  }, [dateFilteredOrders]);
 
   // 3. Cancelled Orders: status is 'ยกเลิก' or isCancelled
   const cancelledOrders = useMemo(() => {
-    return normalizedOrders.filter(
+    return dateFilteredOrders.filter(
       (o) => o.status === 'ยกเลิก' || o.isCancelled
     );
-  }, [normalizedOrders]);
+  }, [dateFilteredOrders]);
+
+  // Per-range counts specifically for the currently active viewTab
+  const currentTabDateCounts = useMemo(() => {
+    const matchesCurrentTab = (o: Order) => {
+      if (viewTab === 'active') {
+        return (
+          o.status !== 'ส่งแล้ว' &&
+          o.status !== 'เช็คบิล' &&
+          o.status !== 'ยกเลิก' &&
+          !o.isArchived &&
+          !o.isCancelled
+        );
+      }
+      if (viewTab === 'archived') return o.status === 'ส่งแล้ว' && !o.isCancelled;
+      if (viewTab === 'checkedout') return o.status === 'เช็คบิล' && !o.isCancelled;
+      return o.status === 'ยกเลิก' || Boolean(o.isCancelled);
+    };
+
+    const tabOrders = normalizedOrders.filter(matchesCurrentTab);
+    return {
+      all: tabOrders.length,
+      today: tabOrders.filter((o) => isOrderInDateRange(o.createdAt, 'today')).length,
+      yesterday: tabOrders.filter((o) => isOrderInDateRange(o.createdAt, 'yesterday')).length,
+      '7days': tabOrders.filter((o) => isOrderInDateRange(o.createdAt, '7days')).length,
+    };
+  }, [normalizedOrders, viewTab]);
+
+  // Financial totals for selected historical tabs
+  const archivedTotalAmount = useMemo(
+    () => archivedOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0),
+    [archivedOrders]
+  );
+  const checkedOutTotalAmount = useMemo(
+    () => checkedOutOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0),
+    [checkedOutOrders]
+  );
+  const cancelledTotalAmount = useMemo(
+    () => cancelledOrders.reduce((sum, o) => sum + (Number(o.totalAmount) || 0), 0),
+    [cancelledOrders]
+  );
 
   // Apply active status filter
   const displayedActiveOrders = useMemo(() => {
@@ -508,7 +637,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                 <span>รายการออเดอร์</span>
               </h2>
               <span className="px-2.5 py-0.5 bg-red-100 text-red-700 text-xs font-black rounded-full shrink-0">
-                Active: {activeOrders.length}
+                Active: {totalLiveActiveCount}
               </span>
             </div>
             <p className="text-[11px] sm:text-xs text-stone-500 mt-0.5 leading-relaxed">
@@ -597,6 +726,52 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
             <span>ยกเลิกแล้ว ({cancelledOrders.length})</span>
           </button>
         </div>
+
+        {/* Date-Range Filter Bar (ทั้งหมด, วันนี้, เมื่อวาน, 7 วันล่าสุด) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 w-full min-w-0 pt-2 border-t border-stone-100">
+          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+            <span className="inline-flex items-center gap-1 text-[11px] font-black text-stone-600 mr-0.5 whitespace-nowrap">
+              <Calendar className="w-3.5 h-3.5 text-red-600 shrink-0" />
+              <span>ช่วงเวลา:</span>
+            </span>
+            {DATE_RANGE_OPTIONS.map((opt) => {
+              const isSelected = dateRange === opt.id;
+              const rangeCount = currentTabDateCounts[opt.id];
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setDateRange(opt.id)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                    isSelected
+                      ? 'bg-stone-900 text-white shadow-xs'
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+                  }`}
+                  title={opt.shortDesc}
+                >
+                  <span>{opt.label}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-black tabular-nums ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-white text-stone-600'
+                    }`}
+                  >
+                    {rangeCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {dateRange !== 'all' && (
+            <button
+              type="button"
+              onClick={() => setDateRange('all')}
+              className="text-[11px] font-bold text-red-600 hover:text-red-700 underline whitespace-nowrap cursor-pointer"
+            >
+              แสดงทั้งหมด
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 2. เสียงเตือนเวลาออเดอร์เข้า & ปุ่มทดสอบเสียง */}
@@ -638,6 +813,46 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
           <Bell className="w-3.5 h-3.5 text-red-600" />
           <span>🔊 ทดสอบเสียง</span>
         </button>
+      </div>
+
+      {/* 2.2 KITCHEN SERVICE-SPEED SLA SUMMARY BAR (ความเร็วครัววันนี้) */}
+      <div className="bg-white rounded-2xl p-3 sm:p-3.5 border border-stone-200 shadow-xs space-y-2 w-full max-w-full min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs sm:text-sm font-black text-stone-900">
+            <Timer className="w-4 h-4 text-red-600 shrink-0" />
+            <span>ความเร็วครัววันนี้ (Service Speed)</span>
+          </div>
+          <span className="text-[11px] font-bold text-stone-500 bg-stone-100 px-2 py-0.5 rounded-full">
+            เกณฑ์มาตรฐานร้าน ~{defaultPrepTimeMinutes} น.
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="px-2.5 py-1 rounded-xl bg-stone-100 text-stone-800 font-bold">
+            กำลังทำ {speedStats.activeCount} ออเดอร์
+          </span>
+          <span className="px-2.5 py-1 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
+            🟢 ทันเวลา {speedStats.onTrackCount}
+          </span>
+          <span className="px-2.5 py-1 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 font-bold">
+            🟡 ใกล้ครบ {speedStats.warningCount}
+          </span>
+          <span
+            className={`px-2.5 py-1 rounded-xl border font-bold ${
+              speedStats.overdueCount > 0
+                ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                : 'bg-stone-50 text-stone-600 border-stone-200'
+            }`}
+          >
+            🔴 ล่าช้า {speedStats.overdueCount}
+          </span>
+          <span className="px-2.5 py-1 rounded-xl bg-sky-50 text-sky-900 border border-sky-200 font-bold">
+            ✅ เสร็จวันนี้ {speedStats.completedTodayCount}
+          </span>
+          <span className="px-2.5 py-1 rounded-xl bg-stone-50 text-stone-800 border border-stone-200 font-bold">
+            ⏱️ เฉลี่ยจริง ~{speedStats.avgActualPrepMinutes} น. • ทันเป้า {speedStats.onTimeRatePct}%
+          </span>
+        </div>
       </div>
 
       {/* 2.5 REAL-TIME TABLE STATUS BOARD IN ADMIN (Requirement 4) */}
@@ -759,12 +974,25 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 4. ORDERS HORIZONTAL SCROLLING TABLE (1 ออเดอร์ต่อ 1 แถว) */}
       {viewTab === 'active' && (
         displayedActiveOrders.length === 0 ? (
-          <div className="p-10 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2 w-full">
+          <div className="p-10 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2.5 w-full">
             <Clock className="w-10 h-10 mx-auto text-stone-300" />
-            <div className="text-sm font-bold text-stone-700">ไม่มีออเดอร์ในสถานะนี้</div>
+            <div className="text-sm font-bold text-stone-700">
+              {dateRange === 'all' ? 'ไม่มีออเดอร์ในสถานะนี้' : 'ไม่พบออเดอร์ในช่วงวันที่ที่เลือก'}
+            </div>
             <p className="text-xs text-stone-400">
-              เมื่อลูกค้ากดสั่งอาหารผ่านหน้าเว็บ ออเดอร์ใหม่จะปรากฏขึ้นที่นี่ทันที
+              {dateRange === 'all'
+                ? 'เมื่อลูกค้ากดสั่งอาหารผ่านหน้าเว็บ ออเดอร์ใหม่จะปรากฏขึ้นที่นี่ทันที'
+                : 'ลองเปลี่ยนช่วงเวลาเป็น "ทั้งหมด" หรือเลือกแท็บ ส่งแล้ว / เช็คบิลแล้ว เพื่อดูประวัติ'}
             </p>
+            {dateRange !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setDateRange('all')}
+                className="px-3.5 py-1.5 bg-stone-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                แสดงทุกช่วงเวลา
+              </button>
+            )}
           </div>
         ) : (
           <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden w-full max-w-full min-w-0">
@@ -793,9 +1021,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                     const statusStyle =
                       STATUS_BADGE_STYLES[order.status] || STATUS_BADGE_STYLES['รับออเดอร์'];
                     const nextStatus = NEXT_ORDER_STATUS_MAP[order.status];
-                    const itemsSummary = order.items
-                      .map((it) => `${it.name} ×${it.quantity}`)
-                      .join(', ');
+                    const timing = getOrderTimingMetrics(order, nowMs, menus, defaultPrepTimeMinutes);
                     const isOutOfZone =
                       Boolean(order.isOutOfDeliveryZone) ||
                       (typeof order.distanceKm === 'number' && order.distanceKm > 12);
@@ -863,13 +1089,36 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         {/* Items Summary (รายการออเดอร์) */}
                         <td className="py-3.5 px-3 max-w-[240px]">
                           <div className="space-y-1">
-                            {order.items.map((it, i) => (
-                              <div key={i} className="flex items-center gap-1 text-xs text-stone-800 font-semibold leading-tight">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>
-                                <span className="truncate max-w-[160px]">{it.name}</span>
-                                <span className="text-red-600 font-black text-[12px] shrink-0">×{it.quantity}</span>
-                              </div>
-                            ))}
+                            {order.items.map((it, i) => {
+                              const cancelled = isOrderItemCancelled(it);
+                              return (
+                                <div
+                                  key={i}
+                                  className={`flex items-center gap-1 text-xs font-semibold leading-tight ${
+                                    cancelled ? 'text-stone-400 line-through' : 'text-stone-800'
+                                  }`}
+                                >
+                                  <span
+                                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                      cancelled ? 'bg-rose-400' : 'bg-red-500'
+                                    }`}
+                                  ></span>
+                                  <span className="truncate max-w-[140px]">{it.name}</span>
+                                  <span
+                                    className={`font-black text-[12px] shrink-0 ${
+                                      cancelled ? 'text-rose-400' : 'text-red-600'
+                                    }`}
+                                  >
+                                    ×{it.quantity}
+                                  </span>
+                                  {cancelled && (
+                                    <span className="no-underline text-[10px] font-black text-rose-700 bg-rose-50 px-1 rounded shrink-0">
+                                      (ยกเลิก)
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
 
@@ -887,7 +1136,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                           </strong>
                         </td>
 
-                        {/* Status Circular Stepper & Warnings */}
+                        {/* Status Circular Stepper & SLA Timer & Warnings */}
                         <td className="py-3.5 px-3 text-center">
                           <div className="flex flex-col items-center gap-1.5">
                             <CircularStatusStepper
@@ -905,6 +1154,49 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                                 order={order}
                                 onClick={() => setStatusModalOrderId(order.id)}
                               />
+                            </div>
+
+                            {/* SLA Timer Badge & Quick -2/+2 Target Controls */}
+                            <div className="flex items-center gap-1 flex-wrap justify-center">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border whitespace-nowrap ${
+                                  timing.speedState === 'overdue'
+                                    ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                                    : timing.speedState === 'warning'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                }`}
+                              >
+                                <Timer className="w-2.5 h-2.5" />
+                                <span>
+                                  {timing.speedState === 'overdue'
+                                    ? `🔴 +${timing.overdueMinutes} น.`
+                                    : timing.speedState === 'warning'
+                                    ? '🟡 ใกล้ครบ'
+                                    : '🟢 ทันเวลา'}{' '}
+                                  ({timing.elapsedMinutes}/{timing.targetMinutes} น.)
+                                </span>
+                              </span>
+                              <div className="inline-flex items-center gap-0.5 bg-stone-100 border border-stone-200 rounded-md px-0.5">
+                                <button
+                                  type="button"
+                                  disabled={adjustingPrepId === order.id || timing.targetMinutes <= 2}
+                                  onClick={() => handleAdjustPrepTarget(order, timing.targetMinutes, -2)}
+                                  className="px-1 py-0.5 text-[10px] font-black text-stone-700 hover:bg-white rounded cursor-pointer disabled:opacity-40"
+                                  title="ลดเป้าหมายเวลาลง 2 นาที"
+                                >
+                                  -2
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={adjustingPrepId === order.id || timing.targetMinutes >= 180}
+                                  onClick={() => handleAdjustPrepTarget(order, timing.targetMinutes, 2)}
+                                  className="px-1 py-0.5 text-[10px] font-black text-stone-700 hover:bg-white rounded cursor-pointer disabled:opacity-40"
+                                  title="เพิ่มเป้าหมายเวลาอีก 2 นาที"
+                                >
+                                  +2
+                                </button>
+                              </div>
                             </div>
 
                             {/* เกิน 12 กม. Warning badge */}
@@ -1068,19 +1360,36 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 5. ARCHIVED / DELIVERED ORDERS VIEW (ตารางส่งแล้ว) */}
       {viewTab === 'archived' && (
         archivedOrders.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2">
+          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2.5">
             <Archive className="w-10 h-10 mx-auto text-stone-300" />
-            <div className="text-sm font-bold text-stone-700">ยังไม่มีออเดอร์ที่จัดส่งแล้ว</div>
+            <div className="text-sm font-bold text-stone-700">
+              {dateRange === 'all' ? 'ยังไม่มีออเดอร์ที่จัดส่งแล้ว' : 'ไม่มีออเดอร์ที่จัดส่งแล้วในช่วงวันที่ที่เลือก'}
+            </div>
             <p className="text-xs text-stone-400">
               เมื่อเปลี่ยนสถานะออเดอร์เป็น "ส่งแล้ว" ข้อมูลจะถูกจัดเก็บไว้ที่นี่และนำไปคำนวณยอดขาย
             </p>
+            {dateRange !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setDateRange('all')}
+                className="px-3.5 py-1.5 bg-stone-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                แสดงทุกช่วงเวลา
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs text-emerald-800 flex items-center gap-2 font-medium">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>
-                ออเดอร์ที่จัดส่งแล้วทั้งหมด <strong>{archivedOrders.length}</strong> รายการ (บันทึกประวัติลูกค้าและนับแต้มสะสมเรียบร้อย)
+            <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl text-xs text-emerald-800 flex flex-wrap items-center justify-between gap-2 font-medium">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  ออเดอร์ที่จัดส่งแล้ว <strong>{archivedOrders.length}</strong> รายการ
+                  {dateRange !== 'all' && ` (${DATE_RANGE_OPTIONS.find((d) => d.id === dateRange)?.label})`}
+                </span>
+              </div>
+              <span className="font-black text-emerald-900 tabular-nums">
+                ยอดรวม ฿{archivedTotalAmount.toLocaleString()}
               </span>
             </div>
 
@@ -1121,11 +1430,24 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         </td>
                         <td className="py-3 px-3 text-stone-700 max-w-[220px]">
                           <div className="space-y-0.5">
-                            {order.items.map((it, i) => (
-                              <div key={i} className="text-xs text-stone-800 truncate" title={`${it.name} ×${it.quantity}`}>
-                                • {it.name} <strong className="text-red-600">×{it.quantity}</strong>
-                              </div>
-                            ))}
+                            {order.items.map((it, i) => {
+                              const cancelled = isOrderItemCancelled(it);
+                              return (
+                                <div
+                                  key={i}
+                                  className={`text-xs truncate ${
+                                    cancelled ? 'line-through text-stone-400' : 'text-stone-800'
+                                  }`}
+                                  title={`${it.name} ×${it.quantity}${cancelled ? ' (ยกเลิก)' : ''}`}
+                                >
+                                  • {it.name}{' '}
+                                  <strong className={cancelled ? 'text-rose-400' : 'text-red-600'}>
+                                    ×{it.quantity}
+                                  </strong>
+                                  {cancelled && <span className="ml-1 text-[10px] text-rose-600">(ยกเลิก)</span>}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                         <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
@@ -1200,19 +1522,36 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 5.5 CHECKED-OUT ORDERS VIEW (ตารางเช็คบิลแล้ว) */}
       {viewTab === 'checkedout' && (
         checkedOutOrders.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2">
+          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2.5">
             <Wallet className="w-10 h-10 mx-auto text-stone-300" />
-            <div className="text-sm font-bold text-stone-700">ยังไม่มีออเดอร์ที่เช็คบิลแล้ว</div>
+            <div className="text-sm font-bold text-stone-700">
+              {dateRange === 'all' ? 'ยังไม่มีออเดอร์ที่เช็คบิลแล้ว' : 'ไม่มีออเดอร์ที่เช็คบิลแล้วในช่วงวันที่ที่เลือก'}
+            </div>
             <p className="text-xs text-stone-400">
               เมื่อกดปุ่ม "💰 เช็คบิล" ออเดอร์จะย้ายมาอยู่ที่นี่ พร้อมคืนสถานะโต๊ะเป็นโต๊ะว่างอัตโนมัติ
             </p>
+            {dateRange !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setDateRange('all')}
+                className="px-3.5 py-1.5 bg-stone-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                แสดงทุกช่วงเวลา
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="bg-teal-50 border border-teal-200 p-3 rounded-xl text-xs text-teal-900 flex items-center gap-2 font-medium">
-              <Wallet className="w-4 h-4 text-teal-700 shrink-0" />
-              <span>
-                ออเดอร์ที่เช็คบิลแล้วทั้งหมด <strong>{checkedOutOrders.length}</strong> รายการ (นับยอดขายรวมในระบบวิเคราะห์ยอดขายเรียบร้อย)
+            <div className="bg-teal-50 border border-teal-200 p-3 rounded-xl text-xs text-teal-900 flex flex-wrap items-center justify-between gap-2 font-medium">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-teal-700 shrink-0" />
+                <span>
+                  ออเดอร์ที่เช็คบิลแล้ว <strong>{checkedOutOrders.length}</strong> รายการ
+                  {dateRange !== 'all' && ` (${DATE_RANGE_OPTIONS.find((d) => d.id === dateRange)?.label})`}
+                </span>
+              </div>
+              <span className="font-black text-teal-950 tabular-nums">
+                ยอดรวม ฿{checkedOutTotalAmount.toLocaleString()}
               </span>
             </div>
 
@@ -1253,11 +1592,24 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         </td>
                         <td className="py-3 px-3 text-stone-700 max-w-[220px]">
                           <div className="space-y-0.5">
-                            {order.items.map((it, i) => (
-                              <div key={i} className="text-xs text-stone-800 truncate" title={`${it.name} ×${it.quantity}`}>
-                                • {it.name} <strong className="text-red-600">×{it.quantity}</strong>
-                              </div>
-                            ))}
+                            {order.items.map((it, i) => {
+                              const cancelled = isOrderItemCancelled(it);
+                              return (
+                                <div
+                                  key={i}
+                                  className={`text-xs truncate ${
+                                    cancelled ? 'line-through text-stone-400' : 'text-stone-800'
+                                  }`}
+                                  title={`${it.name} ×${it.quantity}${cancelled ? ' (ยกเลิก)' : ''}`}
+                                >
+                                  • {it.name}{' '}
+                                  <strong className={cancelled ? 'text-rose-400' : 'text-red-600'}>
+                                    ×{it.quantity}
+                                  </strong>
+                                  {cancelled && <span className="ml-1 text-[10px] text-rose-600">(ยกเลิก)</span>}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                         <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
@@ -1313,19 +1665,36 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       {/* 6. CANCELLED ORDERS VIEW (ตารางออเดอร์ที่ยกเลิก) */}
       {viewTab === 'cancelled' && (
         cancelledOrders.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2">
+          <div className="p-12 text-center bg-white rounded-2xl border border-stone-200 text-stone-400 space-y-2.5">
             <Ban className="w-10 h-10 mx-auto text-stone-300" />
-            <div className="text-sm font-bold text-stone-700">ไม่มีออเดอร์ที่ยกเลิก</div>
+            <div className="text-sm font-bold text-stone-700">
+              {dateRange === 'all' ? 'ไม่มีออเดอร์ที่ยกเลิก' : 'ไม่มีออเดอร์ที่ยกเลิกในช่วงวันที่ที่เลือก'}
+            </div>
             <p className="text-xs text-stone-400">
               เมื่อกด "ยกเลิกออเดอร์" รายการจะถูกย้ายมาเก็บไว้ที่นี่ และนำรายการอาหารไปใช้วิเคราะห์เมนูขายดี
             </p>
+            {dateRange !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setDateRange('all')}
+                className="px-3.5 py-1.5 bg-stone-900 hover:bg-black text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                แสดงทุกช่วงเวลา
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs text-rose-800 flex items-center gap-2 font-medium">
-              <Ban className="w-4 h-4 text-rose-600 shrink-0" />
-              <span>
-                ออเดอร์ที่ยกเลิกทั้งหมด <strong>{cancelledOrders.length}</strong> รายการ (บันทึกประวัติเมนูขายดีโดยไม่สะสมแต้มให้ลูกค้า)
+            <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs text-rose-800 flex flex-wrap items-center justify-between gap-2 font-medium">
+              <div className="flex items-center gap-2">
+                <Ban className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>
+                  ออเดอร์ที่ยกเลิก <strong>{cancelledOrders.length}</strong> รายการ
+                  {dateRange !== 'all' && ` (${DATE_RANGE_OPTIONS.find((d) => d.id === dateRange)?.label})`}
+                </span>
+              </div>
+              <span className="font-black text-rose-900 tabular-nums">
+                ยอดรวม ฿{cancelledTotalAmount.toLocaleString()}
               </span>
             </div>
 
@@ -1366,11 +1735,24 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         </td>
                         <td className="py-3 px-3 text-stone-700 max-w-[220px]">
                           <div className="space-y-0.5">
-                            {order.items.map((it, i) => (
-                              <div key={i} className="text-xs text-stone-800 truncate" title={`${it.name} ×${it.quantity}`}>
-                                • {it.name} <strong className="text-red-600">×{it.quantity}</strong>
-                              </div>
-                            ))}
+                            {order.items.map((it, i) => {
+                              const cancelled = isOrderItemCancelled(it);
+                              return (
+                                <div
+                                  key={i}
+                                  className={`text-xs truncate ${
+                                    cancelled ? 'line-through text-stone-400' : 'text-stone-800'
+                                  }`}
+                                  title={`${it.name} ×${it.quantity}${cancelled ? ' (ยกเลิก)' : ''}`}
+                                >
+                                  • {it.name}{' '}
+                                  <strong className={cancelled ? 'text-rose-400' : 'text-red-600'}>
+                                    ×{it.quantity}
+                                  </strong>
+                                  {cancelled && <span className="ml-1 text-[10px] text-rose-600">(ยกเลิก)</span>}
+                                </div>
+                              );
+                            })}
                           </div>
                         </td>
                         <td className={`py-3 px-3 text-center whitespace-nowrap ${isPickup ? 'bg-amber-100/60 border-x border-amber-300' : ''}`}>
@@ -1644,16 +2026,30 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-stone-200/60">
-                    {detailOrder.items.map((it, idx) => (
-                      <tr key={idx} className="hover:bg-white/60">
-                        <td className="py-2 px-3 font-bold text-stone-900">{it.name}</td>
-                        <td className="py-2 px-2 text-center font-black text-red-600">×{it.quantity}</td>
-                        <td className="py-2 px-2 text-right text-stone-600">{it.price.toLocaleString()} บ.</td>
-                        <td className="py-2 px-3 text-right font-bold text-stone-900">
-                          {(it.price * it.quantity).toLocaleString()} บ.
-                        </td>
-                      </tr>
-                    ))}
+                    {detailOrder.items.map((it, idx) => {
+                      const cancelled = isOrderItemCancelled(it);
+                      return (
+                        <tr key={idx} className={cancelled ? 'bg-rose-50/40 text-stone-400' : 'hover:bg-white/60'}>
+                          <td className={`py-2 px-3 font-bold ${cancelled ? 'line-through text-stone-400' : 'text-stone-900'}`}>
+                            {it.name}
+                            {cancelled && (
+                              <span className="ml-1.5 inline-block text-[10px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.2 rounded">
+                                ยกเลิก/ของหมด
+                              </span>
+                            )}
+                          </td>
+                          <td className={`py-2 px-2 text-center font-black ${cancelled ? 'text-rose-400' : 'text-red-600'}`}>
+                            ×{it.quantity}
+                          </td>
+                          <td className={`py-2 px-2 text-right ${cancelled ? 'line-through text-stone-400' : 'text-stone-600'}`}>
+                            {cancelled ? '0 บ.' : `${it.price.toLocaleString()} บ.`}
+                          </td>
+                          <td className={`py-2 px-3 text-right font-bold ${cancelled ? 'line-through text-stone-400' : 'text-stone-900'}`}>
+                            {cancelled ? '0 บ.' : `${(it.price * it.quantity).toLocaleString()} บ.`}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2026,6 +2422,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         }}
         menus={menus}
         tables={tables}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         initialTableNumber={createOrderPresetTable}
         initialDiningType={createOrderPresetTable ? 'มาทานที่ร้าน' : undefined}
         onNotify={onNotify}
@@ -2037,6 +2434,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         onClose={() => setOrderToAppend(null)}
         order={orderToAppend}
         menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onNotify={onNotify}
       />
 
@@ -2044,6 +2442,8 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       <OrderStatusModal
         isOpen={Boolean(liveStatusModalOrder)}
         order={liveStatusModalOrder}
+        menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onClose={() => setStatusModalOrderId(null)}
         onOpenCheckBill={(ord) => {
           setStatusModalOrderId(null);
@@ -2061,6 +2461,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         isOpen={Boolean(liveCheckBillOrder)}
         order={liveCheckBillOrder}
         menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onClose={() => {
           setCheckBillOrderId(null);
           if (detailOrder && liveCheckBillOrder?.id === detailOrder.id) {
@@ -2077,6 +2478,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         table={liveSelectedTable}
         tableOrders={liveSelectedTableOrders}
         menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onClose={() => setSelectedTableId(null)}
         onOpenCreateOrderForTable={(tblNum) => {
           setCreateOrderPresetTable(String(tblNum));

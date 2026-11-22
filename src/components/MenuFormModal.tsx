@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import {
   Check,
+  Clock,
   Edit3,
   Eye,
   EyeOff,
@@ -15,6 +16,7 @@ import {
 import { compressImageFile, uploadImageToServer } from '../utils/imageCompressor';
 import { CategoryItem, MenuItem } from '../types';
 import { ImagePickerModal } from './ImagePickerModal';
+import { DEFAULT_SHOP_PREP_MINUTES, getDefaultPrepTimeByCategory } from '../utils/orderPrepUtils';
 
 interface MenuFormModalProps {
   isOpen: boolean;
@@ -22,6 +24,7 @@ interface MenuFormModalProps {
   onSubmit: (data: Omit<MenuItem, 'id'>) => Promise<void>;
   initialData?: MenuItem | null;
   categories: CategoryItem[];
+  defaultPrepTimeMinutes?: number;
 }
 
 export const MenuFormModal: React.FC<MenuFormModalProps> = ({
@@ -30,12 +33,16 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
   onSubmit,
   initialData,
   categories,
+  defaultPrepTimeMinutes = DEFAULT_SHOP_PREP_MINUTES,
 }) => {
   const isEditing = Boolean(initialData);
 
   const [name, setName] = useState(initialData?.name || '');
   const [price, setPrice] = useState(initialData ? String(initialData.price) : '');
   const [cost, setCost] = useState(initialData && initialData.cost !== undefined ? String(initialData.cost) : '0');
+  const [prepTimeMinutes, setPrepTimeMinutes] = useState(
+    initialData && initialData.prepTimeMinutes ? String(initialData.prepTimeMinutes) : ''
+  );
   const [category, setCategory] = useState(initialData?.category || (categories[0]?.name || 'สเต็ก'));
   const [imageUrl, setImageUrl] = useState(initialData?.imageUrl || '');
   const [description, setDescription] = useState(initialData?.description || '');
@@ -59,6 +66,9 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
       setName(initialData?.name || '');
       setPrice(initialData ? String(initialData.price) : '');
       setCost(initialData && initialData.cost !== undefined ? String(initialData.cost) : '0');
+      setPrepTimeMinutes(
+        initialData && initialData.prepTimeMinutes ? String(initialData.prepTimeMinutes) : ''
+      );
       setCategory(initialData?.category || (categories[0]?.name || 'สเต็ก'));
       setImageUrl(initialData?.imageUrl || '');
       setDescription(initialData?.description || '');
@@ -141,10 +151,12 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
 
       setSubmitStatus('กำลังบันทึกข้อมูลลง Firestore...');
       const numCost = Math.max(0, Number(cost) || 0);
+      const parsedPrep = prepTimeMinutes.trim() ? Math.round(Number(prepTimeMinutes)) : 0;
       await onSubmit({
         name: name.trim(),
         price: numPrice,
         cost: numCost,
+        prepTimeMinutes: parsedPrep > 0 ? Math.max(1, Math.min(180, parsedPrep)) : 0,
         category: category.trim(),
         imageUrl: finalImageUrl,
         description: description.trim(),
@@ -372,6 +384,42 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
                   )}
                 </select>
               </div>
+            </div>
+
+            {/* Prep Time Estimation */}
+            <div className="p-3 bg-sky-50/70 border border-sky-200 rounded-2xl space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <label className="font-bold text-sky-950 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-sky-600" />
+                  <span>เวลาทำอาหารโดยประมาณ (นาที)</span>
+                </label>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white text-sky-800 border border-sky-200">
+                  ค่าอัตโนมัติ: {getDefaultPrepTimeByCategory(category, defaultPrepTimeMinutes)} นาที
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  max="180"
+                  value={prepTimeMinutes}
+                  onChange={(e) => setPrepTimeMinutes(e.target.value)}
+                  placeholder={`เว้นว่างเพื่อใช้ค่าอัตโนมัติ (${getDefaultPrepTimeByCategory(category, defaultPrepTimeMinutes)} นาที)`}
+                  className="flex-1 px-3 py-2 bg-white border border-sky-300 rounded-xl font-bold text-sky-950 focus:outline-none focus:border-sky-500 tabular-nums"
+                />
+                {prepTimeMinutes && (
+                  <button
+                    type="button"
+                    onClick={() => setPrepTimeMinutes('')}
+                    className="px-2.5 py-2 bg-white hover:bg-stone-100 border border-stone-200 text-stone-600 rounded-xl font-bold text-[11px] cursor-pointer shrink-0"
+                  >
+                    ใช้อัตโนมัติ
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-sky-800">
+                ใช้คำนวณเวลาเสร็จคาดการณ์และติดตามความเร็วในครัว (หากเว้นว่างจะใช้ค่ามาตรฐานตามหมวดหมู่)
+              </p>
             </div>
 
             {/* Description (Saved in DB for admin reference) */}

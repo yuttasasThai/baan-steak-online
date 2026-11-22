@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Check,
   ChevronDown,
+  Clock,
   Loader2,
   MapPin,
   Minus,
@@ -15,12 +16,14 @@ import {
 } from 'lucide-react';
 import { DiningType, MenuItem, RestaurantTable } from '../types';
 import { createOrder, normalizeMenuImageUrl } from '../services/menuService';
+import { estimateOrderPrepMinutes, resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface AdminCreateOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   menus: MenuItem[];
   tables?: RestaurantTable[];
+  defaultPrepTimeMinutes?: number;
   initialTableNumber?: string;
   initialDiningType?: DiningType;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -31,6 +34,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
   onClose,
   menus,
   tables = [],
+  defaultPrepTimeMinutes,
   initialTableNumber,
   initialDiningType,
   onNotify,
@@ -90,6 +94,17 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
 
   const subtotal = selectedList.reduce((sum, it) => sum + it.total, 0);
   const totalAmount = subtotal + (diningType === 'ส่งอาหารที่บ้าน' ? deliveryFee : 0);
+  const estimatedPrepMinutes = estimateOrderPrepMinutes(
+    selectedList.map((it) => ({
+      menuId: it.menuItem.id,
+      name: it.menuItem.name,
+      price: it.menuItem.price,
+      quantity: it.quantity,
+      prepTimeMinutes: resolveMenuPrepTimeMinutes(it.menuItem, defaultPrepTimeMinutes),
+    })),
+    menus,
+    defaultPrepTimeMinutes
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,6 +146,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
         name: it.menuItem.name,
         price: it.menuItem.price,
         quantity: it.quantity,
+        prepTimeMinutes: resolveMenuPrepTimeMinutes(it.menuItem, defaultPrepTimeMinutes),
       }));
 
       const orderNumber = await createOrder({
@@ -144,6 +160,7 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
         deliveryArea: isDineIn ? `ทานที่ร้าน โต๊ะ ${tableNumber}` : isTakeaway ? 'สั่งกลับบ้าน' : diningType,
         deliveryFee: diningType === 'ส่งอาหารที่บ้าน' ? deliveryFee : 0,
         totalAmount,
+        estimatedPrepMinutes,
       });
 
       onNotify(`✅ คีย์ออเดอร์ใหม่ #${orderNumber} เรียบร้อยแล้ว`, 'success');
@@ -472,6 +489,13 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
                   <span className="font-bold text-stone-900">฿{deliveryFee}</span>
                 </div>
               )}
+              <div className="flex justify-between text-xs text-stone-700 pt-1 border-t border-amber-200">
+                <span className="inline-flex items-center gap-1 font-semibold">
+                  <Clock className="w-3.5 h-3.5 text-amber-700" />
+                  <span>เวลาเตรียมอาหารโดยประมาณ:</span>
+                </span>
+                <span className="font-black text-amber-900">~{estimatedPrepMinutes} นาที</span>
+              </div>
               <div className="flex justify-between text-sm font-black text-red-700 pt-1 border-t border-amber-200">
                 <span>ยอดสุทธิทั้งหมด:</span>
                 <span>฿{totalAmount.toLocaleString()}</span>

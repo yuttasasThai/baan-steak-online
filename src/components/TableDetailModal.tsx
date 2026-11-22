@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Ban,
   Check,
   ChevronDown,
   ChevronUp,
@@ -8,6 +9,7 @@ import {
   Plus,
   Printer,
   Search,
+  Timer,
   Utensils,
   Wallet,
   X,
@@ -15,7 +17,9 @@ import {
 import { MenuItem, Order, OrderItemStatus, OrderStatus, RestaurantTable } from '../types';
 import {
   ITEM_STEP_INDEX,
+  adjustOrderPrepTime,
   appendItemsToOrder,
+  cancelOrderItem,
   getEffectiveItemStatus,
   getOrderCompletionSummary,
   markAllOrderItemsStatus,
@@ -25,6 +29,13 @@ import {
   updateOrderStatus,
   updateTableStatus,
 } from '../services/menuService';
+import {
+  DEFAULT_SHOP_PREP_MINUTES,
+  STOCKOUT_CANCEL_REASONS,
+  getOrderTimingMetrics,
+  isOrderItemCancelled,
+  resolveMenuPrepTimeMinutes,
+} from '../utils/orderPrepUtils';
 import { audioAlert } from '../utils/audioAlert';
 import {
   CircularStatusStepper,
@@ -37,6 +48,7 @@ interface TableDetailModalProps {
   table: RestaurantTable | null;
   tableOrders: Order[];
   menus: MenuItem[];
+  defaultPrepTimeMinutes?: number;
   onClose: () => void;
   onOpenCreateOrderForTable: (tableNumber: number) => void;
   onOpenCheckBill: (order: Order) => void;
@@ -49,6 +61,7 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
   table,
   tableOrders,
   menus,
+  defaultPrepTimeMinutes = DEFAULT_SHOP_PREP_MINUTES,
   onClose,
   onOpenCreateOrderForTable,
   onOpenCheckBill,
@@ -63,6 +76,22 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('ทั้งหมด');
   const [pendingAppends, setPendingAppends] = useState<Record<string, number>>({});
   const [isSavingAppend, setIsSavingAppend] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [adjustingPrepOrderId, setAdjustingPrepOrderId] = useState<string | null>(null);
+  const [cancellingKey, setCancellingKey] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState<string>(STOCKOUT_CANCEL_REASONS[0]);
+  const [markMenuUnavailable, setMarkMenuUnavailable] = useState(true);
+  const [isCancellingItem, setIsCancellingItem] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setCancellingKey(null);
+      return;
+    }
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, table?.id]);
 
   const categories = useMemo(
     () => Array.from(new Set(menus.map((m) => m.category))).filter(Boolean),
@@ -220,14 +249,80 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
     });
   };
 
+  const handleAdjustPrepTime = async (ord: Order, nextMinutes: number) => {
+    const safeMin = Math.max(2, Math.min(180, nextMinutes));
+    try {
+      setAdjustingPrepOrderId(ord.id);
+      await adjustOrderPrepTime(ord.id, safeMin);
+      onNotify(`⏱️ ปรับเป้าเวลา #${ord.orderNumber} เป็น ~${safeMin} นาที`, 'info');
+    } catch {
+      onNotify('ไม่สามารถปรับเวลาเตรียมอาหารได้', 'error');
+    } finally {
+      setAdjustingPrepOrderId(null);
+    }
+  };
+
+  const handleConfirmCancelItem = async (order: Order, itemIndex: number) => {
+    const targetItem = order.items[itemIndex];
+    if (!targetItem || isOrderItemCancelled(targetItem) || isCancellingItem) return;
+
+    try {
+      setIsCancellingItem(true);
+      const res = await cancelOrderItem({
+        order,
+        itemIndex,
+        reason: cancelReason,
+        markMenuUnavailable,
+      });
+
+      audioAlert.playItemCancelledAlert({
+        order: {
+          customerName: order.customerName,
+          tableNumber: order.tableNumber ?? table.number,
+          deliveryType: order.deliveryType,
+          orderNumber: order.orderNumber,
+          status: res.nextOrderStatus,
+        },
+        itemName: res.cancelledItemName,
+        reason: cancelReason,
+        isWholeOrderCancelled: res.isWholeOrderCancelled,
+      });
+
+      onNotify(
+        res.isWholeOrderCancelled
+          ? `❌ ยกเลิก "${res.cancelledItemName}" — ไม่มีรายการเหลือ ออเดอร์ #${order.orderNumber} ถูกยกเลิกและคืนโต๊ะแล้ว`
+          : `ตัดยอด "${res.cancelledItemName}" ออกแล้ว (${cancelReason}) • ยอดใหม่ ฿${res.newTotal.toLocaleString()}`,
+        res.isWholeOrderCancelled ? 'info' : 'success'
+      );
+      setCancellingKey(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'ไม่สามารถยกเลิกรายการได้';
+      onNotify(msg, 'error');
+    } finally {
+      setIsCancellingItem(false);
+    }
+  };
+
   const handleSaveAppendedItems = async (order: Order) => {
     const entries = Object.entries(pendingAppends)
       .map(([menuId, quantity]) => {
         const menu = menus.find((m) => m.id === menuId);
         if (!menu) return null;
-        return { menuId: menu.id, name: menu.name, price: menu.price, quantity };
+        return {
+          menuId: menu.id,
+          name: menu.name,
+          price: menu.price,
+          quantity,
+          prepTimeMinutes: resolveMenuPrepTimeMinutes(menu, defaultPrepTimeMinutes),
+        };
       })
-      .filter(Boolean) as Array<{ menuId: string; name: string; price: number; quantity: number }>;
+      .filter(Boolean) as Array<{
+      menuId: string;
+      name: string;
+      price: number;
+      quantity: number;
+      prepTimeMinutes: number;
+    }>;
 
     if (entries.length === 0) {
       onNotify('กรุณาเลือกเมนูที่ต้องการเพิ่มลงโต๊ะนี้', 'error');
@@ -360,6 +455,7 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
               const normStatus = normalizeOrderStatus(ord.status);
               const summary = getOrderCompletionSummary(ord);
               const isAddingThis = addingForOrderId === ord.id;
+              const timing = getOrderTimingMetrics(ord, nowMs, menus, defaultPrepTimeMinutes);
 
               return (
                 <div
@@ -369,7 +465,7 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                   {/* Order Top Summary */}
                   <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-stone-100 flex-wrap">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black text-red-600 text-sm">
                           #{ord.orderNumber}
                         </span>
@@ -377,6 +473,26 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                           <Clock className="w-3 h-3" />
                           <span>{formatOrderTime(ord.createdAt)}</span>
                         </span>
+                        {timing.targetMinutes > 0 && (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black border inline-flex items-center gap-1 ${
+                              timing.speedState === 'overdue'
+                                ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                : timing.speedState === 'warning'
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}
+                          >
+                            <Timer className="w-3 h-3" />
+                            <span>
+                              {timing.speedState === 'overdue'
+                                ? `ล่าช้า +${timing.overdueMinutes} น.`
+                                : timing.speedState === 'warning'
+                                ? `เหลือ ${Math.max(0, timing.remainingMinutes)} น.`
+                                : `เป้า ~${timing.targetMinutes} น.`}
+                            </span>
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs font-bold text-stone-700 mt-0.5">
                         {ord.customerName || table.name}
@@ -387,17 +503,39 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                       <div className="text-lg font-black text-red-600 tabular-nums">
                         ฿{ord.totalAmount.toLocaleString()}
                       </div>
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black border ${
-                          summary.isAllCompleted
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                            : 'bg-amber-100 text-amber-900 border-amber-300'
-                        }`}
-                      >
-                        {summary.isAllCompleted
-                          ? `✅ ครบแล้ว (${summary.completedLines}/${summary.totalLines})`
-                          : `⏳ ได้ ${summary.completedLines}/${summary.totalLines} รายการ`}
-                      </span>
+                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                        {!timing.isFinished && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={adjustingPrepOrderId === ord.id || timing.targetMinutes <= 2}
+                              onClick={() => handleAdjustPrepTime(ord, timing.targetMinutes - 2)}
+                              className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-[10px] font-black cursor-pointer disabled:opacity-40"
+                            >
+                              -2น.
+                            </button>
+                            <button
+                              type="button"
+                              disabled={adjustingPrepOrderId === ord.id}
+                              onClick={() => handleAdjustPrepTime(ord, timing.targetMinutes + 2)}
+                              className="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-[10px] font-black cursor-pointer disabled:opacity-40"
+                            >
+                              +2น.
+                            </button>
+                          </>
+                        )}
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                            summary.isAllCompleted
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                              : 'bg-amber-100 text-amber-900 border-amber-300'
+                          }`}
+                        >
+                          {summary.isAllCompleted
+                            ? `✅ ครบแล้ว (${summary.completedLines}/${summary.totalLines})`
+                            : `⏳ ได้ ${summary.completedLines}/${summary.totalLines} รายการ`}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -593,103 +731,214 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
                     {/* Dish rows */}
                     <div className="divide-y divide-stone-100 border border-stone-200 rounded-2xl overflow-hidden">
                       {ord.items.map((it, idx) => {
+                        const isItemCancelled = isOrderItemCancelled(it);
                         const effStatus = getEffectiveItemStatus(it, normStatus);
-                        const isBusy = updatingItemKey === `${ord.id}_${idx}`;
+                        const itemKey = `${ord.id}_${idx}`;
+                        const isBusy = updatingItemKey === itemKey;
+                        const isCancellingThis = cancellingKey === itemKey;
+                        const isOrderTerminal =
+                          normStatus === 'เช็คบิล' || normStatus === 'ยกเลิก' || Boolean(ord.isCancelled);
+
                         return (
                           <div
                             key={`${it.menuId}_${idx}`}
-                            className={`p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
-                              effStatus === 'เสิร์ฟแล้ว' ? 'bg-emerald-50/40' : 'bg-white'
+                            className={`p-3 space-y-2 ${
+                              isItemCancelled
+                                ? 'bg-rose-50/70 opacity-80'
+                                : effStatus === 'เสิร์ฟแล้ว'
+                                ? 'bg-emerald-50/40'
+                                : 'bg-white'
                             }`}
                           >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span
-                                className={`w-7 h-7 rounded-full text-xs font-black flex items-center justify-center shrink-0 tabular-nums ${
-                                  effStatus === 'เสิร์ฟแล้ว'
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-red-100 text-red-700'
-                                }`}
-                              >
-                                ×{it.quantity}
-                              </span>
-                              <div className="min-w-0">
-                                <div className="text-xs sm:text-sm font-bold text-stone-900 truncate">
-                                  {it.name}
-                                </div>
-                                <div className="text-[11px] text-stone-500 tabular-nums">
-                                  ฿{(it.price * it.quantity).toLocaleString()} •{' '}
-                                  <span className="font-bold text-stone-700">
-                                    {effStatus === 'เสิร์ฟแล้ว' ? '✓ ได้รับครบแล้ว' : effStatus}
-                                  </span>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`w-7 h-7 rounded-full text-xs font-black flex items-center justify-center shrink-0 tabular-nums ${
+                                    isItemCancelled
+                                      ? 'bg-rose-200 text-rose-800'
+                                      : effStatus === 'เสิร์ฟแล้ว'
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-red-100 text-red-700'
+                                  }`}
+                                >
+                                  ×{it.quantity}
+                                </span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span
+                                      className={`text-xs sm:text-sm font-bold truncate ${
+                                        isItemCancelled ? 'line-through text-stone-500' : 'text-stone-900'
+                                      }`}
+                                    >
+                                      {it.name}
+                                    </span>
+                                    {isItemCancelled ? (
+                                      <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-black">
+                                        ของหมด / ยกเลิกแล้ว
+                                      </span>
+                                    ) : (
+                                      !isOrderTerminal && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (isCancellingThis) {
+                                              setCancellingKey(null);
+                                            } else {
+                                              setCancellingKey(itemKey);
+                                              setCancelReason(STOCKOUT_CANCEL_REASONS[0]);
+                                              setMarkMenuUnavailable(true);
+                                            }
+                                          }}
+                                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10px] font-bold cursor-pointer"
+                                        >
+                                          <Ban className="w-2.5 h-2.5" />
+                                          <span>ของหมด/ยกเลิก</span>
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-stone-500 tabular-nums">
+                                    {isItemCancelled ? (
+                                      <span className="text-rose-700 font-bold">
+                                        ฿0 (ตัดยอดแล้ว{it.cancelReason ? ` • ${it.cancelReason}` : ''})
+                                      </span>
+                                    ) : (
+                                      <>
+                                        ฿{(it.price * it.quantity).toLocaleString()} •{' '}
+                                        <span className="font-bold text-stone-700">
+                                          {effStatus === 'เสิร์ฟแล้ว' ? '✓ ได้รับครบแล้ว' : effStatus}
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
+
+                              {!isItemCancelled && (
+                                <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
+                                  {isBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600 mr-1" />}
+                                  {ITEM_STATUS_CIRCLES.map((opt) => {
+                                    const effIdx = ITEM_STEP_INDEX[effStatus] ?? 0;
+                                    const optIdx = ITEM_STEP_INDEX[opt.status] ?? 0;
+                                    const active = optIdx === effIdx;
+                                    const isPast = optIdx < effIdx;
+                                    const isForward = optIdx > effIdx;
+                                    const canClick =
+                                      !isOrderTerminal &&
+                                      !isBusy &&
+                                      updatingOrderId !== ord.id &&
+                                      isForward;
+                                    const Icon = isPast ? Check : opt.Icon;
+                                    return (
+                                      <button
+                                        key={opt.status}
+                                        type="button"
+                                        disabled={!canClick}
+                                        onClick={() => canClick && handleUpdateItemStatus(ord, idx, opt.status)}
+                                        title={
+                                          canClick
+                                            ? `เลื่อนเป็น "${opt.label}"`
+                                            : active
+                                            ? `สถานะปัจจุบัน: ${opt.label}`
+                                            : `ผ่านขั้นตอน "${opt.label}" แล้ว (ห้ามย้อนกลับ)`
+                                        }
+                                        className={`flex flex-col items-center gap-0.5 min-w-[40px] py-0.5 rounded-lg transition ${
+                                          canClick
+                                            ? 'cursor-pointer hover:scale-105 active:scale-95'
+                                            : 'cursor-not-allowed pointer-events-none'
+                                        }`}
+                                      >
+                                        <span
+                                          className={`w-8 h-8 rounded-full border flex items-center justify-center transition ${
+                                            active
+                                              ? opt.activeClass
+                                              : isPast
+                                              ? 'bg-emerald-500 text-white border-emerald-500 opacity-80'
+                                              : canClick
+                                              ? opt.idleClass
+                                              : 'bg-stone-100 text-stone-300 border-stone-200 opacity-60'
+                                          }`}
+                                        >
+                                          <Icon className="w-3.5 h-3.5" />
+                                        </span>
+                                        <span
+                                          className={`text-[9px] font-bold ${
+                                            active
+                                              ? 'text-stone-900 font-black'
+                                              : isPast
+                                              ? 'text-emerald-700'
+                                              : canClick
+                                              ? 'text-stone-600'
+                                              : 'text-stone-300'
+                                          }`}
+                                        >
+                                          {opt.shortLabel}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
 
-                            <div className="flex flex-wrap items-center justify-end gap-1 shrink-0">
-                              {isBusy && <Loader2 className="w-3.5 h-3.5 animate-spin text-red-600 mr-1" />}
-                              {ITEM_STATUS_CIRCLES.map((opt) => {
-                                const isOrderTerminal =
-                                  normStatus === 'เช็คบิล' || normStatus === 'ยกเลิก' || Boolean(ord.isCancelled);
-                                const effIdx = ITEM_STEP_INDEX[effStatus] ?? 0;
-                                const optIdx = ITEM_STEP_INDEX[opt.status] ?? 0;
-                                const active = optIdx === effIdx;
-                                const isPast = optIdx < effIdx;
-                                const isForward = optIdx > effIdx;
-                                const canClick =
-                                  !isOrderTerminal &&
-                                  !isBusy &&
-                                  updatingOrderId !== ord.id &&
-                                  isForward;
-                                const Icon = isPast ? Check : opt.Icon;
-                                return (
+                            {isCancellingThis && !isItemCancelled && (
+                              <div className="p-2.5 bg-rose-50 border border-rose-300 rounded-xl space-y-2 text-xs text-rose-950 animate-fadeIn">
+                                <div className="font-black text-rose-900">
+                                  ยืนยันยกเลิกเมนู "{it.name}" (หัก ฿{(it.price * it.quantity).toLocaleString()})
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {STOCKOUT_CANCEL_REASONS.map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      onClick={() => setCancelReason(preset)}
+                                      className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                                        cancelReason === preset
+                                          ? 'bg-rose-600 text-white border-rose-700'
+                                          : 'bg-white text-rose-900 border-rose-200'
+                                      }`}
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                </div>
+                                <input
+                                  type="text"
+                                  value={cancelReason}
+                                  onChange={(e) => setCancelReason(e.target.value)}
+                                  className="w-full px-2.5 py-1.5 bg-white border border-rose-300 rounded-lg text-xs"
+                                  placeholder="ระบุเหตุผล..."
+                                />
+                                <label className="flex items-center gap-1.5 text-[11px] font-bold text-rose-900 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={markMenuUnavailable}
+                                    onChange={(e) => setMarkMenuUnavailable(e.target.checked)}
+                                    className="w-3.5 h-3.5 accent-rose-600"
+                                  />
+                                  <span>ปิดขายเมนูนี้หน้าเว็บทันที (ตั้งเป็นสินค้าหมด)</span>
+                                </label>
+                                <div className="flex justify-end gap-1.5">
                                   <button
-                                    key={opt.status}
                                     type="button"
-                                    disabled={!canClick}
-                                    onClick={() => canClick && handleUpdateItemStatus(ord, idx, opt.status)}
-                                    title={
-                                      canClick
-                                        ? `เลื่อนเป็น "${opt.label}"`
-                                        : active
-                                        ? `สถานะปัจจุบัน: ${opt.label}`
-                                        : `ผ่านขั้นตอน "${opt.label}" แล้ว (ห้ามย้อนกลับ)`
-                                    }
-                                    className={`flex flex-col items-center gap-0.5 min-w-[40px] py-0.5 rounded-lg transition ${
-                                      canClick
-                                        ? 'cursor-pointer hover:scale-105 active:scale-95'
-                                        : 'cursor-not-allowed pointer-events-none'
-                                    }`}
+                                    onClick={() => setCancellingKey(null)}
+                                    disabled={isCancellingItem}
+                                    className="px-2.5 py-1 bg-white border border-stone-300 text-stone-700 rounded-lg text-[11px] font-bold cursor-pointer"
                                   >
-                                    <span
-                                      className={`w-8 h-8 rounded-full border flex items-center justify-center transition ${
-                                        active
-                                          ? opt.activeClass
-                                          : isPast
-                                          ? 'bg-emerald-500 text-white border-emerald-500 opacity-80'
-                                          : canClick
-                                          ? opt.idleClass
-                                          : 'bg-stone-100 text-stone-300 border-stone-200 opacity-60'
-                                      }`}
-                                    >
-                                      <Icon className="w-3.5 h-3.5" />
-                                    </span>
-                                    <span
-                                      className={`text-[9px] font-bold ${
-                                        active
-                                          ? 'text-stone-900 font-black'
-                                          : isPast
-                                          ? 'text-emerald-700'
-                                          : canClick
-                                          ? 'text-stone-600'
-                                          : 'text-stone-300'
-                                      }`}
-                                    >
-                                      {opt.shortLabel}
-                                    </span>
+                                    กลับ
                                   </button>
-                                );
-                              })}
-                            </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleConfirmCancelItem(ord, idx)}
+                                    disabled={isCancellingItem}
+                                    className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                                  >
+                                    {isCancellingItem && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    <span>ยืนยันตัดรายการ</span>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

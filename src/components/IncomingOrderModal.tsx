@@ -21,6 +21,7 @@ import {
   Plus,
   Printer,
   Store,
+  Timer,
   Truck,
   Utensils,
   Volume2,
@@ -30,8 +31,13 @@ import {
 } from 'lucide-react';
 import { DiningType, MenuItem, Order, OrderStatus } from '../types';
 import { formatOrderTime, renderDeliveryTypeBadge } from './AdminOrdersManager';
-import { NEXT_ORDER_STATUS_MAP, normalizeOrderStatus } from '../services/menuService';
+import { adjustOrderPrepTime, NEXT_ORDER_STATUS_MAP, normalizeOrderStatus } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
+import {
+  DEFAULT_SHOP_PREP_MINUTES,
+  getOrderTimingMetrics,
+  isOrderItemCancelled,
+} from '../utils/orderPrepUtils';
 import { OrderReceiptModal } from './OrderReceiptModal';
 import { AdminAppendItemModal } from './AdminAppendItemModal';
 import { OrderStatusModal } from './OrderStatusModal';
@@ -53,6 +59,7 @@ export interface IncomingOrderModalProps {
   onClose: () => void;
   isSoundEnabled: boolean;
   onToggleSound: () => void;
+  defaultPrepTimeMinutes?: number;
 }
 
 const STEP_LIST: OrderStatus[] = ['รับออเดอร์', 'กำลังทำ', 'ส่งออเดอร์', 'ส่งแล้ว'];
@@ -70,6 +77,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   onClose,
   isSoundEnabled,
   onToggleSound,
+  defaultPrepTimeMinutes = DEFAULT_SHOP_PREP_MINUTES,
 }) => {
   // รวบรวมรายการออเดอร์ที่ใช้งาน
   const allOrdersList = useMemo(() => {
@@ -94,6 +102,15 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
   const [orderToAppend, setOrderToAppend] = useState<Order | null>(null);
   const [statusModalOrderId, setStatusModalOrderId] = useState<string | null>(null);
   const [checkBillOrderId, setCheckBillOrderId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [adjustingPrepId, setAdjustingPrepId] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, [isOpen]);
 
   const allRawNormalizedOrders = useMemo(() => {
     const raw = orders && orders.length > 0 ? orders : pendingOrders || [];
@@ -204,6 +221,20 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
       setOrderToCancel(null);
     } finally {
       setProcessingOrderId(null);
+    }
+  };
+
+  const handleAdjustPrepTarget = async (order: Order, currentTarget: number, delta: number) => {
+    const nextTarget = Math.max(1, Math.min(180, currentTarget + delta));
+    if (nextTarget === currentTarget) return;
+    setAdjustingPrepId(order.id);
+    try {
+      await adjustOrderPrepTime(order.id, nextTarget);
+      onNotify?.(`⏱️ ปรับเป้าหมายเวลาออเดอร์ #${order.orderNumber} เป็น ${nextTarget} นาที`, 'info');
+    } catch {
+      onNotify?.('ไม่สามารถปรับเวลาทำอาหารได้', 'error');
+    } finally {
+      setAdjustingPrepId(null);
     }
   };
 
@@ -378,6 +409,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                   const isPickup = ord.deliveryType === 'นัดรับอาหาร';
                   const isBusy = processingOrderId === ord.id;
                   const currentStatus = ord.status;
+                  const timing = getOrderTimingMetrics(ord, nowMs, menus, defaultPrepTimeMinutes);
 
                   return (
                     <div
@@ -453,28 +485,87 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Circular Icon Status Stepper + Item Completion Overview */}
+                      {/* Circular Icon Status Stepper + Item Completion + SLA Timer */}
                       <div className="py-1 flex flex-wrap items-center justify-between gap-2">
                         <CircularStatusStepper
                           compact
                           currentStatus={currentStatus}
                           onOpenModal={() => setStatusModalOrderId(ord.id)}
                         />
-                        <OrderCompletionBadge
-                          order={ord}
-                          onClick={() => setStatusModalOrderId(ord.id)}
-                        />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <div
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black border ${
+                              timing.speedState === 'overdue'
+                                ? 'bg-rose-100 text-rose-800 border-rose-300 animate-pulse'
+                                : timing.speedState === 'warning'
+                                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            }`}
+                          >
+                            <Timer className="w-3 h-3 shrink-0" />
+                            <span>
+                              {timing.speedState === 'overdue'
+                                ? `🔴 ล่าช้า +${timing.overdueMinutes} น.`
+                                : timing.speedState === 'warning'
+                                ? '🟡 ใกล้ครบ'
+                                : '🟢 ทันเวลา'}{' '}
+                              ({timing.elapsedMinutes}/{timing.targetMinutes} น.)
+                            </span>
+                          </div>
+                          <div className="inline-flex items-center gap-0.5 bg-stone-100 border border-stone-200 rounded-lg px-1 py-0.5">
+                            <button
+                              type="button"
+                              disabled={adjustingPrepId === ord.id || timing.targetMinutes <= 2}
+                              onClick={() => handleAdjustPrepTarget(ord, timing.targetMinutes, -2)}
+                              className="px-1.5 py-0.5 text-[10px] font-black text-stone-700 hover:bg-white rounded cursor-pointer disabled:opacity-40"
+                              title="ลดเวลาเป้าหมายลง 2 นาที"
+                            >
+                              -2 น.
+                            </button>
+                            <button
+                              type="button"
+                              disabled={adjustingPrepId === ord.id || timing.targetMinutes >= 180}
+                              onClick={() => handleAdjustPrepTarget(ord, timing.targetMinutes, 2)}
+                              className="px-1.5 py-0.5 text-[10px] font-black text-stone-700 hover:bg-white rounded cursor-pointer disabled:opacity-40"
+                              title="เพิ่มเวลาเป้าหมายอีก 2 นาที"
+                            >
+                              +2 น.
+                            </button>
+                          </div>
+                          <OrderCompletionBadge
+                            order={ord}
+                            onClick={() => setStatusModalOrderId(ord.id)}
+                          />
+                        </div>
                       </div>
 
                       {/* Food Items Preview */}
                       <div className="bg-stone-50 rounded-xl p-2.5 border border-stone-200 text-xs">
                         <div className="flex flex-wrap gap-2 text-stone-800">
-                          {ord.items?.map((it, idx) => (
-                            <span key={idx} className="bg-white px-2 py-1 rounded-lg border border-stone-200 font-semibold flex items-center gap-1">
-                              <span className="text-red-600 font-bold">{it.quantity}x</span>
-                              <span>{it.name}</span>
-                            </span>
-                          ))}
+                          {ord.items?.map((it, idx) => {
+                            const cancelled = isOrderItemCancelled(it);
+                            return (
+                              <span
+                                key={idx}
+                                className={`px-2 py-1 rounded-lg border font-semibold flex items-center gap-1 ${
+                                  cancelled
+                                    ? 'bg-rose-50/70 border-rose-200 text-stone-400 line-through'
+                                    : 'bg-white border-stone-200'
+                                }`}
+                                title={cancelled ? it.cancelReason || 'ยกเลิก/ของหมด' : undefined}
+                              >
+                                <span className={cancelled ? 'text-rose-400 font-bold' : 'text-red-600 font-bold'}>
+                                  {it.quantity}x
+                                </span>
+                                <span>{it.name}</span>
+                                {cancelled && (
+                                  <span className="no-underline text-[10px] font-black text-rose-700 ml-0.5">
+                                    (ยกเลิก ฿0)
+                                  </span>
+                                )}
+                              </span>
+                            );
+                          })}
                         </div>
                         {ord.address && (
                           <p className="text-[11px] text-stone-600 mt-2 truncate">
@@ -653,12 +744,59 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
                   </div>
                 </div>
 
-                <div className="text-right shrink-0">
+                <div className="text-right shrink-0 space-y-1">
                   <span className="inline-block px-3 py-1 bg-red-600 text-white rounded-full text-xs font-black shadow-xs animate-pulse">
                     สถานะ: {activeOrder.status}
                   </span>
                 </div>
               </div>
+
+              {/* SLA Timing & Adjuster Bar (Single View) */}
+              {(() => {
+                const activeTiming = getOrderTimingMetrics(activeOrder, nowMs, menus, defaultPrepTimeMinutes);
+                return (
+                  <div className="bg-white rounded-2xl px-3.5 py-2.5 border border-stone-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-black border ${
+                        activeTiming.speedState === 'overdue'
+                          ? 'bg-rose-100 text-rose-800 border-rose-300'
+                          : activeTiming.speedState === 'warning'
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      }`}
+                    >
+                      <Timer className="w-3.5 h-3.5" />
+                      <span>
+                        {activeTiming.speedState === 'overdue'
+                          ? `🔴 ล่าช้า +${activeTiming.overdueMinutes} นาที`
+                          : activeTiming.speedState === 'warning'
+                          ? '🟡 ใกล้ครบกำหนด'
+                          : '🟢 ทันเวลา'}{' '}
+                        • ใช้เวลาแล้ว {activeTiming.elapsedMinutes}/{activeTiming.targetMinutes} นาที
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-stone-500 font-bold mr-1">ปรับเวลา:</span>
+                      <button
+                        type="button"
+                        disabled={adjustingPrepId === activeOrder.id || activeTiming.targetMinutes <= 2}
+                        onClick={() => handleAdjustPrepTarget(activeOrder, activeTiming.targetMinutes, -2)}
+                        className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 font-black rounded-lg text-[11px] cursor-pointer disabled:opacity-40"
+                      >
+                        -2 น.
+                      </button>
+                      <button
+                        type="button"
+                        disabled={adjustingPrepId === activeOrder.id || activeTiming.targetMinutes >= 180}
+                        onClick={() => handleAdjustPrepTarget(activeOrder, activeTiming.targetMinutes, 2)}
+                        className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 font-black rounded-lg text-[11px] cursor-pointer disabled:opacity-40"
+                      >
+                        +2 น.
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Stepper progress in single view */}
               <div className="grid grid-cols-4 gap-1.5 text-center text-xs font-bold bg-white p-3 rounded-2xl border border-stone-200">
@@ -708,21 +846,46 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
 
               {/* Items List */}
               <div className="bg-white rounded-2xl border border-stone-200 divide-y divide-stone-200 overflow-hidden">
-                {activeOrder.items?.map((item, idx) => (
-                  <div key={idx} className="p-3 flex items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-6 h-6 rounded-lg bg-red-100 text-red-700 font-black text-xs flex items-center justify-center shrink-0">
-                        {item.quantity}x
-                      </span>
-                      <span className="font-bold text-stone-900 text-sm">{item.name}</span>
+                {activeOrder.items?.map((item, idx) => {
+                  const cancelled = isOrderItemCancelled(item);
+                  return (
+                    <div
+                      key={idx}
+                      className={`p-3 flex items-center justify-between gap-2 text-xs ${
+                        cancelled ? 'bg-rose-50/40' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          className={`w-6 h-6 rounded-lg font-black text-xs flex items-center justify-center shrink-0 ${
+                            cancelled ? 'bg-rose-100 text-rose-500' : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          {item.quantity}x
+                        </span>
+                        <div className="min-w-0">
+                          <span
+                            className={`font-bold text-sm block truncate ${
+                              cancelled ? 'line-through text-stone-400' : 'text-stone-900'
+                            }`}
+                          >
+                            {item.name}
+                          </span>
+                          {cancelled && (
+                            <span className="inline-block text-[10px] font-black text-rose-700 bg-rose-100 px-1.5 py-0.2 rounded">
+                              ยกเลิก{item.cancelReason ? `: ${item.cancelReason}` : ' (ของหมด)'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`font-extrabold ${cancelled ? 'text-stone-400 line-through' : 'text-stone-900'}`}>
+                          {cancelled ? '฿0' : `฿${(item.price * item.quantity).toLocaleString()}`}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-right shrink-0">
-                      <span className="font-extrabold text-stone-900">
-                        ฿{(item.price * item.quantity).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Totals */}
@@ -864,6 +1027,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
         onClose={() => setOrderToAppend(null)}
         order={orderToAppend}
         menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onNotify={(msg, type) => onNotify?.(msg, type)}
       />
 
@@ -871,6 +1035,8 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
       <OrderStatusModal
         isOpen={Boolean(liveStatusModalOrder)}
         order={liveStatusModalOrder}
+        menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onClose={() => setStatusModalOrderId(null)}
         onOpenCheckBill={(ord) => {
           setStatusModalOrderId(null);
@@ -888,6 +1054,7 @@ export const IncomingOrderModal: React.FC<IncomingOrderModalProps> = ({
         isOpen={Boolean(liveCheckBillOrder)}
         order={liveCheckBillOrder}
         menus={menus}
+        defaultPrepTimeMinutes={defaultPrepTimeMinutes}
         onClose={() => setCheckBillOrderId(null)}
         onNotify={(msg, type) => onNotify?.(msg, type)}
         onPrintAfterCheckout={(checkedOutOrd) => setReceiptOrder(checkedOutOrd)}

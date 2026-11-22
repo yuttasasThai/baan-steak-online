@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Order } from '../types';
 import { SHOP_INFO } from '../services/menuService';
+import { isOrderItemCancelled } from '../utils/orderPrepUtils';
 import { formatOrderDate, formatOrderTime } from './AdminOrdersManager';
 
 interface OrderReceiptModalProps {
@@ -157,17 +158,33 @@ function buildReceiptBitmap(
 
   // Food Items
   order.items.forEach((item, idx) => {
+    const cancelled = isOrderItemCancelled(item);
     ctx.font = 'bold 16px "Sarabun", sans-serif';
+    ctx.fillStyle = cancelled ? '#666666' : '#000000';
     ctx.textAlign = 'left';
-    ctx.fillText(`${idx + 1}. ${item.name}`, 10, y);
+    ctx.fillText(
+      cancelled ? `${idx + 1}. [ยกเลิก/ของหมด] ${item.name}` : `${idx + 1}. ${item.name}`,
+      10,
+      y
+    );
     ctx.textAlign = 'right';
-    ctx.fillText(`x${item.quantity}   ฿${(item.price * item.quantity).toLocaleString()}`, widthDots - 10, y);
+    ctx.fillText(
+      cancelled
+        ? `x${item.quantity}   ฿0`
+        : `x${item.quantity}   ฿${(item.price * item.quantity).toLocaleString()}`,
+      widthDots - 10,
+      y
+    );
     y += 20;
 
     ctx.font = '13px "Sarabun", sans-serif';
     ctx.fillStyle = '#444444';
     ctx.textAlign = 'left';
-    ctx.fillText(`   @฿${item.price.toLocaleString()}`, 10, y);
+    ctx.fillText(
+      cancelled ? '   (หักออกจากบิลแล้ว)' : `   @฿${item.price.toLocaleString()}`,
+      10,
+      y
+    );
     ctx.fillStyle = '#000000';
     y += 20;
   });
@@ -358,9 +375,10 @@ export const OrderReceiptModal: React.FC<OrderReceiptModalProps> = ({
   // Plain text for copying
   const generateReceiptPlainText = () => {
     const itemsText = order.items
-      .map(
-        (it, idx) =>
-          `${idx + 1}. ${it.name} x${it.quantity} = ฿${(it.price * it.quantity).toLocaleString()}`
+      .map((it, idx) =>
+        isOrderItemCancelled(it)
+          ? `${idx + 1}. [ยกเลิก/ของหมด] ${it.name} x${it.quantity} = ฿0`
+          : `${idx + 1}. ${it.name} x${it.quantity} = ฿${(it.price * it.quantity).toLocaleString()}`
       )
       .join('\n');
 
@@ -1113,24 +1131,38 @@ ${itemsText}
               </div>
 
               <div className="divide-y divide-stone-200/70 pt-1">
-                {order.items.map((item, idx) => (
-                  <div key={idx} className="py-1 flex justify-between items-start gap-1 text-[11px]">
-                    <div className="flex-1 pr-1">
-                      <div className="font-sans font-bold text-stone-950 leading-tight">
-                        {idx + 1}. {item.name}
+                {order.items.map((item, idx) => {
+                  const cancelled = isOrderItemCancelled(item);
+                  return (
+                    <div
+                      key={idx}
+                      className={`py-1 flex justify-between items-start gap-1 text-[11px] ${
+                        cancelled ? 'text-stone-400' : ''
+                      }`}
+                    >
+                      <div className="flex-1 pr-1">
+                        <div
+                          className={`font-sans font-bold leading-tight ${
+                            cancelled ? 'line-through text-stone-400' : 'text-stone-950'
+                          }`}
+                        >
+                          {idx + 1}. {item.name}
+                        </div>
+                        <div className="text-[10px] text-stone-500">
+                          {cancelled
+                            ? `ยกเลิก/ของหมด${item.cancelReason ? ` (${item.cancelReason})` : ''}`
+                            : `@฿${item.price.toLocaleString()}`}
+                        </div>
                       </div>
-                      <div className="text-[10px] text-stone-500">
-                        @฿{item.price.toLocaleString()}
+                      <div className="flex gap-4 shrink-0 font-bold">
+                        <span className="w-8 text-center">x{item.quantity}</span>
+                        <span className={`w-12 text-right ${cancelled ? 'line-through' : ''}`}>
+                          {cancelled ? '฿0' : `฿${(item.price * item.quantity).toLocaleString()}`}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex gap-4 shrink-0 font-bold">
-                      <span className="w-8 text-center">x{item.quantity}</span>
-                      <span className="w-12 text-right">
-                        ฿{(item.price * item.quantity).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

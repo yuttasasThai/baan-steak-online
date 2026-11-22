@@ -11,12 +11,14 @@ import {
 import { MenuItem, Order } from '../types';
 import { appendItemsToOrder, normalizeMenuImageUrl } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
+import { isOrderItemCancelled, resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface AdminAppendItemModalProps {
   isOpen: boolean;
   onClose: () => void;
   order: Order | null;
   menus: MenuItem[];
+  defaultPrepTimeMinutes?: number;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -25,6 +27,7 @@ export const AdminAppendItemModal: React.FC<AdminAppendItemModalProps> = ({
   onClose,
   order,
   menus,
+  defaultPrepTimeMinutes,
   onNotify,
 }) => {
   const [selectedItems, setSelectedItems] = useState<Record<string, number>>({});
@@ -83,6 +86,7 @@ export const AdminAppendItemModal: React.FC<AdminAppendItemModalProps> = ({
         name: it.menuItem.name,
         price: it.menuItem.price,
         quantity: it.quantity,
+        prepTimeMinutes: resolveMenuPrepTimeMinutes(it.menuItem, defaultPrepTimeMinutes),
       }));
 
       await appendItemsToOrder(order.id, itemsToAdd, customNote.trim() || 'แอดมินคีย์สั่งเพิ่ม');
@@ -152,12 +156,20 @@ export const AdminAppendItemModal: React.FC<AdminAppendItemModalProps> = ({
               รายการเดิมในออเดอร์ ({order.items?.length || 0} รายการ):
             </span>
             <div className="text-[11px] text-stone-600 space-y-0.5 max-h-20 overflow-y-auto">
-              {order.items?.map((it, idx) => (
-                <div key={idx} className="flex justify-between">
-                  <span>• {it.name} x {it.quantity}</span>
-                  <span className="font-bold">฿{(it.price * it.quantity).toLocaleString()}</span>
-                </div>
-              ))}
+              {order.items?.map((it, idx) => {
+                const cancelled = isOrderItemCancelled(it);
+                return (
+                  <div key={idx} className="flex justify-between gap-2">
+                    <span className={cancelled ? 'line-through text-stone-400' : ''}>
+                      • {it.name} x {it.quantity}
+                      {cancelled ? ' (ยกเลิก/ของหมด)' : ''}
+                    </span>
+                    <span className={`font-bold ${cancelled ? 'text-rose-500' : ''}`}>
+                      {cancelled ? '฿0' : `฿${(it.price * it.quantity).toLocaleString()}`}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
 

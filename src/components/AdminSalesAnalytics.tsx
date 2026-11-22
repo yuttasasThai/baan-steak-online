@@ -18,6 +18,7 @@ import {
 import { DailyExpenseRecord, MenuItem, Order } from '../types';
 import { formatOrderTime } from './AdminOrdersManager';
 import { formatDateKeyToThai, normalizeOrderStatus } from '../services/menuService';
+import { isOrderItemCancelled } from '../utils/orderPrepUtils';
 import { AdminSalesDashboard } from './AdminSalesDashboard';
 
 interface AdminSalesAnalyticsProps {
@@ -59,6 +60,7 @@ export function computeOrderMenuCost(
 ): number {
   if (!order.items || order.items.length === 0) return 0;
   return order.items.reduce((sum, item) => {
+    if (isOrderItemCancelled(item)) return sum;
     const unitCost =
       (item.menuId ? costById.get(item.menuId) : undefined) ??
       costByName.get((item.name || '').trim()) ??
@@ -150,7 +152,11 @@ export const DailyOrdersPopupModal: React.FC<DailyOrdersPopupModalProps> = ({
       const ordCost = computeOrderMenuCost(order, costById, costByName);
       const st = normalizeOrderStatus(order.status);
       const itemsText = (order.items || [])
-        .map((it) => `${it.name} x${it.quantity}`)
+        .map((it) =>
+          isOrderItemCancelled(it)
+            ? `${it.name} x${it.quantity} (ยกเลิก ฿0)`
+            : `${it.name} x${it.quantity}`
+        )
         .join(', ')
         .replace(/"/g, '""');
       return [
@@ -362,19 +368,38 @@ export const DailyOrdersPopupModal: React.FC<DailyOrdersPopupModalProps> = ({
                           </td>
                           <td className="py-2 px-2.5 border-r border-stone-300 text-stone-800">
                             <div className="space-y-0.5">
-                              {order.items?.map((it, i) => (
-                                <div key={`${order.id}_${i}`} className="flex justify-between gap-2">
-                                  <span>
-                                    {it.name}{' '}
-                                    <span className="font-mono font-bold text-stone-600">
-                                      ×{it.quantity}
+                              {order.items?.map((it, i) => {
+                                const cancelled = isOrderItemCancelled(it);
+                                return (
+                                  <div
+                                    key={`${order.id}_${i}`}
+                                    className={`flex justify-between gap-2 ${
+                                      cancelled ? 'text-stone-400 line-through' : ''
+                                    }`}
+                                  >
+                                    <span>
+                                      {it.name}{' '}
+                                      <span
+                                        className={`font-mono font-bold ${
+                                          cancelled ? 'text-stone-400' : 'text-stone-600'
+                                        }`}
+                                      >
+                                        ×{it.quantity}
+                                      </span>
+                                      {cancelled && (
+                                        <span className="ml-1 text-[10px] font-bold text-rose-600 no-underline">
+                                          (ยกเลิก)
+                                        </span>
+                                      )}
                                     </span>
-                                  </span>
-                                  <span className="font-mono tabular-nums text-stone-500 shrink-0">
-                                    ฿{((it.price || 0) * (it.quantity || 1)).toLocaleString()}
-                                  </span>
-                                </div>
-                              ))}
+                                    <span className="font-mono tabular-nums text-stone-500 shrink-0">
+                                      {cancelled
+                                        ? '฿0'
+                                        : `฿${((it.price || 0) * (it.quantity || 1)).toLocaleString()}`}
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </td>
                           <td className="py-2 px-2.5 text-right font-mono tabular-nums text-stone-700 border-r border-stone-300 whitespace-nowrap">
@@ -551,6 +576,7 @@ export const AdminSalesAnalytics: React.FC<AdminSalesAnalyticsProps> = ({
 
     filteredCompletedOrders.forEach((order) => {
       order.items?.forEach((item) => {
+        if (isOrderItemCancelled(item)) return;
         const name = item.name;
         if (!dishMap[name]) {
           dishMap[name] = { name, quantity: 0, revenue: 0, cost: 0 };

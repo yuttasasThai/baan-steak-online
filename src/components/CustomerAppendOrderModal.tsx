@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Check,
+  Clock,
   Loader2,
   Minus,
   Plus,
@@ -12,12 +13,14 @@ import {
 } from 'lucide-react';
 import { MenuItem, Order } from '../types';
 import { appendItemsToOrder, normalizeMenuImageUrl } from '../services/menuService';
+import { resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface CustomerAppendOrderModalProps {
   isOpen: boolean;
   onClose: () => void;
   order: Order | null;
   menus: MenuItem[];
+  defaultPrepTimeMinutes?: number;
   onNotify: (message: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -26,6 +29,7 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
   onClose,
   order,
   menus,
+  defaultPrepTimeMinutes,
   onNotify,
 }) => {
   const [selectedItems, setSelectedItems] = useState<Record<string, number>>({});
@@ -87,6 +91,7 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
         name: it.menuItem.name,
         price: it.menuItem.price,
         quantity: it.quantity,
+        prepTimeMinutes: resolveMenuPrepTimeMinutes(it.menuItem, defaultPrepTimeMinutes),
       }));
 
       await appendItemsToOrder(order.id, itemsToAdd, customNote.trim() || 'ลูกค้าสั่งเพิ่ม');
@@ -213,7 +218,13 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
                     </button>
                     <div className="min-w-0">
                       <div className="text-xs font-bold text-stone-900 truncate">{m.name}</div>
-                      <div className="text-[11px] font-extrabold text-red-600">฿{m.price}</div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-extrabold text-red-600">฿{m.price}</span>
+                        <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-stone-500">
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>~{resolveMenuPrepTimeMinutes(m, defaultPrepTimeMinutes)} น.</span>
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -358,8 +369,14 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
                 <h4 className="font-black text-sm sm:text-base text-stone-900 truncate">
                   {zoomedMenu.name}
                 </h4>
-                <div className="text-sm font-black text-red-600 tabular-nums">
-                  ฿{zoomedMenu.price.toLocaleString()}
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-sm font-black text-red-600 tabular-nums">
+                    ฿{zoomedMenu.price.toLocaleString()}
+                  </span>
+                  <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-stone-500">
+                    <Clock className="w-3 h-3" />
+                    <span>~{resolveMenuPrepTimeMinutes(zoomedMenu, defaultPrepTimeMinutes)} นาที</span>
+                  </span>
                 </div>
               </div>
               <button

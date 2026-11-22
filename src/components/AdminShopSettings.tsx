@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   Copy,
   Download,
   ExternalLink,
@@ -35,6 +36,7 @@ import { sendTestNotification } from '../services/notificationService';
 import { AdminHeroImageManager } from './AdminHeroImageManager';
 import { AdminLinkManagerModal } from './AdminLinkManagerModal';
 import { CURRENT_REVISION, getRevisionFileName } from '../revisionInfo';
+import { DEFAULT_SHOP_PREP_MINUTES } from '../utils/orderPrepUtils';
 
 interface AdminShopSettingsProps {
   settings: ShopSettings;
@@ -124,6 +126,11 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
     settings.shopLongitude?.toString() || '102.102266'
   );
 
+  // Kitchen standard prep time (minutes)
+  const [defaultPrepTimeMinutes, setDefaultPrepTimeMinutes] = useState<string>(
+    String(settings.defaultPrepTimeMinutes || DEFAULT_SHOP_PREP_MINUTES)
+  );
+
   useEffect(() => {
     if (typeof settings.shopLatitude === 'number' && !isNaN(settings.shopLatitude)) {
       setShopLatitude(settings.shopLatitude.toString());
@@ -131,7 +138,10 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
     if (typeof settings.shopLongitude === 'number' && !isNaN(settings.shopLongitude)) {
       setShopLongitude(settings.shopLongitude.toString());
     }
-  }, [settings.shopLatitude, settings.shopLongitude]);
+    if (typeof settings.defaultPrepTimeMinutes === 'number' && settings.defaultPrepTimeMinutes > 0) {
+      setDefaultPrepTimeMinutes(String(settings.defaultPrepTimeMinutes));
+    }
+  }, [settings.shopLatitude, settings.shopLongitude, settings.defaultPrepTimeMinutes]);
 
   const [isSaving, setIsSaving] = useState(false);
 
@@ -195,6 +205,11 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
         return;
       }
 
+      const parsedPrepDefault = Math.max(
+        1,
+        Math.min(120, Math.round(Number(defaultPrepTimeMinutes) || DEFAULT_SHOP_PREP_MINUTES))
+      );
+
       await updateShopSettings({
         isOpen,
         phone: phone.trim() || '085-045-1606',
@@ -213,6 +228,7 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
         webhookUrl: webhookUrl.trim(),
         lineNotifyToken: lineNotifyToken.trim(),
         lineNotifySendOnCreate,
+        defaultPrepTimeMinutes: parsedPrepDefault,
       });
 
       onNotify('บันทึกการตั้งค่าร้าน, LINE Official Account และระบบแจ้งเตือนเรียบร้อยแล้ว', 'success');
@@ -1135,6 +1151,52 @@ export const AdminShopSettings: React.FC<AdminShopSettingsProps> = ({
               <span>มากกว่า 12 กิโลเมตรขึ้นไป</span>
               <span className="font-bold text-stone-900">100 บาท</span>
             </div>
+          </div>
+        </div>
+
+        {/* 5.5 Kitchen Service-Speed SLA Settings Card */}
+        <div className="bg-white rounded-2xl p-5 border border-stone-200 shadow-sm space-y-3.5">
+          <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+            <div className="flex items-center gap-2 text-sm font-bold text-stone-800">
+              <Clock className="w-4 h-4 text-sky-600" />
+              <span>เวลาทำอาหารมาตรฐานของร้าน (Kitchen Service Speed)</span>
+            </div>
+            <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 tabular-nums">
+              {defaultPrepTimeMinutes || DEFAULT_SHOP_PREP_MINUTES} นาที/ออเดอร์
+            </span>
+          </div>
+
+          <p className="text-xs text-stone-600 leading-relaxed">
+            ใช้เป็นเวลาเป้าหมายตั้งต้นสำหรับเมนูอาหารจานหลัก (ส่วนเครื่องดื่ม/สลัด/ของทานเล่นจะปรับอัตโนมัติให้สั้นลง หรือกำหนดเวลาเฉพาะรายเมนูได้ในหน้าจัดการเมนู) เพื่อแจ้งเตือนสี 🟢 ทันเวลา / 🟡 ใกล้ครบเวลา / 🔴 ล่าช้า ในหน้าจอครัว
+          </p>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[8, 10, 12, 15, 20].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setDefaultPrepTimeMinutes(String(preset))}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  Number(defaultPrepTimeMinutes) === preset
+                    ? 'bg-sky-600 text-white border-sky-700 shadow-2xs'
+                    : 'bg-stone-50 hover:bg-stone-100 text-stone-700 border-stone-200'
+                }`}
+              >
+                {preset} นาที{preset === 12 ? ' (มาตรฐาน)' : ''}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2 max-w-xs">
+            <input
+              type="number"
+              min="1"
+              max="120"
+              value={defaultPrepTimeMinutes}
+              onChange={(e) => setDefaultPrepTimeMinutes(e.target.value)}
+              className="w-28 px-3.5 py-2 bg-stone-50 border border-stone-300 rounded-xl text-sm font-black text-sky-900 focus:outline-none focus:border-sky-500 focus:bg-white tabular-nums"
+            />
+            <span className="text-xs font-semibold text-stone-600">นาที (ค่าแนะนำ 10-15 นาที)</span>
           </div>
         </div>
 

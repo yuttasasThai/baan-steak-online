@@ -493,7 +493,7 @@ export const AdminTableManager: React.FC<AdminTableManagerProps> = ({
                         </span>
                       </div>
 
-                      {table.number > 8 && (
+                      {table.number > 6 && (
                         <button
                           type="button"
                           onClick={() => handleDeleteTable(table)}

@@ -6,6 +6,7 @@ import {
   Camera,
   ChevronDown,
   ChevronUp,
+  Clock,
   Edit3,
   Layers,
   Loader2,
@@ -21,6 +22,10 @@ import {
 } from 'lucide-react';
 import { CategoryItem, MenuItem, Order, ShopSettings } from '../types';
 import { compressImageFile } from '../utils/imageCompressor';
+import {
+  isOrderItemCancelled,
+  resolveMenuPrepTimeMinutes,
+} from '../utils/orderPrepUtils';
 import {
   addMenuItem,
   cleanupLegacyAutoSeededMenus,
@@ -152,6 +157,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     for (const ord of sourceOrders) {
       if (!Array.isArray(ord.items)) continue;
       for (const it of ord.items) {
+        if (isOrderItemCancelled(it)) continue;
         const q = Number(it.quantity) || 1;
         if (it.menuId) qtyByMenuId[it.menuId] = (qtyByMenuId[it.menuId] || 0) + q;
         if (it.name) qtyByName[it.name] = (qtyByName[it.name] || 0) + q;
@@ -363,7 +369,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   const handleConfirmResetToBaanSteakExact = async () => {
     try {
       setIsResetting(true);
-      await initializeBaanSteakMenu(true);
+      await initializeBaanSteakMenu(true, 'CONFIRM_ADMIN_FORCE_RESET');
       setIsResetConfirmOpen(false);
       onNotify('รีเซ็ตเป็นเมนูเริ่มต้นเรียบร้อยแล้ว', 'success');
     } catch (err) {
@@ -815,6 +821,10 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                         <span className="px-2 py-0.5 rounded-md bg-stone-100 text-stone-600 text-[10px] font-bold">
                           {item.category}
                         </span>
+                        <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[10px] font-bold tabular-nums">
+                          <Clock className="w-2.5 h-2.5 text-sky-600" />
+                          <span>~{resolveMenuPrepTimeMinutes(item, settings?.defaultPrepTimeMinutes)} นาที</span>
+                        </span>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           item.isAvailable ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                         }`}>
@@ -1000,6 +1010,10 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                           <div className="min-w-0">
                             <div className="font-bold text-stone-900 text-sm truncate flex items-center gap-1.5">
                               <span>{item.name}</span>
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[10px] font-bold tabular-nums shrink-0">
+                                <Clock className="w-2.5 h-2.5 text-sky-600" />
+                                <span>~{resolveMenuPrepTimeMinutes(item, settings?.defaultPrepTimeMinutes)} นาที</span>
+                              </span>
                               {/^menu_drink_\d+$/.test(item.id) && (
                                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
                                   ตัวอย่างระบบเดิม
@@ -1229,6 +1243,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
         onSubmit={handleFormSubmit}
         initialData={editingItem}
         categories={categories}
+        defaultPrepTimeMinutes={settings?.defaultPrepTimeMinutes}
       />
 
       {/* Category Manager Modal */}

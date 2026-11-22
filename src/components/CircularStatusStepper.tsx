@@ -312,7 +312,9 @@ export const OrderCompletionBadge: React.FC<{ order: Order; onClick?: () => void
           ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
           : 'bg-amber-50 text-amber-900 border-amber-300'
       } ${onClick ? 'cursor-pointer hover:brightness-95 transition' : ''}`}
-      title={`สถานะรายการอาหาร: ได้รับ/เสิร์ฟแล้ว ${summary.completedLines} จาก ${summary.totalLines} รายการ`}
+      title={`สถานะรายการอาหาร: ได้รับ/เสิร์ฟแล้ว ${summary.completedLines} จาก ${summary.totalLines} รายการ${
+        summary.cancelledLines > 0 ? ` (ยกเลิก/หมด ${summary.cancelledLines})` : ''
+      }`}
     >
       <span
         className={`w-2 h-2 rounded-full ${
@@ -324,6 +326,11 @@ export const OrderCompletionBadge: React.FC<{ order: Order; onClick?: () => void
           ? `ครบ ${summary.completedLines}/${summary.totalLines}`
           : `ได้ ${summary.completedLines}/${summary.totalLines} รายการ`}
       </span>
+      {summary.cancelledLines > 0 && (
+        <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-rose-100 text-rose-700 border border-rose-300 text-[9px] font-black">
+          ยกเลิก {summary.cancelledLines}
+        </span>
+      )}
     </Tag>
   );
 };

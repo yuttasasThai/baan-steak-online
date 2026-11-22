@@ -45,6 +45,12 @@ import { audioAlert } from '../utils/audioAlert';
 import { DeliveryMapPicker } from './DeliveryMapPicker';
 import { CustomerAppendOrderModal } from './CustomerAppendOrderModal';
 import { CURRENT_REVISION } from '../revisionInfo';
+import {
+  estimateOrderPrepMinutes,
+  getOrderTimingMetrics,
+  isOrderItemCancelled,
+  resolveMenuPrepTimeMinutes,
+} from '../utils/orderPrepUtils';
 
 interface CustomerWebsiteProps {
   menus: MenuItem[];
@@ -99,6 +105,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
   // Menu image zoom lightbox state
   const [zoomedMenuItem, setZoomedMenuItem] = useState<MenuItem | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   React.useEffect(() => {
     if (!zoomedMenuItem) return;
@@ -348,6 +360,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
     for (const ord of sourceOrders) {
       if (!Array.isArray(ord.items)) continue;
       for (const it of ord.items) {
+        if (isOrderItemCancelled(it)) continue;
         const q = Number(it.quantity) || 1;
         if (it.menuId) qtyByMenuId[it.menuId] = (qtyByMenuId[it.menuId] || 0) + q;
         if (it.name) qtyByName[it.name] = (qtyByName[it.name] || 0) + q;
@@ -688,6 +701,19 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
       const effectiveDeliveryFee = diningType === 'ส่งอาหารที่บ้าน' ? deliveryFee : 0;
       const effectiveTotalAmount = diningType === 'ส่งอาหารที่บ้าน' ? totalAmount : foodSubtotal;
 
+      const orderItemsPayload = cart.map((c) => ({
+        menuId: c.menuItem.id,
+        name: c.menuItem.name,
+        price: c.menuItem.price,
+        quantity: c.quantity,
+        prepTimeMinutes: resolveMenuPrepTimeMinutes(c.menuItem, settings?.defaultPrepTimeMinutes),
+      }));
+      const estimatedPrepMinutes = estimateOrderPrepMinutes(
+        orderItemsPayload,
+        menus,
+        settings?.defaultPrepTimeMinutes
+      );
+
       const orderNum = await createOrder({
         customerName: effectiveName,
         customerPhone: (isTableOrder || isTakeawayOrder) ? (customerPhone.trim() || '-') : customerPhone.trim(),
@@ -696,12 +722,8 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         tableNumber: selectedTableNumber !== null ? selectedTableNumber : (urlTableNumber ? Number(urlTableNumber) : undefined),
         gps: diningType === 'ส่งอาหารที่บ้าน' ? gpsLocation : null,
         distanceKm: diningType === 'ส่งอาหารที่บ้าน' ? (distanceKm ?? 0) : 0,
-        items: cart.map((c) => ({
-          menuId: c.menuItem.id,
-          name: c.menuItem.name,
-          price: c.menuItem.price,
-          quantity: c.quantity,
-        })),
+        items: orderItemsPayload,
+        estimatedPrepMinutes,
         subtotal: foodSubtotal,
         deliveryArea: effectiveDeliveryArea,
         deliveryFee: effectiveDeliveryFee,
@@ -961,6 +983,9 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                 }
               })();
 
+              const timing = getOrderTimingMetrics(ord, nowMs, menus, settings?.defaultPrepTimeMinutes);
+              const cancelledItems = (ord.items || []).filter(isOrderItemCancelled);
+
               return (
                 <div
                   key={ord.id}
@@ -975,6 +1000,17 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       <span className="px-2 py-0.5 rounded-full bg-stone-200/80 text-stone-700 font-bold text-[11px]">
                         {isTable ? `🍽️ โต๊ะ ${ord.tableNumber || 1}` : ord.deliveryType || 'สั่งอาหาร'}
                       </span>
+                      {!timing.isFinished && (
+                        <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200 font-black text-[11px] inline-flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-600" />
+                          <span>
+                            ~{timing.targetMinutes} น.
+                            {timing.remainingMinutes > 0
+                              ? ` (เหลืออีก ~${timing.remainingMinutes} น.)`
+                              : ' (กำลังเร่งจัดเตรียม)'}
+                          </span>
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5">
                       {ord.earnedRewardsNotice && ord.earnedRewardsNotice.length > 0 && (
@@ -1065,6 +1101,20 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       </button>
                     )}
                   </div>
+
+                  {/* แจ้งเตือนกรณีมีรายการอาหารถูกยกเลิกเพราะของหมดกระทันหัน */}
+                  {cancelledItems.length > 0 && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-[11px] font-bold leading-relaxed flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <span>
+                        🙏 ทางร้านขออภัย: เมนู{' '}
+                        {cancelledItems
+                          .map((i) => `${i.name}${i.cancelReason ? ` (${i.cancelReason})` : ''}`)
+                          .join(', ')}{' '}
+                        ของหมดกระทันหัน จึงขออนุญาตยกเลิกรายการดังกล่าวและหักยอดออกจากบิลให้เรียบร้อยแล้ว (ยอดบิลปัจจุบัน ฿{ord.totalAmount.toLocaleString()})
+                      </span>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1538,16 +1588,24 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                       {item.name}
                     </h3>
 
-                    {/* Status Badge: พร้อมขาย / สินค้าหมด */}
-                    {isSoldOut ? (
-                      <span className="text-[10px] px-2 py-0.5 bg-rose-50 text-rose-700 font-bold border border-rose-200 rounded-md shrink-0">
-                        สินค้าหมด
-                      </span>
-                    ) : (
-                      <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-md shrink-0">
-                        พร้อมขาย
-                      </span>
-                    )}
+                    {/* Status Badge & Prep Time */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isSoldOut && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-stone-100 text-stone-600 font-bold border border-stone-200 rounded-md inline-flex items-center gap-0.5">
+                          <Clock className="w-2.5 h-2.5 text-stone-500" />
+                          <span>~{resolveMenuPrepTimeMinutes(item, settings?.defaultPrepTimeMinutes)} น.</span>
+                        </span>
+                      )}
+                      {isSoldOut ? (
+                        <span className="text-[10px] px-2 py-0.5 bg-rose-50 text-rose-700 font-bold border border-rose-200 rounded-md shrink-0">
+                          สินค้าหมด
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 rounded-md shrink-0">
+                          พร้อมขาย
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-stone-100">
@@ -2453,6 +2511,12 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
                     <h3 className="font-black text-base sm:text-lg text-stone-900 leading-snug break-words">
                       {liveMenu.name}
                     </h3>
+                    <div className="inline-flex items-center gap-1 text-[11px] font-bold text-stone-600 bg-stone-100 px-2 py-0.5 rounded-md mt-1">
+                      <Clock className="w-3 h-3 text-red-600" />
+                      <span>
+                        เวลาเตรียมอาหารโดยประมาณ ~{resolveMenuPrepTimeMinutes(liveMenu, settings?.defaultPrepTimeMinutes)} นาที
+                      </span>
+                    </div>
                     {liveMenu.description && (
                       <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                         {liveMenu.description}
@@ -2538,6 +2602,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
         onClose={() => setAppendOrderTarget(null)}
         order={appendOrderTarget}
         menus={menus}
+        defaultPrepTimeMinutes={settings?.defaultPrepTimeMinutes}
         onNotify={onNotify}
       />
     </div>
