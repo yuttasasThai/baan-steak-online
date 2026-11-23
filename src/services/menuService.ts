@@ -345,12 +345,18 @@ export async function deleteTable(tableId: string): Promise<void> {
 
 export const INITIAL_CATEGORIES: CategoryItem[] = [
   { id: 'cat_steak', name: 'สเต็ก', orderIndex: 0 },
-  { id: 'cat_salad', name: 'สลัด', orderIndex: 1 },
-  { id: 'cat_snacks', name: 'ของทานเล่น', orderIndex: 2 },
-  { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 3 },
+  { id: 'cat_spaghetti', name: 'สปาเก็ตตี้', orderIndex: 1 },
+  { id: 'cat_salad', name: 'สลัด', orderIndex: 2 },
+  { id: 'cat_snacks', name: 'ของทานเล่น', orderIndex: 3 },
+  { id: 'cat_drinks', name: 'เครื่องดื่ม', orderIndex: 4 },
 ];
 
-export const CATEGORY_PRIORITY_ORDER = ['สเต็ก', 'สลัด', 'ของทานเล่น', 'เครื่องดื่ม'];
+export const CATEGORY_PRIORITY_ORDER = ['สเต็ก', 'สปาเก็ตตี้', 'สลัด', 'ของทานเล่น', 'เครื่องดื่ม'];
+
+export function isSpaghettiMenuName(name?: string): boolean {
+  if (!name) return false;
+  return /สปาเก็ตตี้|สปาเกตตี้|สปาเก็ตตี|spaghetti|พาสต้า|pasta/i.test(name.trim());
+}
 
 export function getCategoryPriorityIndex(categoryName?: string, categories?: CategoryItem[]): number {
   if (!categoryName) return 999;
@@ -371,6 +377,30 @@ export function sortCategories(categories: CategoryItem[]): CategoryItem[] {
     if (idxA !== idxB) return idxA - idxB;
     return (a.orderIndex ?? 0) - (b.orderIndex ?? 0);
   });
+}
+
+export function mergeCategoriesWithMenus(
+  categories: CategoryItem[],
+  menus: Array<Pick<MenuItem, 'category'>>
+): CategoryItem[] {
+  const byName = new Map<string, CategoryItem>();
+  for (const c of categories || []) {
+    const cleanName = (c.name || '').trim();
+    if (!cleanName) continue;
+    if (!byName.has(cleanName)) {
+      byName.set(cleanName, { ...c, name: cleanName });
+    }
+  }
+  for (const m of menus || []) {
+    const cleanCat = (m.category || '').trim();
+    if (!cleanCat || byName.has(cleanCat)) continue;
+    byName.set(cleanCat, {
+      id: cleanCat === 'สปาเก็ตตี้' ? 'cat_spaghetti' : `cat_derived_${cleanCat}`,
+      name: cleanCat,
+      orderIndex: getCategoryPriorityIndex(cleanCat),
+    });
+  }
+  return sortCategories(Array.from(byName.values()));
 }
 
 export function isDrinkCategory(categoryName?: string): boolean {
@@ -2707,6 +2737,132 @@ export async function addMenuItem(data: Omit<MenuItem, 'id'>): Promise<string> {
   }
 }
 
+const VALID_FIRESTORE_ID_REGEX = /^[a-zA-Z0-9_-]+$/;
+
+function buildRepairedMenuDocument(
+  existingData: Record<string, any> | undefined,
+  overrides: Partial<MenuItem>
+): Record<string, any> {
+  const base = existingData || {};
+  const nowIso = new Date().toISOString();
+  const runtimeHost = getRuntimeHost();
+
+  const rawName = overrides.name !== undefined ? overrides.name : base.name;
+  const cleanName = (typeof rawName === 'string' ? rawName : String(rawName || 'เมนูอาหาร'))
+    .trim()
+    .slice(0, 120) || 'เมนูอาหาร';
+
+  const rawPrice = overrides.price !== undefined ? overrides.price : base.price;
+  const parsedPrice = Number(rawPrice);
+  const cleanPrice = Number.isFinite(parsedPrice) && parsedPrice >= 0 ? parsedPrice : 0;
+
+  const rawCost = overrides.cost !== undefined ? overrides.cost : base.cost;
+  const parsedCost = Number(rawCost);
+  const cleanCost = Number.isFinite(parsedCost) && parsedCost >= 0 ? parsedCost : 0;
+
+  const rawCategory = overrides.category !== undefined ? overrides.category : base.category;
+  const cleanCategory =
+    (typeof rawCategory === 'string' ? rawCategory : String(rawCategory || 'สเต็ก'))
+      .trim()
+      .slice(0, 60) || 'สเต็ก';
+
+  const rawOrderIndex =
+    overrides.orderIndex !== undefined ? overrides.orderIndex : base.orderIndex;
+  const parsedOrderIndex = Number(rawOrderIndex);
+  const cleanOrderIndex =
+    Number.isFinite(parsedOrderIndex) && parsedOrderIndex >= 0
+      ? Math.floor(parsedOrderIndex)
+      : 0;
+
+  const cleanIsAvailable =
+    overrides.isAvailable !== undefined
+      ? Boolean(overrides.isAvailable)
+      : base.isAvailable !== undefined
+      ? Boolean(base.isAvailable)
+      : true;
+
+  const cleanIsPublished =
+    overrides.isPublished !== undefined
+      ? Boolean(overrides.isPublished)
+      : base.isPublished !== undefined
+      ? Boolean(base.isPublished)
+      : true;
+
+  const rawDescription =
+    overrides.description !== undefined ? overrides.description : base.description;
+  const cleanDescription =
+    typeof rawDescription === 'string' ? rawDescription.slice(0, 800) : '';
+
+  const rawImageUrl =
+    overrides.imageUrl !== undefined ? overrides.imageUrl : base.imageUrl;
+  const cleanImageUrl = typeof rawImageUrl === 'string' ? rawImageUrl.trim() : '';
+
+  const docData: Record<string, any> = {
+    name: cleanName,
+    price: cleanPrice,
+    cost: cleanCost,
+    category: cleanCategory,
+    imageUrl: cleanImageUrl,
+    description: cleanDescription,
+    isAvailable: cleanIsAvailable,
+    isPublished: cleanIsPublished,
+    orderIndex: cleanOrderIndex,
+    createdAt:
+      typeof base.createdAt === 'string' && base.createdAt.trim()
+        ? base.createdAt
+        : nowIso,
+    updatedAt: nowIso,
+    createdBy:
+      typeof base.createdBy === 'string' && base.createdBy.trim()
+        ? base.createdBy.slice(0, 120)
+        : 'admin-manual',
+    updatedBy:
+      typeof overrides.updatedBy === 'string' && overrides.updatedBy.trim()
+        ? overrides.updatedBy.slice(0, 120)
+        : 'admin-manual',
+    updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
+    updatedHost: runtimeHost,
+  };
+
+  if (typeof base.createdSourceAppVersion === 'string') {
+    docData.createdSourceAppVersion = base.createdSourceAppVersion;
+  }
+  if (typeof base.createdHost === 'string') {
+    docData.createdHost = base.createdHost;
+  }
+
+  if ('prepTimeMinutes' in overrides) {
+    if (
+      typeof overrides.prepTimeMinutes === 'number' &&
+      Number.isFinite(overrides.prepTimeMinutes) &&
+      overrides.prepTimeMinutes > 0
+    ) {
+      docData.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(overrides.prepTimeMinutes)));
+    }
+  } else if (
+    typeof base.prepTimeMinutes === 'number' &&
+    Number.isFinite(base.prepTimeMinutes) &&
+    base.prepTimeMinutes > 0
+  ) {
+    docData.prepTimeMinutes = Math.max(1, Math.min(180, Math.round(base.prepTimeMinutes)));
+  }
+
+  return docData;
+}
+
+function hasMenuDocumentSchemaDefects(raw: Record<string, any> | undefined): boolean {
+  if (!raw) return true;
+  if (typeof raw.name !== 'string' || raw.name.trim().length === 0 || raw.name.length > 120) return true;
+  if (typeof raw.price !== 'number' || !Number.isFinite(raw.price) || raw.price < 0) return true;
+  if (typeof raw.category !== 'string' || raw.category.trim().length === 0 || raw.category.length > 60) return true;
+  if (typeof raw.isAvailable !== 'boolean') return true;
+  if (typeof raw.isPublished !== 'boolean') return true;
+  if (typeof raw.orderIndex !== 'number' || !Number.isFinite(raw.orderIndex) || raw.orderIndex < 0) return true;
+  if ('description' in raw && (typeof raw.description !== 'string' || raw.description.length > 800)) return true;
+  if ('imageUrl' in raw && typeof raw.imageUrl !== 'string') return true;
+  return false;
+}
+
 export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promise<void> {
   const menuRef = doc(db, 'menus', id);
   const payload: Record<string, any> = {
@@ -2731,13 +2887,38 @@ export async function updateMenuItem(id: string, data: Partial<MenuItem>): Promi
   if (data.description !== undefined) payload.description = data.description.slice(0, 800);
   if (data.isAvailable !== undefined) payload.isAvailable = Boolean(data.isAvailable);
   if (data.isPublished !== undefined) payload.isPublished = Boolean(data.isPublished);
-  if (data.orderIndex !== undefined) payload.orderIndex = Number(data.orderIndex);
+  if (data.orderIndex !== undefined) payload.orderIndex = Math.max(0, Number(data.orderIndex) || 0);
 
   try {
     await updateDoc(menuRef, payload);
     void markMenusInitializedFlag();
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `menus/${id}`);
+  } catch (primaryError) {
+    try {
+      const existingSnap = await getDoc(menuRef);
+      const existingData = existingSnap.exists() ? existingSnap.data() : undefined;
+      const repaired = buildRepairedMenuDocument(existingData, data);
+
+      if (!VALID_FIRESTORE_ID_REGEX.test(id)) {
+        const cleanNewId = `menu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        await setDoc(doc(db, 'menus', cleanNewId), {
+          ...repaired,
+          createdBy: 'admin-manual',
+        });
+        try {
+          await deleteDoc(menuRef);
+        } catch {
+          // Legacy invalid doc ID might be blocked from delete by rules
+        }
+        void markMenusInitializedFlag();
+        return;
+      }
+
+      await setDoc(menuRef, repaired);
+      void markMenusInitializedFlag();
+    } catch (repairError) {
+      console.error('Menu update + repair failed:', { id, primaryError, repairError });
+      handleFirestoreError(repairError, OperationType.UPDATE, `menus/${id}`);
+    }
   }
 }
 
@@ -2788,7 +2969,43 @@ export async function cleanupLegacyAutoSeededMenus(idsToDelete?: string[]): Prom
 
 export async function toggleMenuItemAvailability(id: string, current: boolean): Promise<boolean> {
   const next = !current;
-  await updateMenuItem(id, { isAvailable: next });
+  const menuRef = doc(db, 'menus', id);
+
+  try {
+    const snap = await getDoc(menuRef);
+    if (snap.exists()) {
+      const raw = snap.data();
+      if (hasMenuDocumentSchemaDefects(raw) || !VALID_FIRESTORE_ID_REGEX.test(id)) {
+        const repaired = buildRepairedMenuDocument(raw, {
+          isAvailable: next,
+          updatedBy: 'admin-toggle-avail-repair',
+        });
+
+        if (!VALID_FIRESTORE_ID_REGEX.test(id)) {
+          const cleanNewId = `menu_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          await setDoc(doc(db, 'menus', cleanNewId), {
+            ...repaired,
+            createdBy: 'admin-manual',
+          });
+          try {
+            await deleteDoc(menuRef);
+          } catch {
+            // ignore if rules block deleting legacy non-standard ID
+          }
+          void markMenusInitializedFlag();
+          return next;
+        }
+
+        await setDoc(menuRef, repaired);
+        void markMenusInitializedFlag();
+        return next;
+      }
+    }
+  } catch (precheckErr) {
+    console.warn('Precheck before toggleMenuItemAvailability fallback to updateMenuItem:', precheckErr);
+  }
+
+  await updateMenuItem(id, { isAvailable: next, updatedBy: 'admin-toggle-avail' });
   return next;
 }
 
@@ -2810,23 +3027,35 @@ export async function reorderMenuItem(
   if (targetIndex < 0 || targetIndex >= allItems.length) return;
 
   const targetItem = allItems[targetIndex];
-  const currentOrder = item.orderIndex;
-  const targetOrder = targetItem.orderIndex;
+  const currentOrder = Math.max(0, Number(item.orderIndex) || 0);
+  const targetOrder = Math.max(0, Number(targetItem.orderIndex) || 0);
 
-  const resolvedTarget = targetOrder === currentOrder
-    ? (direction === 'up' ? currentOrder - 1 : currentOrder + 1)
-    : targetOrder;
+  let nextItemOrder = targetOrder;
+  let nextTargetOrder = currentOrder;
+
+  if (targetOrder === currentOrder) {
+    if (direction === 'up') {
+      if (currentOrder === 0) {
+        nextItemOrder = 0;
+        nextTargetOrder = 1;
+      } else {
+        nextItemOrder = currentOrder - 1;
+      }
+    } else {
+      nextItemOrder = currentOrder + 1;
+    }
+  }
 
   await Promise.all([
-    updateMenuItem(item.id, { orderIndex: resolvedTarget }),
-    updateMenuItem(targetItem.id, { orderIndex: currentOrder }),
+    updateMenuItem(item.id, { orderIndex: Math.max(0, nextItemOrder) }),
+    updateMenuItem(targetItem.id, { orderIndex: Math.max(0, nextTargetOrder) }),
   ]);
 }
 
 /**
  * ปรับปรุงและบันทึกลำดับ orderIndex ใน Firestore ทั้งหมดใหม่ทันที
  * ตามเงื่อนไข:
- * 1) หมวดหมู่นำหน้า: สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม
+ * 1) หมวดหมู่นำหน้า: สเต็ก -> สปาเก็ตตี้ -> สลัด -> ของทานเล่น -> เครื่องดื่ม
  * 2) ราคา: ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง (เช่น สเต็กไก่ 59 บ. ก่อน สเต็กหมู 69 บ.)
  */
 export async function reorderMenusByCategoryAndPrice(categories?: CategoryItem[]): Promise<void> {
@@ -2844,24 +3073,22 @@ export async function reorderMenusByCategoryAndPrice(categories?: CategoryItem[]
       description: data.description || '',
       isAvailable: Boolean(data.isAvailable),
       isPublished: data.isPublished !== undefined ? Boolean(data.isPublished) : true,
-      orderIndex: Number(data.orderIndex) || 0,
+      orderIndex: Math.max(0, Number(data.orderIndex) || 0),
     });
   });
 
   const sorted = sortMenus(items, categories);
   const updates = sorted.map((item, idx) =>
-    updateDoc(doc(db, 'menus', item.id), {
+    updateMenuItem(item.id, {
       orderIndex: idx,
-      updatedAt: new Date().toISOString(),
       updatedBy: 'admin-auto-reorder',
-      updatedSourceAppVersion: CURRENT_REVISION.revisionCode,
     })
   );
   await Promise.all(updates);
 }
 
-export async function addCategory(name: string, orderIndex: number): Promise<string> {
-  const catId = `cat_${Date.now()}`;
+export async function addCategory(name: string, orderIndex: number, fixedId?: string): Promise<string> {
+  const catId = fixedId || `cat_${Date.now()}`;
   const catRef = doc(db, 'categories', catId);
   try {
     await setDoc(catRef, { name: name.trim().slice(0, 60), orderIndex });
@@ -2878,6 +3105,104 @@ export async function deleteCategory(id: string): Promise<void> {
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `categories/${id}`);
   }
+}
+
+export async function reclassifySpaghettiMenus(targetMenuIds?: string[]): Promise<number> {
+  const catSnap = await getDocs(collection(db, 'categories'));
+  const hasSpaghettiCat = catSnap.docs.some(
+    (d) => String(d.data().name || '').trim() === 'สปาเก็ตตี้'
+  );
+  if (!hasSpaghettiCat) {
+    await setDoc(doc(db, 'categories', 'cat_spaghetti'), {
+      id: 'cat_spaghetti',
+      name: 'สปาเก็ตตี้',
+      orderIndex: 1,
+    });
+  }
+
+  const menusSnap = await getDocs(collection(db, 'menus'));
+  let updatedCount = 0;
+
+  for (const docSnap of menusSnap.docs) {
+    const data = docSnap.data();
+    const name = String(data.name || '');
+    const cat = String(data.category || '').trim();
+    const shouldMove = targetMenuIds
+      ? targetMenuIds.includes(docSnap.id) && cat !== 'สปาเก็ตตี้'
+      : isSpaghettiMenuName(name) && cat !== 'สปาเก็ตตี้';
+
+    if (shouldMove) {
+      await updateMenuItem(docSnap.id, {
+        category: 'สปาเก็ตตี้',
+        updatedBy: 'admin-spaghetti-category',
+      });
+      updatedCount++;
+    }
+  }
+
+  return updatedCount;
+}
+
+let spaghettiMigrationInFlight: Promise<{ addedCategory: boolean; reclassifiedCount: number }> | null = null;
+
+/**
+ * เพิ่มหมวดหมู่ "สปาเก็ตตี้" และแยกเมนูที่ชื่อเป็นสปาเก็ตตี้/พาสต้าเข้าหมวดใหม่อัตโนมัติ (ทำงานครั้งเดียวเท่านั้น)
+ */
+export async function ensureSpaghettiCategoryOnce(): Promise<{
+  addedCategory: boolean;
+  reclassifiedCount: number;
+}> {
+  if (spaghettiMigrationInFlight) {
+    return spaghettiMigrationInFlight;
+  }
+
+  spaghettiMigrationInFlight = (async () => {
+    try {
+      const shopRef = doc(db, 'settings', 'shop');
+      const shopSnap = await getDoc(shopRef);
+      if (shopSnap.exists() && shopSnap.data()?.spaghettiCategoryInitialized === true) {
+        return { addedCategory: false, reclassifiedCount: 0 };
+      }
+
+      const catSnap = await getDocs(collection(db, 'categories'));
+      const hasSpaghettiCat = catSnap.docs.some(
+        (d) => String(d.data().name || '').trim() === 'สปาเก็ตตี้'
+      );
+
+      let addedCategory = false;
+      if (!hasSpaghettiCat) {
+        await setDoc(doc(db, 'categories', 'cat_spaghetti'), {
+          id: 'cat_spaghetti',
+          name: 'สปาเก็ตตี้',
+          orderIndex: 1,
+        });
+        addedCategory = true;
+      }
+
+      const menusSnap = await getDocs(collection(db, 'menus'));
+      let reclassifiedCount = 0;
+      for (const docSnap of menusSnap.docs) {
+        const data = docSnap.data();
+        const name = String(data.name || '');
+        const cat = String(data.category || '').trim();
+        if (isSpaghettiMenuName(name) && cat !== 'สปาเก็ตตี้') {
+          await updateMenuItem(docSnap.id, {
+            category: 'สปาเก็ตตี้',
+            updatedBy: 'system-spaghetti-migration',
+          });
+          reclassifiedCount++;
+        }
+      }
+
+      await setDoc(shopRef, { spaghettiCategoryInitialized: true }, { merge: true });
+      return { addedCategory, reclassifiedCount };
+    } catch (err) {
+      console.warn('ensureSpaghettiCategoryOnce warning:', err);
+      return { addedCategory: false, reclassifiedCount: 0 };
+    }
+  })();
+
+  return spaghettiMigrationInFlight;
 }
 
 // Strict manual-only reset helper (NEVER runs automatically on startup or visitor load)
