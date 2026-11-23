@@ -51,6 +51,9 @@ export function getDefaultPrepTimeByCategory(
   if (/ทานเล่น|snack|appetizer|ของกินเล่น|เกี๊ยว|เฟรนช์ฟราย/.test(cat)) {
     return 8;
   }
+  if (/สปาเก็ตตี้|สปาเกตตี้|สปาเก็ตตี|spaghetti|พาสต้า|pasta/.test(cat)) {
+    return Math.max(5, Math.min(safeDefault, 10));
+  }
   return safeDefault;
 }
 
