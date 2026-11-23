@@ -15,7 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { DiningType, MenuItem, RestaurantTable } from '../types';
-import { createOrder, normalizeMenuImageUrl } from '../services/menuService';
+import { createOrder, getCategoryPriorityIndex, normalizeMenuImageUrl } from '../services/menuService';
 import { estimateOrderPrepMinutes, resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface AdminCreateOrderModalProps {
@@ -61,7 +61,9 @@ export const AdminCreateOrderModal: React.FC<AdminCreateOrderModalProps> = ({
 
   if (!isOpen) return null;
 
-  const categories = Array.from(new Set(menus.map((m) => m.category))).filter(Boolean);
+  const categories = Array.from(new Set(menus.map((m) => m.category)))
+    .filter(Boolean)
+    .sort((a, b) => getCategoryPriorityIndex(a) - getCategoryPriorityIndex(b));
 
   const filteredMenus = menus.filter((m) => {
     const matchCat = selectedCategory === 'ทั้งหมด' || m.category === selectedCategory;

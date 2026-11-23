@@ -20,6 +20,7 @@ import {
   adjustOrderPrepTime,
   appendItemsToOrder,
   cancelOrderItem,
+  getCategoryPriorityIndex,
   getEffectiveItemStatus,
   getOrderCompletionSummary,
   markAllOrderItemsStatus,
@@ -94,7 +95,10 @@ export const TableDetailModal: React.FC<TableDetailModalProps> = ({
   }, [isOpen, table?.id]);
 
   const categories = useMemo(
-    () => Array.from(new Set(menus.map((m) => m.category))).filter(Boolean),
+    () =>
+      Array.from(new Set(menus.map((m) => m.category)))
+        .filter(Boolean)
+        .sort((a, b) => getCategoryPriorityIndex(a) - getCategoryPriorityIndex(b)),
     [menus]
   );
 

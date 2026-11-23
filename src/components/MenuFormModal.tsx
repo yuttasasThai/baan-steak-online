@@ -17,6 +17,7 @@ import { compressImageFile, uploadImageToServer } from '../utils/imageCompressor
 import { CategoryItem, MenuItem } from '../types';
 import { ImagePickerModal } from './ImagePickerModal';
 import { DEFAULT_SHOP_PREP_MINUTES, getDefaultPrepTimeByCategory } from '../utils/orderPrepUtils';
+import { sortCategories } from '../services/menuService';
 
 interface MenuFormModalProps {
   isOpen: boolean;
@@ -48,7 +49,9 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
   const [description, setDescription] = useState(initialData?.description || '');
   const [isAvailable, setIsAvailable] = useState(initialData ? initialData.isAvailable : true);
   const [isPublished, setIsPublished] = useState(initialData ? initialData.isPublished : true);
-  const [orderIndex, setOrderIndex] = useState(initialData ? String(initialData.orderIndex) : '0');
+  const [orderIndex, setOrderIndex] = useState(
+    initialData ? String(Math.max(0, Number(initialData.orderIndex) || 0)) : '0'
+  );
 
   // Phone Image selection states
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -60,6 +63,17 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
   const [submitStatus, setSubmitStatus] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState('');
 
+  const sortedCategoryList = React.useMemo(() => {
+    const base = sortCategories(categories || []);
+    if (!base.some((c) => c.name.trim() === 'สปาเก็ตตี้')) {
+      return sortCategories([
+        ...base,
+        { id: 'cat_spaghetti', name: 'สปาเก็ตตี้', orderIndex: 1 },
+      ]);
+    }
+    return base;
+  }, [categories]);
+
   // Synchronize form fields whenever modal opens or initialData changes
   React.useEffect(() => {
     if (isOpen) {
@@ -69,18 +83,18 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
       setPrepTimeMinutes(
         initialData && initialData.prepTimeMinutes ? String(initialData.prepTimeMinutes) : ''
       );
-      setCategory(initialData?.category || (categories[0]?.name || 'สเต็ก'));
+      setCategory(initialData?.category || (sortedCategoryList[0]?.name || 'สเต็ก'));
       setImageUrl(initialData?.imageUrl || '');
       setDescription(initialData?.description || '');
       setIsAvailable(initialData ? initialData.isAvailable : true);
       setIsPublished(initialData ? initialData.isPublished : true);
-      setOrderIndex(initialData ? String(initialData.orderIndex) : '0');
+      setOrderIndex(initialData ? String(Math.max(0, Number(initialData.orderIndex) || 0)) : '0');
       setSelectedFile(null);
       setPreviewUrl(null);
       setErrorMsg('');
       setSubmitStatus('');
     }
-  }, [isOpen, initialData, categories]);
+  }, [isOpen, initialData, sortedCategoryList]);
 
   if (!isOpen) return null;
 
@@ -153,22 +167,27 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
       const numCost = Math.max(0, Number(cost) || 0);
       const parsedPrep = prepTimeMinutes.trim() ? Math.round(Number(prepTimeMinutes)) : 0;
       await onSubmit({
-        name: name.trim(),
+        name: name.trim().slice(0, 120),
         price: numPrice,
         cost: numCost,
         prepTimeMinutes: parsedPrep > 0 ? Math.max(1, Math.min(180, parsedPrep)) : 0,
-        category: category.trim(),
+        category: (category.trim() || 'สเต็ก').slice(0, 60),
         imageUrl: finalImageUrl,
-        description: description.trim(),
+        description: description.trim().slice(0, 800),
         isAvailable,
         isPublished,
-        orderIndex: Number(orderIndex) || 0,
+        orderIndex: Math.max(0, Number(orderIndex) || 0),
       });
 
       onClose();
     } catch (err) {
       console.error('Submit error:', err);
-      setErrorMsg('เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+      const rawMsg = err instanceof Error ? err.message : '';
+      setErrorMsg(
+        rawMsg
+          ? `เกิดข้อผิดพลาดในการบันทึกข้อมูล (${rawMsg.slice(0, 120)})`
+          : 'เกิดข้อผิดพลาดในการบันทึกข้อมูล'
+      );
     } finally {
       setIsSubmitting(false);
       setSubmitStatus('');
@@ -328,9 +347,10 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
               <input
                 type="text"
                 required
+                maxLength={120}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="เช่น สเต็กหมู, สเต็กไก่..."
+                placeholder="เช่น สเต็กหมู, สเต็กไก่, สปาเก็ตตี้..."
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-medium focus:outline-none focus:border-red-500"
               />
             </div>
@@ -374,12 +394,12 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full px-2.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-medium focus:outline-none focus:border-red-500"
                 >
-                  {categories.map((c) => (
+                  {sortedCategoryList.map((c) => (
                     <option key={c.id} value={c.name}>
                       {c.name}
                     </option>
                   ))}
-                  {!categories.some((c) => c.name === category) && (
+                  {!sortedCategoryList.some((c) => c.name === category) && (
                     <option value={category}>{category}</option>
                   )}
                 </select>
@@ -427,6 +447,7 @@ export const MenuFormModal: React.FC<MenuFormModalProps> = ({
               <label className="block font-bold text-stone-700 mb-1">รายละเอียดอาหาร (บันทึกข้อมูลหลังบ้าน)</label>
               <textarea
                 rows={2}
+                maxLength={800}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="ระบุส่วนผสม หรือรายละเอียดอาหาร..."

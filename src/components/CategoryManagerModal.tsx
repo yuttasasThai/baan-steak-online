@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Layers, Plus, Trash2, X } from 'lucide-react';
 import { CategoryItem } from '../types';
-import { addCategory, deleteCategory } from '../services/menuService';
+import { addCategory, deleteCategory, sortCategories } from '../services/menuService';
 
 interface CategoryManagerModalProps {
   isOpen: boolean;
@@ -18,14 +18,18 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 }) => {
   const [newCatName, setNewCatName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
+  const sortedCategories = sortCategories(categories);
+
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCatName.trim()) return;
+    const clean = newCatName.trim();
+    if (!clean) return;
 
-    if (categories.some((c) => c.name.toLowerCase() === newCatName.trim().toLowerCase())) {
+    if (categories.some((c) => c.name.trim().toLowerCase() === clean.toLowerCase())) {
       onNotify('มีหมวดหมู่นี้อยู่ในระบบแล้ว', 'error');
       return;
     }
@@ -33,10 +37,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
     try {
       setIsSubmitting(true);
       const nextOrder = categories.length;
-      await addCategory(newCatName.trim(), nextOrder);
+      const fixedId = clean === 'สปาเก็ตตี้' ? 'cat_spaghetti' : undefined;
+      await addCategory(clean, nextOrder, fixedId);
       setNewCatName('');
-      onNotify(`เพิ่มหมวดหมู่ "${newCatName.trim()}" เรียบร้อย`, 'success');
-    } catch (err) {
+      onNotify(`เพิ่มหมวดหมู่ "${clean}" เรียบร้อย`, 'success');
+    } catch {
       onNotify('เกิดข้อผิดพลาดในการเพิ่มหมวดหมู่', 'error');
     } finally {
       setIsSubmitting(false);
@@ -44,13 +49,12 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
   };
 
   const handleDelete = async (cat: CategoryItem) => {
-    if (window.confirm(`ต้องการลบหมวดหมู่ "${cat.name}" หรือไม่?`)) {
-      try {
-        await deleteCategory(cat.id);
-        onNotify(`ลบหมวดหมู่ "${cat.name}" เรียบร้อย`, 'success');
-      } catch (err) {
-        onNotify('ไม่สามารถลบหมวดหมู่ได้', 'error');
-      }
+    try {
+      await deleteCategory(cat.id);
+      setConfirmDeleteId(null);
+      onNotify(`ลบหมวดหมู่ "${cat.name}" เรียบร้อย`, 'success');
+    } catch {
+      onNotify('ไม่สามารถลบหมวดหมู่ได้', 'error');
     }
   };
 
@@ -65,7 +69,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
             </div>
             <div>
               <h3 className="text-lg font-bold">จัดการหมวดหมู่อาหาร</h3>
-              <p className="text-xs text-stone-400">กำหนดหมวดหมู่ เช่น สเต็ก, สลัด, ของทานเล่น, เครื่องดื่ม</p>
+              <p className="text-xs text-stone-400">กำหนดหมวดหมู่ เช่น สเต็ก, สปาเก็ตตี้, สลัด, ของทานเล่น, เครื่องดื่ม</p>
             </div>
           </div>
           <button
@@ -86,7 +90,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
               type="text"
               value={newCatName}
               onChange={(e) => setNewCatName(e.target.value)}
-              placeholder="ระบุชื่อหมวดหมู่ เช่น ของหวาน, พาสต้า..."
+              placeholder="ระบุชื่อหมวดหมู่ เช่น สปาเก็ตตี้, ของหวาน..."
               maxLength={60}
               className="flex-1 px-3.5 py-2.5 bg-stone-900 border border-stone-700 rounded-xl text-sm text-stone-100 placeholder-stone-500 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
             />
@@ -103,27 +107,47 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({
 
         {/* Category List */}
         <div className="p-5 max-h-80 overflow-y-auto space-y-2">
-          {categories.length === 0 ? (
+          {sortedCategories.length === 0 ? (
             <div className="text-center py-8 text-stone-500 text-sm">ยังไม่มีหมวดหมู่อาหารในระบบ</div>
           ) : (
-            categories.map((cat, idx) => (
+            sortedCategories.map((cat, idx) => (
               <div
                 key={cat.id}
-                className="flex items-center justify-between p-3 rounded-xl bg-stone-950/60 border border-stone-800/80 hover:border-stone-700 transition"
+                className="flex items-center justify-between gap-2 p-3 rounded-xl bg-stone-950/60 border border-stone-800/80 hover:border-stone-700 transition"
               >
-                <div className="flex items-center gap-3">
-                  <span className="w-6 h-6 rounded-lg bg-stone-800 flex items-center justify-center text-xs font-bold text-stone-400">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-6 h-6 rounded-lg bg-stone-800 flex items-center justify-center text-xs font-bold text-stone-400 shrink-0">
                     {idx + 1}
                   </span>
-                  <span className="font-medium text-sm text-stone-200">{cat.name}</span>
+                  <span className="font-medium text-sm text-stone-200 truncate">{cat.name}</span>
                 </div>
-                <button
-                  onClick={() => handleDelete(cat)}
-                  className="p-1.5 text-stone-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
-                  title="ลบหมวดหมู่"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                {confirmDeleteId === cat.id ? (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(cat)}
+                      className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold cursor-pointer"
+                    >
+                      ยืนยันลบ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="px-2 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteId(cat.id)}
+                    className="p-1.5 text-stone-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition cursor-pointer"
+                    title="ลบหมวดหมู่"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))
           )}

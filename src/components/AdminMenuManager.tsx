@@ -27,15 +27,18 @@ import {
   resolveMenuPrepTimeMinutes,
 } from '../utils/orderPrepUtils';
 import {
+  addCategory,
   addMenuItem,
   cleanupLegacyAutoSeededMenus,
   deleteMenuItem,
   initializeBaanSteakMenu,
+  isSpaghettiMenuName,
+  mergeCategoriesWithMenus,
   normalizeMenuImageUrl,
+  reclassifySpaghettiMenus,
   reorderMenuItem,
   reorderMenusByCategoryAndPrice,
   SHOP_INFO,
-  sortCategories,
   sortMenus,
   toggleMenuItemAvailability,
   toggleMenuItemPublish,
@@ -132,12 +135,18 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   };
 
   const [isReordering, setIsReordering] = useState(false);
+  const [togglingAvailId, setTogglingAvailId] = useState<string | null>(null);
+  const [isSeparatingSpaghetti, setIsSeparatingSpaghetti] = useState(false);
 
-  // Sort categories (สเต็ก -> สลัด -> ของทานเล่น -> เครื่องดื่ม)
+  // Sort categories (สเต็ก -> สปาเก็ตตี้ -> สลัด -> ของทานเล่น -> เครื่องดื่ม)
   // and menus by category then price ascending (ราคาน้อยอยู่บน -> ราคาแพงอยู่ล่าง)
-  const sortedCategories = sortCategories(categories);
+  const sortedCategories = mergeCategoriesWithMenus(categories, menus);
   const sortedMenus = sortMenus(menus, sortedCategories);
   const autoSeededMockDrinks = sortedMenus.filter((m) => /^menu_drink_\d+$/.test(m.id));
+  const hasSpaghettiCategory = categories.some((c) => c.name.trim() === 'สปาเก็ตตี้');
+  const uncategorizedSpaghettiMenus = sortedMenus.filter(
+    (m) => isSpaghettiMenuName(m.name) && m.category.trim() !== 'สปาเก็ตตี้'
+  );
 
   // Weekly Recommended Menus Calculation & Handlers
   const isManualRecommended = settings?.recommendedMenuMode === 'manual';
@@ -292,7 +301,9 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
   };
 
   const handleToggleAvail = async (item: MenuItem) => {
+    if (togglingAvailId === item.id) return;
     try {
+      setTogglingAvailId(item.id);
       const next = await toggleMenuItemAvailability(item.id, item.isAvailable);
       if (next) {
         onNotify(`🟢 "${item.name}" พร้อมขาย (ลูกค้าสามารถสั่งได้)`, 'success');
@@ -303,7 +314,39 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
         );
       }
     } catch (err) {
-      onNotify('ไม่สามารถเปลี่ยนสถานะการขายได้', 'error');
+      console.error('Toggle availability error:', item.id, item.name, err);
+      const rawMsg = err instanceof Error ? err.message : '';
+      onNotify(
+        `ไม่สามารถเปลี่ยนสถานะของ "${item.name}" ได้${rawMsg ? ` (${rawMsg.slice(0, 80)})` : ''}`,
+        'error'
+      );
+    } finally {
+      setTogglingAvailId((prev) => (prev === item.id ? null : prev));
+    }
+  };
+
+  const handleSeparateSpaghettiCategory = async () => {
+    try {
+      setIsSeparatingSpaghetti(true);
+      if (!hasSpaghettiCategory) {
+        await addCategory('สปาเก็ตตี้', 1, 'cat_spaghetti');
+      }
+      const movedCount = await reclassifySpaghettiMenus(
+        uncategorizedSpaghettiMenus.map((m) => m.id)
+      );
+      if (movedCount > 0) {
+        onNotify(
+          `🍝 แยกหมวดหมู่ "สปาเก็ตตี้" และย้าย ${movedCount} เมนูสปาเก็ตตี้เข้าหมวดเรียบร้อยแล้ว`,
+          'success'
+        );
+      } else {
+        onNotify('🍝 เพิ่มหมวดหมู่ "สปาเก็ตตี้" เรียบร้อยแล้ว สามารถเลือกจัดหมวดให้เมนูที่ต้องการได้ทันที', 'success');
+      }
+    } catch (err) {
+      console.error('Separate spaghetti error:', err);
+      onNotify('ไม่สามารถสร้างหมวดหมู่สปาเก็ตตี้ได้', 'error');
+    } finally {
+      setIsSeparatingSpaghetti(false);
     }
   };
 
@@ -506,6 +549,40 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Helper Banner for Spaghetti Category Separation */}
+      {(!hasSpaghettiCategory || uncategorizedSpaghettiMenus.length > 0) && (
+        <div className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-orange-950 shadow-xs">
+          <div className="flex items-start gap-2.5">
+            <span className="text-xl shrink-0 leading-none mt-0.5">🍝</span>
+            <div className="text-xs leading-relaxed">
+              <div className="font-extrabold text-orange-950">
+                {!hasSpaghettiCategory
+                  ? 'ยังไม่มีหมวดหมู่ "สปาเก็ตตี้" ในรายการหมวดหมู่หลัก'
+                  : `พบเมนูสปาเก็ตตี้ ${uncategorizedSpaghettiMenus.length} รายการ ที่ยังอยู่ในหมวดอื่น`}
+              </div>
+              <div className="text-orange-800 mt-0.5">
+                {uncategorizedSpaghettiMenus.length > 0
+                  ? `เมนูที่พบ: ${uncategorizedSpaghettiMenus.map((m) => `"${m.name}"`).join(', ')}`
+                  : 'กดปุ่มเพื่อแยกหมวดหมู่ "สปาเก็ตตี้" ให้ลูกค้าเลือกดูเฉพาะเมนูเส้นได้สะดวก'}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleSeparateSpaghettiCategory}
+            disabled={isSeparatingSpaghetti}
+            className="px-3.5 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+          >
+            {isSeparatingSpaghetti && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            <span>
+              {uncategorizedSpaghettiMenus.length > 0
+                ? `🍝 แยกเข้าหมวด "สปาเก็ตตี้" (${uncategorizedSpaghettiMenus.length})`
+                : '🍝 เพิ่มหมวด "สปาเก็ตตี้"'}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Alert Banner when legacy auto-injected mock drinks exist in Firestore */}
       {autoSeededMockDrinks.length > 0 && (
@@ -744,19 +821,22 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
           >
             ทั้งหมด ({menus.length})
           </button>
-          {sortedCategories.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCategory(c.name)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === c.name
-                  ? 'bg-red-600 text-white'
-                  : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
+          {sortedCategories.map((c) => {
+            const countInCat = menus.filter((m) => m.category.trim() === c.name.trim()).length;
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCategory(c.name)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  selectedCategory === c.name
+                    ? 'bg-red-600 text-white'
+                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                }`}
+              >
+                {c.name} ({countInCat})
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -872,14 +952,18 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                   <div className="flex items-center justify-between gap-1.5 pt-0.5 text-xs">
                     <button
                       type="button"
+                      disabled={togglingAvailId === item.id}
                       onClick={() => handleToggleAvail(item)}
-                      className={`flex-1 py-1.5 px-2 rounded-xl font-bold border transition ${
+                      className={`flex-1 py-1.5 px-2 rounded-xl font-bold border transition flex items-center justify-center gap-1 disabled:opacity-60 cursor-pointer ${
                         item.isAvailable
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                           : 'bg-rose-50 text-rose-800 border-rose-300'
                       }`}
                     >
-                      {item.isAvailable ? '🟢 พร้อมขาย (แตะเพื่อตั้งเป็นหมด)' : '🔴 หมด (แตะเพื่อตั้งเป็นพร้อมขาย)'}
+                      {togglingAvailId === item.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                      <span>
+                        {item.isAvailable ? '🟢 พร้อมขาย (แตะเพื่อตั้งเป็นหมด)' : '🔴 หมด (แตะเพื่อตั้งเป็นพร้อมขาย)'}
+                      </span>
                     </button>
 
                     <button
@@ -1075,14 +1159,17 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                       {/* Toggle: เปิด/ปิดการขาย */}
                       <td className="py-3 px-3 text-center">
                         <button
+                          type="button"
+                          disabled={togglingAvailId === item.id}
                           onClick={() => handleToggleAvail(item)}
-                          className={`px-3 py-1 rounded-full font-bold text-xs transition ${
+                          className={`px-3 py-1 rounded-full font-bold text-xs transition inline-flex items-center gap-1 disabled:opacity-60 cursor-pointer ${
                             item.isAvailable
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
                               : 'bg-rose-100 text-rose-800 border border-rose-300 hover:bg-rose-200'
                           }`}
                         >
-                          {item.isAvailable ? '🟢 พร้อมขาย' : '🔴 สินค้าหมด'}
+                          {togglingAvailId === item.id && <Loader2 className="w-3 h-3 animate-spin" />}
+                          <span>{item.isAvailable ? '🟢 พร้อมขาย' : '🔴 สินค้าหมด'}</span>
                         </button>
                       </td>
 

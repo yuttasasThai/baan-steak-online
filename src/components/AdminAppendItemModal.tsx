@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import { MenuItem, Order } from '../types';
-import { appendItemsToOrder, normalizeMenuImageUrl } from '../services/menuService';
+import { appendItemsToOrder, getCategoryPriorityIndex, normalizeMenuImageUrl } from '../services/menuService';
 import { audioAlert } from '../utils/audioAlert';
 import { isOrderItemCancelled, resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
@@ -38,7 +38,9 @@ export const AdminAppendItemModal: React.FC<AdminAppendItemModalProps> = ({
 
   if (!isOpen || !order) return null;
 
-  const categories = Array.from(new Set(menus.map((m) => m.category))).filter(Boolean);
+  const categories = Array.from(new Set(menus.map((m) => m.category)))
+    .filter(Boolean)
+    .sort((a, b) => getCategoryPriorityIndex(a) - getCategoryPriorityIndex(b));
 
   const filteredMenus = menus.filter((m) => {
     const matchCat = selectedCategory === 'ทั้งหมด' || m.category === selectedCategory;

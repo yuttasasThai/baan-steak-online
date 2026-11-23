@@ -12,7 +12,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { MenuItem, Order } from '../types';
-import { appendItemsToOrder, normalizeMenuImageUrl } from '../services/menuService';
+import { appendItemsToOrder, getCategoryPriorityIndex, normalizeMenuImageUrl } from '../services/menuService';
 import { resolveMenuPrepTimeMinutes } from '../utils/orderPrepUtils';
 
 interface CustomerAppendOrderModalProps {
@@ -41,7 +41,9 @@ export const CustomerAppendOrderModal: React.FC<CustomerAppendOrderModalProps> =
 
   if (!isOpen || !order) return null;
 
-  const categories = Array.from(new Set(menus.map((m) => m.category))).filter(Boolean);
+  const categories = Array.from(new Set(menus.map((m) => m.category)))
+    .filter(Boolean)
+    .sort((a, b) => getCategoryPriorityIndex(a) - getCategoryPriorityIndex(b));
 
   const availableMenus = menus.filter((m) => m.isPublished && m.isAvailable);
 

@@ -35,9 +35,9 @@ import {
   createOrder,
   getCustomerRewardsByPhone,
   isDrinkCategory,
+  mergeCategoriesWithMenus,
   normalizeMenuImageUrl,
   SHOP_INFO,
-  sortCategories,
   sortMenus,
 } from '../services/menuService';
 import heroImage from '../assets/IMG_20261007_161813.jpg';
@@ -331,7 +331,7 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
   }, [customerPhone]);
 
   // Sort menus: food items strictly cheapest -> most expensive, drinks always at bottom
-  const sortedCategories = sortCategories(categories);
+  const sortedCategories = mergeCategoriesWithMenus(categories, menus);
   const sortedMenus = sortMenus(menus, sortedCategories);
   const visibleMenus = sortedMenus.filter((m) => m.isPublished);
   const filteredMenus =
@@ -1469,19 +1469,34 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
           >
             ทั้งหมด ({visibleMenus.length})
           </button>
-          {sortedCategories.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setSelectedCategory(c.name)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                selectedCategory === c.name
-                  ? 'bg-red-600 text-white shadow-sm'
-                  : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
+          {sortedCategories.map((c) => {
+            const catCount = visibleMenus.filter((m) => m.category.trim() === c.name.trim()).length;
+            const icon =
+              c.name.trim() === 'สปาเก็ตตี้'
+                ? '🍝 '
+                : c.name.trim() === 'สเต็ก'
+                ? '🥩 '
+                : c.name.trim() === 'สลัด'
+                ? '🥗 '
+                : c.name.trim() === 'เครื่องดื่ม'
+                ? '🥤 '
+                : '';
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCategory(c.name)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition ${
+                  selectedCategory === c.name
+                    ? 'bg-red-600 text-white shadow-sm'
+                    : 'bg-white text-stone-600 border border-stone-200 hover:bg-stone-50'
+                }`}
+              >
+                {icon}
+                {c.name}
+                {catCount > 0 ? ` (${catCount})` : ''}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -1579,14 +1594,27 @@ export const CustomerWebsite: React.FC<CustomerWebsiteProps> = ({
 
                 {/* Info & Order Controls (Clean & Minimal: Photo, Name, Price, Status, Add Button) */}
                 <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3
-                      className={`font-bold text-base leading-tight truncate ${
-                        isSoldOut ? 'text-stone-500' : 'text-stone-900'
-                      }`}
-                    >
-                      {item.name}
-                    </h3>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <h3
+                        className={`font-bold text-base leading-tight truncate ${
+                          isSoldOut ? 'text-stone-500' : 'text-stone-900'
+                        }`}
+                      >
+                        {item.name}
+                      </h3>
+                      {item.category && (
+                        <span
+                          className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                            item.category.trim() === 'สปาเก็ตตี้'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
+                              : 'bg-stone-100 text-stone-600 border-stone-200'
+                          }`}
+                        >
+                          {item.category.trim() === 'สปาเก็ตตี้' ? `🍝 ${item.category}` : item.category}
+                        </span>
+                      )}
+                    </div>
 
                     {/* Status Badge & Prep Time */}
                     <div className="flex items-center gap-1 shrink-0">
