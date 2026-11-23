@@ -52,6 +52,7 @@ import { isOrderItemCancelled } from './utils/orderPrepUtils';
 import {
   cancelOrder,
   DEFAULT_SHOP_SETTINGS,
+  ensureSpaghettiCategoryOnce,
   reconcileTablesWithOrders,
   SHOP_INFO,
   subscribeCategories,
@@ -166,6 +167,9 @@ export function App() {
         console.error('Categories error:', error);
       }
     );
+
+    // 3.5 One-time migration for 'สปาเก็ตตี้' category & spaghetti-named menus
+    void ensureSpaghettiCategoryOnce();
 
     // 4. Subscribe to orders
     const unsubOrders = subscribeOrders(
